@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Everyday English</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="background-image" id="backgroundImage"></div>
+  <div class="container">
+    <!-- 初期画面 -->
+    <div id="screen1" class="screen active">
+      <div class="top-content">
+        <h1 class="title">Everyday English</h1>
+        
+        <div class="learning-time" id="learningTimeTop"><学習時間>0時間00分00秒</div>
+        
+        <div class="section">
+          <div class="section-label">Category</div>
+          <select id="categorySelect">
+            <option value="">Categoryを選択してください</option>
+          </select>
+        </div>
+        
+        <div class="section">
+          <div class="section-label">List</div>
+          <div id="listMessage" class="message">Categoryを選択してください。</div>
+          <div id="listContainer" class="table-container" style="display: none;">
+            <table id="listTable">
+              <thead>
+                <tr>
+                  <th>No</th>
+                  <th id="listTableHeader"></th>
+                </tr>
+              </thead>
+              <tbody id="listTableBody">
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      <button id="startButton" class="start-button" style="display: none;">START</button>
+    </div>
+    
+    <!-- 学習画面 -->
+    <div id="screen2" class="screen">
+      <div class="learning-content">
+        <h1 class="title">Everyday English</h1>
+        
+        <div class="learning-time" id="learningTime"><学習時間>0時間00分</div>
+        
+        <div class="section">
+          <div class="section-label">Category</div>
+          <div id="currentCategory"></div>
+        </div>
+        
+        <div class="section">
+          <div class="section-label" id="questionSectionLabel"></div>
+          <div class="question-info" id="questionInfo">[1/1]</div>
+          <div class="question-text" id="questionText"></div>
+        </div>
+        
+        <div class="section answer-section" id="answerSection">
+          <div class="section-label" id="answerSectionLabel"></div>
+          <div class="answer-button-container" id="answerButtonContainer">
+            <button class="answer-button" id="answerButton" type="button">
+              <span class="answer-text" id="answerText">Answer</span>
+              <span class="answer-stopwatch" id="answerStopwatch">(00:00:00)</span>
+            </button>
+          </div>
+          <div class="answer-text answer-hidden" id="answerTextDisplay" style="display: none;"></div>
+          <div class="answer-time-container" id="answerTimeContainer" style="display: none;">
+            <div class="answer-time-display" id="answerTimeDisplay"></div>
+            <div class="play-button-container" id="playButtonContainer">
+              <button class="icon-button" id="playButton" type="button">
+                <img src="img/play-button.png" alt="再生">
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <div class="section note-section" id="noteSection" style="display: none;">
+          <div class="section-label">note:</div>
+          <div class="note-text" id="noteText"></div>
+        </div>
+      </div>
+      
+      <div class="navigation-bar">
+        <button class="nav-button arrow-left" id="prevButton" type="button" disabled>
+          <img src="img/arrow.png" alt="前へ">
+        </button>
+        <button class="nav-button" id="nextButton" type="button">
+          <img src="img/arrow.png" alt="次へ">
+        </button>
+        <button class="nav-button" id="homeButton" type="button">
+          <img src="img/home.png" alt="ホーム">
+        </button>
+      </div>
+    </div>
+    
+    <!-- モーダルポップアップ -->
+    <div id="modalOverlay" class="modal-overlay">
+      <div class="modal-container">
+        <button class="modal-close-button" id="modalCloseButton" type="button">×</button>
+        <div class="modal-content">
+          <div class="modal-answer-section">
+            <div class="modal-answer-label" id="modalAnswerLabel"></div>
+            <div class="modal-answer-text" id="modalAnswerText"></div>
+          </div>
+          <div class="modal-note-section" id="modalNoteSection" style="display: none;">
+            <div class="modal-note-label">note:</div>
+            <div class="modal-note-text" id="modalNoteText"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
+
