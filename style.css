@@ -789,7 +789,7 @@ tr:last-child td {
 /* レスポンシブ: 非常に小さい画面でのフォントサイズ調整 */
 @media screen and (max-width: 375px) {
   .title {
-    font-size: 26px !important;
+    font-size: 12px !important;
   }
   
   #screen2 .title {
