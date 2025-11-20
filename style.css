@@ -556,10 +556,12 @@ tr:last-child td {
 /* 初期画面のコンテンツエリア */
 #screen1 .top-content {
   flex: 1;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  max-height: calc(100vh - 120px);
 }
 
 /* 学習画面のタイトル */
