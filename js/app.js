@@ -20,6 +20,10 @@ var SPREADSHEET_ID = '1pnlKMrp07Yz4MMCFByw8F04ttT3Cf6xDSX7zf5R64ZA';
 // GitHub PagesのURL（例: https://yourusername.github.io/*）を追加してください
 var API_KEY = 'AIzaSyCnXuzLY7ybqJU_gpl-y7gZPMO-o_7_TkY'; // ここにGoogle Cloud Consoleで取得したAPIキーを設定してください
 
+// Google Apps Script WebアプリのURL（Cloud Text-to-Speech API用）
+// 注意: Google Apps ScriptをWebアプリとして公開した際のURLを設定してください
+var TTS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxnArjXdMjXLpXI36YO9JOEj6qEf2e2DDbUVfqiWdJBDB7-QwlNL3zDJS67FFmCxybMWg/exec'; // ここにGoogle Apps ScriptのWebアプリURLを設定してください
+
 // 初期化
 window.onload = function() {
   // まずカテゴリリストを読み込む（優先度：高）
@@ -585,14 +589,63 @@ function playAnswer() {
   var item = currentCategoryData[currentQuestionIndex];
   if (!item || !item.answer) return;
   
-  if ('speechSynthesis' in window) {
-    var utterance = new SpeechSynthesisUtterance(item.answer);
-    utterance.lang = 'en-US';
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
-    window.speechSynthesis.speak(utterance);
+  // WebアプリURLが設定されていない場合はエラー
+  if (!TTS_WEB_APP_URL || TTS_WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
+    showError('音声読み上げの設定が完了していません。WebアプリURLを設定してください。');
+    return;
   }
+  
+  // 再生ボタンを無効化（連続クリック防止）
+  var playButton = document.getElementById('playButton');
+  if (playButton) {
+    playButton.disabled = true;
+    playButton.style.opacity = '0.5';
+  }
+  
+  // リクエストパラメータを準備
+  var params = new URLSearchParams();
+  params.append('text', item.answer);
+  params.append('referer', window.location.origin);
+  
+  // Google Apps Scriptにリクエストを送信
+  fetch(TTS_WEB_APP_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: params
+  })
+  .then(function(response) {
+    if (!response.ok) {
+      throw new Error('ネットワークエラー: ' + response.status);
+    }
+    return response.json();
+  })
+  .then(function(data) {
+    // 再生ボタンを再有効化
+    if (playButton) {
+      playButton.disabled = false;
+      playButton.style.opacity = '1';
+    }
+    
+    if (data.success && data.audioContent) {
+      // 音声データ（base64）を再生
+      var audio = new Audio('data:audio/mp3;base64,' + data.audioContent);
+      audio.play().catch(function(error) {
+        showError('音声の再生に失敗しました: ' + error.toString());
+      });
+    } else {
+      showError('音声の生成に失敗しました: ' + (data.error || 'Unknown error'));
+    }
+  })
+  .catch(function(error) {
+    // 再生ボタンを再有効化
+    if (playButton) {
+      playButton.disabled = false;
+      playButton.style.opacity = '1';
+    }
+    showError('音声読み上げエラー: ' + error.toString());
+  });
 }
 
 // 前の問題に戻る
