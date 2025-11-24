@@ -19,22 +19,9 @@ var audioCache = {};
 var CACHE_PREFIX = 'tts_audio_'; // localStorageのキープレフィックス
 var MAX_CACHE_SIZE = 10 * 1024 * 1024; // 最大キャッシュサイズ（10MB）
 
-// スプレッドシートID
-var SPREADSHEET_ID = '1pnlKMrp07Yz4MMCFByw8F04ttT3Cf6xDSX7zf5R64ZA';
-
-// Google Sheets API v4 のAPIキー
-// 注意: GitHub Pagesで公開する場合は、APIキーの制限（HTTPリファラー制限）を設定してください
-// Google Cloud Console > APIとサービス > 認証情報 > APIキーを制限 > HTTPリファラー（ウェブサイト）に
-// GitHub PagesのURL（例: https://yourusername.github.io/*）を追加してください
-var API_KEY = 'AIzaSyCnXuzLY7ybqJU_gpl-y7gZPMO-o_7_TkY'; // ここにGoogle Cloud Consoleで取得したAPIキーを設定してください
-
-// Google Apps Script WebアプリのURL（Cloud Text-to-Speech API用）
-// 注意: Google Apps ScriptをWebアプリとして公開した際のURLを設定してください
-var TTS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxnArjXdMjXLpXI36YO9JOEj6qEf2e2DDbUVfqiWdJBDB7-QwlNL3zDJS67FFmCxybMWg/exec'; // ここにGoogle Apps ScriptのWebアプリURLを設定してください
-
-// Google Apps Script WebアプリのURL（データ取得用）
-// 注意: Google Apps ScriptをWebアプリとして公開した際のURLを設定してください
-var DATA_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycby3TyeaoYFMHU6eyb78WsR-IOS8VZ9zBBw8hXAePNOwSQXu3sGhnGTmXKXOQpawhG1Tvw/exec'; // ここにGoogle Apps ScriptのWebアプリURLを設定してください
+// Google Apps Script WebアプリのURL（統合版：TTSとDATAの両方を処理）
+// 注意: Gas_Main.gsをWebアプリとして公開した際のURLを設定してください
+var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec'; // ここにGoogle Apps ScriptのWebアプリURLを設定してください
 
 // 初期化
 window.onload = function() {
@@ -87,14 +74,6 @@ function showEmailInputDialog() {
     alert('メールアドレスは必須です。');
     showEmailInputDialog();
   }
-}
-
-// メールアドレスをリセット（開発・テスト用）
-// ブラウザのコンソールで resetUserEmail() を実行すると、メールアドレス入力画面が再表示されます
-function resetUserEmail() {
-  localStorage.removeItem('userEmail');
-  userEmail = null;
-  checkUserEmail();
 }
 
 // ボタン画像を設定する関数（最適化版）
@@ -169,11 +148,7 @@ function loadCategories() {
   params.append('referer', window.location.origin);
   
   // GETリクエストで送信
-  var requestUrl = DATA_WEB_APP_URL + '?' + params.toString();
-  
-  console.log('Request URL:', requestUrl);
-  console.log('User Email:', userEmail);
-  console.log('Params:', params.toString());
+  var requestUrl = WEB_APP_URL + '?' + params.toString();
   
   fetch(requestUrl)
     .then(function(response) {
@@ -318,11 +293,7 @@ function loadCategoryData(categoryNo) {
   params.append('referer', window.location.origin);
   
   // GETリクエストで送信
-  var requestUrl = DATA_WEB_APP_URL + '?' + params.toString();
-  
-  console.log('Request URL:', requestUrl);
-  console.log('User Email:', userEmail);
-  console.log('Params:', params.toString());
+  var requestUrl = WEB_APP_URL + '?' + params.toString();
   
   fetch(requestUrl)
     .then(function(response) {
@@ -738,7 +709,7 @@ function playAnswer() {
   if (!item || !item.answer) return;
   
   // WebアプリURLが設定されていない場合はエラー
-  if (!TTS_WEB_APP_URL || TTS_WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
+  if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
     showError('音声読み上げの設定が完了していません。WebアプリURLを設定してください。');
     return;
   }
@@ -967,7 +938,7 @@ function fetchAudioFromAPI(text) {
   params.append('referer', window.location.origin);
   
   // Google Apps Scriptにリクエストを送信
-  fetch(TTS_WEB_APP_URL, {
+  fetch(WEB_APP_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -1008,7 +979,7 @@ function fetchAudioFromAPI(text) {
  * 現在の問題と次の問題の音声をプリロード
  */
 function preloadAudioForCurrentAndNext() {
-  if (!TTS_WEB_APP_URL || TTS_WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
+  if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
     return; // WebアプリURLが設定されていない場合はスキップ
   }
   
@@ -1028,7 +999,7 @@ function preloadAudioForCurrentAndNext() {
  * 次の問題（最大2問）の音声をプリロード
  */
 function preloadNextQuestions() {
-  if (!TTS_WEB_APP_URL || TTS_WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
+  if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
     return; // WebアプリURLが設定されていない場合はスキップ
   }
   
@@ -1086,7 +1057,6 @@ function preloadAudio(text) {
     })
     .catch(function(error) {
       // プリロードのエラーは無視（ユーザーに影響を与えない）
-      // console.log('Preload error (ignored):', error);
     });
   }, 100); // 少し遅延させて、メイン処理を優先
 }
