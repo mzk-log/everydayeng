@@ -431,6 +431,17 @@ tr:last-child td {
   left: calc(50% - 75px);
 }
 
+/* 再生ボタンコンテナ（ナビゲーションバー内）: Ansボタンの上、中央配置 */
+.navigation-bar .play-button-container {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* 次へボタン: 中央から右に30px */
 #nextButton {
   position: absolute;

@@ -584,14 +584,18 @@ function displayQuestion() {
   if (navAnswerButton) navAnswerButton.disabled = false;
   if (navAnswerText) navAnswerText.classList.add('blinking');
   
-  // 回答テキスト、停止時間表示コンテナを非表示
+  // 回答テキストを非表示
   var answerTextDisplay = document.getElementById('answerTextDisplay');
-  var answerTimeContainer = document.getElementById('answerTimeContainer');
   var noteSection = document.getElementById('noteSection');
   if (answerTextDisplay) answerTextDisplay.style.display = 'none';
-  if (answerTimeContainer) answerTimeContainer.style.display = 'none';
   if (noteSection) noteSection.style.display = 'none';
   isAnswerShown = false;
+  
+  // 再生ボタンを無効化（問題表示時）
+  var playButton = document.getElementById('playButton');
+  if (playButton) {
+    playButton.disabled = true;
+  }
   
   // ストップウォッチをリセットして開始
   resetStopwatch();
@@ -677,24 +681,10 @@ function showAnswer() {
   if (navAnswerButton) navAnswerButton.disabled = true;
   if (navAnswerText) navAnswerText.classList.remove('blinking');
   
-  // 停止時間を計算して表示
-  var elapsed = stopwatchElapsed;
-  var totalSeconds = Math.floor(elapsed / 1000);
-  var minutes = Math.floor(totalSeconds / 60);
-  var seconds = totalSeconds % 60;
-  var milliseconds = Math.floor((elapsed % 1000) / 10);
-  var timeText = String(minutes).padStart(2, '0') + ':' +
-                 String(seconds).padStart(2, '0') + ':' +
-                 String(milliseconds).padStart(2, '0');
-  var answerTimeDisplay = document.getElementById('answerTimeDisplay');
-  if (answerTimeDisplay) {
-    answerTimeDisplay.textContent = timeText;
-  }
-  
-  // 停止時間表示コンテナを表示（停止時間とplayボタンを含む）
-  var answerTimeContainer = document.getElementById('answerTimeContainer');
-  if (answerTimeContainer) {
-    answerTimeContainer.style.display = 'flex';
+  // 再生ボタンを有効化（回答表示時）
+  var playButton = document.getElementById('playButton');
+  if (playButton) {
+    playButton.disabled = false;
   }
   
   // 回答文を表示
