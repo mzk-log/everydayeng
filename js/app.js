@@ -11,6 +11,7 @@ var stopwatchElapsed = 0;
 var isStopwatchRunning = false;
 var isAnswerShown = false;
 var userEmail = null; // ユーザーのメールアドレス
+var modalCurrentIndex = 0; // モーダル内の現在のインデックス
 
 // 音声キャッシュ（メモリキャッシュ）
 var audioCache = {};
@@ -270,6 +271,30 @@ function setupEventListeners() {
       closeModal();
     }
   });
+  
+  // モーダル内の前へボタン
+  document.getElementById('modalPrevButton').addEventListener('click', function() {
+    if (modalCurrentIndex > 0) {
+      modalCurrentIndex--;
+      var item = currentCategoryData[modalCurrentIndex];
+      if (item) {
+        updateModalContent(item);
+        updateModalNavigation();
+      }
+    }
+  });
+  
+  // モーダル内の次へボタン
+  document.getElementById('modalNextButton').addEventListener('click', function() {
+    if (modalCurrentIndex < currentCategoryData.length - 1) {
+      modalCurrentIndex++;
+      var item = currentCategoryData[modalCurrentIndex];
+      if (item) {
+        updateModalContent(item);
+        updateModalNavigation();
+      }
+    }
+  });
 }
 
 // カテゴリデータを読み込む
@@ -363,15 +388,38 @@ function displayList() {
     var noCell = document.createElement('td');
     noCell.textContent = item.no || '';
     var questionCell = document.createElement('td');
-    // Question列の値を表示（大文字小文字を考慮）
-    var questionText = item.question || item.Question || '';
-    questionCell.textContent = questionText;
+    // Question列の値を表示（画像対応）
+    var questionContent = item.question || item.Question || '';
+    if (isImageUrl(questionContent)) {
+      // 画像URLの場合はサムネイル表示
+      var imageUrl = convertGoogleDriveUrl(questionContent);
+      var img = document.createElement('img');
+      img.src = imageUrl;
+      img.className = 'list-thumbnail';
+      img.alt = '画像';
+      img.style.maxWidth = '100px';
+      img.style.maxHeight = '60px';
+      img.style.height = 'auto';
+      img.style.display = 'block';
+      img.style.objectFit = 'contain';
+      
+      // エラーハンドリング
+      img.addEventListener('error', function() {
+        questionCell.textContent = '[画像]';
+      });
+      
+      questionCell.appendChild(img);
+    } else {
+      // テキストの場合はテキスト表示
+      questionCell.textContent = questionContent;
+    }
     row.appendChild(noCell);
     row.appendChild(questionCell);
     
     // 行クリックでモーダルを表示
     row.addEventListener('click', function() {
-      showModal(item);
+      var index = currentCategoryData.indexOf(item);
+      showModal(item, index);
     });
     
     tableBody.appendChild(row);
@@ -568,10 +616,10 @@ function displayQuestion() {
     questionInfo.textContent = '[' + (currentQuestionIndex + 1) + '/' + currentCategoryData.length + ']';
   }
   
-  // 質問文を表示
+  // 質問文を表示（画像対応）
   var questionText = document.getElementById('questionText');
   if (questionText) {
-    questionText.textContent = item.question || '';
+    displayImageOrText(questionText, item.question || '');
   }
   
   // 上の黒いボックスを表示
@@ -681,18 +729,24 @@ function showAnswer() {
   if (navAnswerButton) navAnswerButton.disabled = true;
   if (navAnswerText) navAnswerText.classList.remove('blinking');
   
-  // 再生ボタンを有効化（回答表示時）
-  var playButton = document.getElementById('playButton');
-  if (playButton) {
-    playButton.disabled = false;
-  }
-  
-  // 回答文を表示
+  // 回答文を表示（画像対応）
   var answerTextDisplay = document.getElementById('answerTextDisplay');
   if (answerTextDisplay) {
-    answerTextDisplay.textContent = item.answer || '';
+    displayImageOrText(answerTextDisplay, item.answer || '');
     answerTextDisplay.classList.remove('answer-hidden');
     answerTextDisplay.style.display = 'block';
+  }
+  
+  // 再生ボタンの制御（回答が画像URLの場合は無効化）
+  var playButton = document.getElementById('playButton');
+  if (playButton) {
+    if (isImageUrl(item.answer || '')) {
+      // 画像URLの場合は無効化
+      playButton.disabled = true;
+    } else {
+      // テキストの場合は有効化
+      playButton.disabled = false;
+    }
   }
   
   // noteを表示
@@ -709,10 +763,130 @@ function showAnswer() {
   updateNavigationButtons();
 }
 
+/**
+ * 画像URLかどうかを判定
+ * @param {string} url - 判定する文字列
+ * @returns {boolean} 画像URLの場合true
+ */
+function isImageUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  var trimmed = url.trim();
+  return trimmed.startsWith('http://') || trimmed.startsWith('https://');
+}
+
+/**
+ * Google Driveの共有リンクURLを直接表示用URLに変換
+ * @param {string} url - Google Driveの共有リンクURL
+ * @returns {string} 変換後のURL
+ */
+function convertGoogleDriveUrl(url) {
+  if (!url || typeof url !== 'string') return url;
+  
+  // Google Driveの共有リンク形式を検出
+  // 例: https://drive.google.com/file/d/FILE_ID/view?usp=drive_link
+  var match = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (match && match[1]) {
+    var fileId = match[1];
+    // サムネイル形式を使用（広告ブロッカーにブロックされにくい）
+    // sz=w1000 で最大幅1000pxの画像を取得（必要に応じて調整可能）
+    return 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w1000';
+  }
+  
+  // 変換不要の場合はそのまま返す
+  return url;
+}
+
+/**
+ * テキストまたは画像を表示
+ * @param {HTMLElement} element - 表示先の要素
+ * @param {string} content - 表示する内容（テキストまたは画像URL）
+ */
+function displayImageOrText(element, content) {
+  if (!element || !content) {
+    if (element) element.innerHTML = '';
+    return;
+  }
+  
+  var trimmedContent = content.trim();
+  
+  if (isImageUrl(trimmedContent)) {
+    // 画像URLの場合
+    var imageUrl = convertGoogleDriveUrl(trimmedContent);
+    var img = document.createElement('img');
+    img.src = imageUrl;
+    img.className = 'content-image';
+    img.alt = '画像';
+    img.style.maxWidth = '100%';
+    img.style.height = 'auto';
+    img.style.display = 'block';
+    img.style.margin = '0 auto';
+    img.style.cursor = 'pointer';
+    
+    // クリックで拡大表示
+    img.addEventListener('click', function() {
+      showImageModal(imageUrl);
+    });
+    
+    // エラーハンドリング
+    img.addEventListener('error', function() {
+      element.innerHTML = '<span class="image-error">画像を読み込めませんでした</span>';
+    });
+    
+    element.innerHTML = '';
+    element.appendChild(img);
+  } else {
+    // テキストの場合
+    element.textContent = trimmedContent;
+  }
+}
+
+/**
+ * 画像を拡大表示（モーダル）
+ * @param {string} imageUrl - 画像URL
+ */
+function showImageModal(imageUrl) {
+  var overlay = document.getElementById('imageModalOverlay');
+  var img = document.getElementById('imageModalImage');
+  var closeButton = document.getElementById('imageModalCloseButton');
+  
+  if (!overlay || !img) return;
+  
+  img.src = imageUrl;
+  overlay.style.display = 'flex';
+  
+  // 閉じるボタンのイベント
+  if (closeButton) {
+    closeButton.onclick = function() {
+      overlay.style.display = 'none';
+    };
+  }
+  
+  // オーバーレイクリックで閉じる
+  overlay.onclick = function(e) {
+    if (e.target === overlay) {
+      overlay.style.display = 'none';
+    }
+  };
+  
+  // ESCキーで閉じる
+  var escHandler = function(e) {
+    if (e.key === 'Escape') {
+      overlay.style.display = 'none';
+      document.removeEventListener('keydown', escHandler);
+    }
+  };
+  document.addEventListener('keydown', escHandler);
+}
+
 // 回答を読み上げ
 function playAnswer() {
   var item = currentCategoryData[currentQuestionIndex];
   if (!item || !item.answer) return;
+  
+  // 画像URLの場合は音声読み上げをスキップ
+  if (isImageUrl(item.answer)) {
+    return;
+  }
   
   // WebアプリURLが設定されていない場合はエラー
   if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
@@ -1181,9 +1355,37 @@ function goToHome() {
 }
 
 // モーダルを表示
-function showModal(item) {
+function showModal(item, index) {
   if (!item) return;
   
+  // モーダル内の現在のインデックスを保存
+  if (typeof index !== 'undefined') {
+    modalCurrentIndex = index;
+  } else {
+    // インデックスが指定されていない場合は、itemから検索
+    modalCurrentIndex = currentCategoryData.findIndex(function(data) {
+      return data.id === item.id || (data.no === item.no && data.question === item.question);
+    });
+    if (modalCurrentIndex === -1) {
+      modalCurrentIndex = 0;
+    }
+  }
+  
+  // モーダルの内容を更新
+  updateModalContent(item);
+  
+  // ナビゲーションボタンの状態を更新
+  updateModalNavigation();
+  
+  // モーダルを表示
+  var modalOverlay = document.getElementById('modalOverlay');
+  if (modalOverlay) {
+    modalOverlay.classList.add('active');
+  }
+}
+
+// モーダルの内容を更新
+function updateModalContent(item) {
   // A_Titleをラベルに設定
   if (item.a_title) {
     var modalAnswerLabel = document.getElementById('modalAnswerLabel');
@@ -1192,10 +1394,24 @@ function showModal(item) {
     }
   }
   
-  // 回答文を表示
+  // Q_Titleをラベルに設定
+  if (item.q_title) {
+    var modalQuestionLabel = document.getElementById('modalQuestionLabel');
+    if (modalQuestionLabel) {
+      modalQuestionLabel.textContent = item.q_title;
+    }
+  }
+  
+  // 質問文を表示（画像対応）
+  var questionText = document.getElementById('modalQuestionText');
+  if (questionText) {
+    displayImageOrText(questionText, item.question || '');
+  }
+  
+  // 回答文を表示（画像対応）
   var answerText = document.getElementById('modalAnswerText');
-  if (answerText && item.answer) {
-    answerText.textContent = item.answer;
+  if (answerText) {
+    displayImageOrText(answerText, item.answer || '');
   }
   
   // noteを表示（ある場合のみ）
@@ -1213,11 +1429,37 @@ function showModal(item) {
       noteSection.style.display = 'none';
     }
   }
+}
+
+// モーダル内のナビゲーションを更新
+function updateModalNavigation() {
+  var totalCount = currentCategoryData.length;
+  var currentNo = modalCurrentIndex + 1;
   
-  // モーダルを表示
-  var modalOverlay = document.getElementById('modalOverlay');
-  if (modalOverlay) {
-    modalOverlay.classList.add('active');
+  // 現在No/全No数を更新
+  var navInfo = document.getElementById('modalNavInfo');
+  if (navInfo) {
+    navInfo.textContent = currentNo + '/' + totalCount;
+  }
+  
+  // 前へボタンの状態を更新
+  var prevButton = document.getElementById('modalPrevButton');
+  if (prevButton) {
+    if (modalCurrentIndex === 0) {
+      prevButton.disabled = true;
+    } else {
+      prevButton.disabled = false;
+    }
+  }
+  
+  // 次へボタンの状態を更新
+  var nextButton = document.getElementById('modalNextButton');
+  if (nextButton) {
+    if (modalCurrentIndex === totalCount - 1) {
+      nextButton.disabled = true;
+    } else {
+      nextButton.disabled = false;
+    }
   }
 }
 
