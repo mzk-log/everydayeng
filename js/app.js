@@ -20,6 +20,7 @@ var isLearningCompleted = false; // 学習が完了したかどうか
 var selectedQuestionIndices = []; // 選択された問題のインデックスを保存
 var originalCategoryData = []; // 元の全問題データ（出題数表示用）
 var isToggleActive = true; // トグルボタンの状態（ON/OFF）
+var currentAudio = null; // 現在再生中のAudioオブジェクト
 
 // 音声キャッシュ（メモリキャッシュ）
 var audioCache = {};
@@ -31,6 +32,25 @@ var MAX_CACHE_SIZE = 10 * 1024 * 1024; // 最大キャッシュサイズ（10MB�
 // Google Apps Script WebアプリのURL（統合版：TTSとDATAの両方を処理）
 // 注意: Gas_Main.gsをWebアプリとして公開した際のURLを設定してください
 var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec'; // ここにGoogle Apps ScriptのWebアプリURLを設定してください
+
+// 学習完了メッセージの定数配列
+var COMPLETION_MESSAGES = [
+  'Good job!',
+  'がんばってるじゃん！',
+  'Excellent!',
+  'その調子！'
+];
+
+// 学習完了メッセージ用のアイコン画像ファイル名
+var COMPLETION_MESSAGE_IMAGES = [
+  'msg-ino-01.png',
+  'msg-manmos-01.png',
+  'msg-putera-01.png',
+  'msg-smiley-01.png',
+  'msg-smiley-02.png',
+  'msg-thumb-01.png',
+  'msg-uma-01.png'
+];
 
 // 初期化
 window.onload = function() {
@@ -118,11 +138,7 @@ function setButtonImages() {
     playButtonImg.src = images['play-button'];
   }
   
-  // arrow (prev and next)
-  var prevButtonImg = document.querySelector('#prevButton img');
-  if (prevButtonImg && images['arrow']) {
-    prevButtonImg.src = images['arrow'];
-  }
+  // arrow (next)
   var nextButtonImg = document.querySelector('#nextButton img');
   if (nextButtonImg && images['arrow']) {
     nextButtonImg.src = images['arrow'];
@@ -213,6 +229,8 @@ function loadCategories() {
         if (loadingSpinner) {
           loadingSpinner.style.display = 'none';
         }
+        // ボタンの状態を更新
+        updateListNavButtons();
       } catch (e) {
         showError('データ読み込みエラー: ' + e.toString());
         if (select) {
@@ -248,6 +266,7 @@ function setupEventListeners() {
     } else {
       resetListDisplay();
     }
+    // ボタンの状態はloadCategoryData()内で更新されるため、ここでは呼び出さない
   });
   
   document.getElementById('startButton').addEventListener('click', function() {
@@ -261,10 +280,6 @@ function setupEventListeners() {
   
   document.getElementById('playButton').addEventListener('click', function() {
     playAnswer();
-  });
-  
-  document.getElementById('prevButton').addEventListener('click', function() {
-    goToPreviousQuestion();
   });
   
   document.getElementById('nextButton').addEventListener('click', function() {
@@ -346,6 +361,16 @@ function setupEventListeners() {
   document.getElementById('clearSelectionButton').addEventListener('click', function() {
     clearSelection();
   });
+  
+  // Listナビゲーションボタン（前へ）
+  document.getElementById('listPrevButton').addEventListener('click', function() {
+    navigateToPreviousCategory();
+  });
+  
+  // Listナビゲーションボタン（次へ）
+  document.getElementById('listNextButton').addEventListener('click', function() {
+    navigateToNextCategory();
+  });
 }
 
 // カテゴリデータを読み込む
@@ -366,6 +391,12 @@ function loadCategoryData(categoryNo) {
   if (loadingSpinner) {
     loadingSpinner.style.display = 'block';
   }
+  
+  // ボタンを無効化
+  var prevButton = document.getElementById('listPrevButton');
+  var nextButton = document.getElementById('listNextButton');
+  if (prevButton) prevButton.disabled = true;
+  if (nextButton) nextButton.disabled = true;
   
   // Google Apps Script経由でデータを取得
   var params = new URLSearchParams();
@@ -399,6 +430,8 @@ function loadCategoryData(categoryNo) {
         // 選択状態をリセット
         selectedQuestionIndices = [];
         displayList();
+        // ボタンの状態を更新（表示/非表示と有効/無効を設定）
+        updateListNavButtons();
         
         // ローディング非表示
         if (loadingSpinner) {
@@ -410,6 +443,8 @@ function loadCategoryData(categoryNo) {
         if (loadingSpinner) {
           loadingSpinner.style.display = 'none';
         }
+        // ボタンの状態を更新（エラー時も無効化のまま）
+        updateListNavButtons();
       }
     })
     .catch(function(error) {
@@ -418,6 +453,8 @@ function loadCategoryData(categoryNo) {
       if (loadingSpinner) {
         loadingSpinner.style.display = 'none';
       }
+      // ボタンの状態を更新（エラー時も無効化のまま）
+      updateListNavButtons();
     });
 }
 
@@ -536,6 +573,130 @@ function toggleQuestionSelection(index, row) {
   updateSelectionCount();
 }
 
+// Listナビゲーションボタンを表示
+function showListNavButtons() {
+  var listNavContainer = document.querySelector('.list-nav-container');
+  if (listNavContainer) {
+    listNavContainer.style.visibility = 'visible';
+  }
+}
+
+// Listナビゲーションボタンを非表示
+function hideListNavButtons() {
+  var listNavContainer = document.querySelector('.list-nav-container');
+  if (listNavContainer) {
+    listNavContainer.style.visibility = 'hidden';
+  }
+}
+
+// 前のカテゴリに移動
+function navigateToPreviousCategory() {
+  var select = document.getElementById('categorySelect');
+  if (!select || !select.value || categories.length === 0) {
+    return;
+  }
+  
+  // ボタンを無効化
+  var prevButton = document.getElementById('listPrevButton');
+  var nextButton = document.getElementById('listNextButton');
+  if (prevButton) prevButton.disabled = true;
+  if (nextButton) nextButton.disabled = true;
+  
+  // 現在選択されているカテゴリのインデックスを取得
+  var currentIndex = -1;
+  for (var i = 0; i < categories.length; i++) {
+    if (categories[i].no == select.value) {
+      currentIndex = i;
+      break;
+    }
+  }
+  
+  // 前のカテゴリが存在する場合
+  if (currentIndex > 0) {
+    var previousCategory = categories[currentIndex - 1];
+    select.value = previousCategory.no;
+    // changeイベントを手動で発火
+    var event = new Event('change', { bubbles: true });
+    select.dispatchEvent(event);
+  }
+}
+
+// 次のカテゴリに移動
+function navigateToNextCategory() {
+  var select = document.getElementById('categorySelect');
+  if (!select || !select.value || categories.length === 0) {
+    return;
+  }
+  
+  // ボタンを無効化
+  var prevButton = document.getElementById('listPrevButton');
+  var nextButton = document.getElementById('listNextButton');
+  if (prevButton) prevButton.disabled = true;
+  if (nextButton) nextButton.disabled = true;
+  
+  // 現在選択されているカテゴリのインデックスを取得
+  var currentIndex = -1;
+  for (var i = 0; i < categories.length; i++) {
+    if (categories[i].no == select.value) {
+      currentIndex = i;
+      break;
+    }
+  }
+  
+  // 次のカテゴリが存在する場合
+  if (currentIndex >= 0 && currentIndex < categories.length - 1) {
+    var nextCategory = categories[currentIndex + 1];
+    select.value = nextCategory.no;
+    // changeイベントを手動で発火
+    var event = new Event('change', { bubbles: true });
+    select.dispatchEvent(event);
+  }
+}
+
+// Listナビゲーションボタンの状態を更新
+function updateListNavButtons() {
+  var prevButton = document.getElementById('listPrevButton');
+  var nextButton = document.getElementById('listNextButton');
+  var select = document.getElementById('categorySelect');
+  
+  if (!prevButton || !nextButton || !select || categories.length === 0) {
+    // カテゴリが読み込まれていない場合は非表示
+    hideListNavButtons();
+    return;
+  }
+  
+  // カテゴリが選択されていない場合
+  if (!select.value) {
+    // 非表示にする
+    hideListNavButtons();
+    return;
+  }
+  
+  // カテゴリが選択されている場合は表示
+  showListNavButtons();
+  
+  // 現在選択されているカテゴリのインデックスを取得
+  var currentIndex = -1;
+  for (var i = 0; i < categories.length; i++) {
+    if (categories[i].no == select.value) {
+      currentIndex = i;
+      break;
+    }
+  }
+  
+  // ボタンの有効/無効を設定
+  if (currentIndex === -1) {
+    // カテゴリが見つからない場合
+    prevButton.disabled = true;
+    nextButton.disabled = true;
+  } else {
+    // 最初のカテゴリの場合
+    prevButton.disabled = (currentIndex === 0);
+    // 最後のカテゴリの場合
+    nextButton.disabled = (currentIndex === categories.length - 1);
+  }
+}
+
 // 選択数の表示を更新
 function updateSelectionCount() {
   var selectionCount = document.getElementById('selectionCount');
@@ -579,6 +740,11 @@ function resetListDisplay() {
   if (listContainer) listContainer.style.display = 'none';
   if (startButton) startButton.style.display = 'none';
   if (selectionCount) selectionCount.style.display = 'none';
+  
+  // ボタンを非表示
+  hideListNavButtons();
+  // ボタンの状態をリセット
+  updateListNavButtons();
 }
 
 // エラーを表示
@@ -714,6 +880,9 @@ function startLearning() {
   completedQuestionIndices = [];
   isLearningCompleted = false;
   
+  // 学習完了メッセージを非表示
+  hideCompletionMessage();
+  
   // 出題数表示を更新
   updateQuestionInfoDisplay();
   
@@ -830,9 +999,7 @@ function displayQuestion() {
   startStopwatch();
   
   // ナビゲーションボタンを無効化（Answerボタンが押されるまで）
-  var prevButton = document.getElementById('prevButton');
   var nextButton = document.getElementById('nextButton');
-  if (prevButton) prevButton.disabled = true;
   if (nextButton) nextButton.disabled = true;
   
   // プラスボタンを無効化（出題中）
@@ -1320,12 +1487,64 @@ function playAudioFromCache(audioData) {
   }
   
   try {
+    // 既存のAudioがあれば停止
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio.currentTime = 0;
+      currentAudio = null;
+    }
+    
     var audio = new Audio('data:audio/mp3;base64,' + audioData.audioContent);
+    currentAudio = audio;
+    
+    // 再生開始時に再生ボタンを無効化
+    audio.addEventListener('play', function() {
+      var playButton = document.getElementById('playButton');
+      if (playButton) {
+        playButton.disabled = true;
+      }
+    });
+    
+    // 再生終了時に再生ボタンを有効化
+    audio.addEventListener('ended', function() {
+      var playButton = document.getElementById('playButton');
+      if (playButton) {
+        // 回答が画像URLの場合は無効化のまま
+        var item = currentCategoryData[currentQuestionIndex];
+        if (item && !isImageUrl(item.answer || '')) {
+          playButton.disabled = false;
+        }
+      }
+      currentAudio = null;
+    });
+    
+    // エラー時に再生ボタンを有効化
+    audio.addEventListener('error', function() {
+      var playButton = document.getElementById('playButton');
+      if (playButton) {
+        var item = currentCategoryData[currentQuestionIndex];
+        if (item && !isImageUrl(item.answer || '')) {
+          playButton.disabled = false;
+        }
+      }
+      currentAudio = null;
+    });
+    
     audio.play().catch(function(error) {
       showError('音声の再生に失敗しました: ' + error.toString());
+      // エラー時も再生ボタンを有効化
+      var playButton = document.getElementById('playButton');
+      if (playButton) {
+        var item = currentCategoryData[currentQuestionIndex];
+        if (item && !isImageUrl(item.answer || '')) {
+          playButton.disabled = false;
+        }
+      }
+      currentAudio = null;
     });
   } catch (error) {
     showError('音声の再生に失敗しました: ' + error.toString());
+    currentAudio = null;
   }
 }
 
@@ -1397,10 +1616,66 @@ function fetchAudioFromAPI(text) {
       saveAudioToCache(text, data.audioContent);
       
       // 音声データ（base64）を再生
-      var audio = new Audio('data:audio/mp3;base64,' + data.audioContent);
-      audio.play().catch(function(error) {
+      try {
+        // 既存のAudioがあれば停止
+        if (currentAudio) {
+          currentAudio.pause();
+          currentAudio.currentTime = 0;
+          currentAudio = null;
+        }
+        
+        var audio = new Audio('data:audio/mp3;base64,' + data.audioContent);
+        currentAudio = audio;
+        
+        // 再生開始時に再生ボタンを無効化
+        audio.addEventListener('play', function() {
+          var playButton = document.getElementById('playButton');
+          if (playButton) {
+            playButton.disabled = true;
+          }
+        });
+        
+        // 再生終了時に再生ボタンを有効化
+        audio.addEventListener('ended', function() {
+          var playButton = document.getElementById('playButton');
+          if (playButton) {
+            // 回答が画像URLの場合は無効化のまま
+            var item = currentCategoryData[currentQuestionIndex];
+            if (item && !isImageUrl(item.answer || '')) {
+              playButton.disabled = false;
+            }
+          }
+          currentAudio = null;
+        });
+        
+        // エラー時に再生ボタンを有効化
+        audio.addEventListener('error', function() {
+          var playButton = document.getElementById('playButton');
+          if (playButton) {
+            var item = currentCategoryData[currentQuestionIndex];
+            if (item && !isImageUrl(item.answer || '')) {
+              playButton.disabled = false;
+            }
+          }
+          currentAudio = null;
+        });
+        
+        audio.play().catch(function(error) {
+          showError('音声の再生に失敗しました: ' + error.toString());
+          // エラー時も再生ボタンを有効化
+          var playButton = document.getElementById('playButton');
+          if (playButton) {
+            var item = currentCategoryData[currentQuestionIndex];
+            if (item && !isImageUrl(item.answer || '')) {
+              playButton.disabled = false;
+            }
+          }
+          currentAudio = null;
+        });
+      } catch (error) {
         showError('音声の再生に失敗しました: ' + error.toString());
-      });
+        currentAudio = null;
+      }
     } else {
       showError('音声の生成に失敗しました: ' + (data.error || 'Unknown error'));
     }
@@ -1558,6 +1833,8 @@ function goToNextQuestion() {
       isLearningCompleted = true;
       // 出題数表示を更新（完了済みとして表示）
       updateQuestionInfoDisplay();
+      // 学習完了メッセージを表示
+      showCompletionMessage();
     }
   } else {
     // 通常モード
@@ -1574,6 +1851,8 @@ function goToNextQuestion() {
         isLearningCompleted = true;
         // 出題数表示を更新（完了済みとして表示）
         updateQuestionInfoDisplay();
+        // 学習完了メッセージを表示
+        showCompletionMessage();
       }
     }
   }
@@ -1615,6 +1894,8 @@ function handlePlusButtonClick() {
           // 再チャレンジ問題がなければ学習完了
           isLearningCompleted = true;
           updateNavigationButtons();
+          // 学習完了メッセージを表示
+          showCompletionMessage();
         }
       }
     } else {
@@ -1761,29 +2042,30 @@ function startRetryQuestions() {
     displayQuestion();
     updateNavigationButtons();
     updatePlusButton();
+    // 学習完了メッセージを非表示
+    hideCompletionMessage();
   } else {
     // 再チャレンジ問題がない場合は学習完了
     isLearningCompleted = true;
     updateNavigationButtons();
     updatePlusButton();
+    // 学習完了メッセージを表示
+    showCompletionMessage();
   }
 }
 
 // ナビゲーションボタンの状態を更新
 function updateNavigationButtons() {
-  var prevButton = document.getElementById('prevButton');
   var nextButton = document.getElementById('nextButton');
   
   // 回答表示中（isAnswerShown === true）の場合は、isLearningCompletedに関係なくボタンを有効化
   if (isAnswerShown && !isLearningCompleted) {
     if (isInRetryMode) {
       // 再チャレンジモードの場合
-      if (prevButton) prevButton.disabled = (retryQuestionIndex === 0);
       // 最後の再チャレンジ問題でも、回答表示中は次へボタンを有効にする
       if (nextButton) nextButton.disabled = false;
     } else {
       // 通常モード
-      if (prevButton) prevButton.disabled = (currentQuestionIndex === 0);
       if (nextButton) {
         if (currentQuestionIndex === currentCategoryData.length - 1) {
           // 最後の問題の場合、回答表示中は常に有効（再チャレンジ問題の有無に関係なく）
@@ -1796,14 +2078,11 @@ function updateNavigationButtons() {
   } else if (isLearningCompleted) {
     // 学習完了の場合、次へボタンを無効化
     if (nextButton) nextButton.disabled = true;
-    if (prevButton) prevButton.disabled = (currentQuestionIndex === 0);
   } else if (isInRetryMode) {
     // 再チャレンジモードの場合（回答表示前）
-    if (prevButton) prevButton.disabled = true;
     if (nextButton) nextButton.disabled = true;
   } else {
     // 通常モード（回答表示前）
-    if (prevButton) prevButton.disabled = true;
     if (nextButton) nextButton.disabled = true;
   }
 }
@@ -1814,6 +2093,35 @@ function updatePlusButton() {
   if (plusButton) {
     // 回答表示中で学習完了でない場合は有効、それ以外は無効
     plusButton.disabled = !isAnswerShown || isLearningCompleted;
+  }
+}
+
+// 学習完了メッセージを表示
+function showCompletionMessage() {
+  var completionSection = document.getElementById('completionMessageSection');
+  var completionMessageText = document.querySelector('#completionMessage .completion-message-text');
+  var completionMessageIcon = document.getElementById('completionMessageIcon');
+  
+  if (completionSection && completionMessageText && completionMessageIcon) {
+    // メッセージをランダムに選択
+    var randomMessageIndex = Math.floor(Math.random() * COMPLETION_MESSAGES.length);
+    var message = COMPLETION_MESSAGES[randomMessageIndex];
+    
+    // アイコン画像をランダムに選択
+    var randomImageIndex = Math.floor(Math.random() * COMPLETION_MESSAGE_IMAGES.length);
+    var imageFileName = COMPLETION_MESSAGE_IMAGES[randomImageIndex];
+    
+    completionMessageText.textContent = message;
+    completionMessageIcon.src = 'img/msg/' + imageFileName;
+    completionSection.style.display = 'block';
+  }
+}
+
+// 学習完了メッセージを非表示
+function hideCompletionMessage() {
+  var completionSection = document.getElementById('completionMessageSection');
+  if (completionSection) {
+    completionSection.style.display = 'none';
   }
 }
 
@@ -1840,6 +2148,9 @@ function goToHome() {
   // 選択状態をリセット
   selectedQuestionIndices = [];
   originalCategoryData = [];
+  
+  // 学習完了メッセージを非表示
+  hideCompletionMessage();
   
   // 学習時間はリセットしない（継続）
 }
