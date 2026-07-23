@@ -310,6 +310,44 @@
   border-color: #45a049 !important;
 }
 
+/* 出題設定（入替え・リスニング）ボタン */
+.practice-setting-button {
+  min-width: 48px;
+  height: 36px;
+  padding: 0 10px;
+  border: 2px solid #ddd;
+  background-color: #fff;
+  color: #333;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.practice-setting-button:hover {
+  background-color: #f5f5f5;
+  border-color: #999;
+}
+
+.practice-setting-button:active {
+  background-color: #e0e0e0;
+}
+
+.practice-setting-button-active {
+  background-color: #4CAF50 !important;
+  color: #fff !important;
+  border-color: #4CAF50 !important;
+}
+
+.practice-setting-button-active:hover {
+  background-color: #45a049 !important;
+  border-color: #45a049 !important;
+}
+
 /* 学習画面（screen2）でもハンバーガーメニューを表示 */
 
 /* ページローディングオーバーレイ */
@@ -2509,7 +2547,8 @@ body:has(#screen2.active) .login-button {
   }
 
   .audio-voice-button,
-  .audio-speed-button {
+  .audio-speed-button,
+  .practice-setting-button {
     min-width: 32px !important;
     height: 32px !important;
     font-size: 13px !important;

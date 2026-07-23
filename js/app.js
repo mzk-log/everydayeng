@@ -28,6 +28,9 @@ var mediaRecorder = null; // 音声録音用のMediaRecorder
 var audioChunks = []; // 録音した音声データのチャンク
 var isRecording = false; // 録音中かどうか
 
+// 出題設定（localStorageと同期。学習中の切替は次問から反映）
+var LISTENING_PLACEHOLDER_TEXT = '🔊 リスニング練習モードです';
+
 // 音声キャッシュ（メモリキャッシュ）
 var audioCache = {};
 
@@ -110,6 +113,9 @@ window.onload = function() {
       answerToggleButton.classList.remove('active');
     }
   }
+  
+  // 出題設定（入替え・リスニング）を読み込み
+  loadPracticeSettings();
   
   // トグルボタンの位置を設定（タイトルが表示された後に実行）
   requestAnimationFrame(function() {
@@ -578,6 +584,11 @@ function setupEventListeners() {
     toggleAudioSettingsSubmenu();
   });
   
+  // 出題設定のアコーディオンメニュー
+  document.getElementById('questionSettingsButton').addEventListener('click', function() {
+    toggleQuestionSettingsSubmenu();
+  });
+  
   // 音声ボタン（出題音声・解答音声）
   var audioVoiceButtons = document.querySelectorAll('.audio-voice-button');
   audioVoiceButtons.forEach(function(button) {
@@ -597,6 +608,16 @@ function setupEventListeners() {
       var speedValue = this.dataset.speedValue; // 'fast', 'medium', 'slow'
       updateAudioSpeedButtons(speedType, speedValue);
       setAudioSpeed(speedType, speedValue);
+    });
+  });
+  
+  // 出題設定ボタン（入替え・リスニング）
+  var practiceSettingButtons = document.querySelectorAll('.practice-setting-button');
+  practiceSettingButtons.forEach(function(button) {
+    button.addEventListener('click', function() {
+      var setting = this.dataset.setting; // 'swapQA' または 'listeningMode'
+      var value = this.dataset.value; // 'on' または 'off'
+      setPracticeSetting(setting, value === 'on');
     });
   });
   
@@ -738,6 +759,22 @@ function toggleAudioSettingsSubmenu() {
   }
 }
 
+// 出題設定サブメニューをトグル
+function toggleQuestionSettingsSubmenu() {
+  var submenu = document.getElementById('questionSettingsSubmenu');
+  var parentButton = document.getElementById('questionSettingsButton');
+  if (submenu && parentButton) {
+    var isActive = submenu.classList.contains('active');
+    if (isActive) {
+      submenu.classList.remove('active');
+      parentButton.classList.remove('active');
+    } else {
+      submenu.classList.add('active');
+      parentButton.classList.add('active');
+    }
+  }
+}
+
 // 音声ボタンのアクティブ状態を更新
 function updateAudioVoiceButtons(voiceType, activeGender) {
   var allVoiceButtons = document.querySelectorAll('.audio-voice-button');
@@ -839,6 +876,119 @@ function loadAudioSettings() {
   // 解答読みの速さ
   var answerSpeed = getAudioSpeed('answer');
   updateAudioSpeedButtons('answer', answerSpeed);
+}
+
+// ========================================
+// 出題設定（入替え・リスニング）
+// ========================================
+
+function isSwapQAEnabled() {
+  try {
+    return localStorage.getItem('practiceSwapQA') === 'on';
+  } catch (e) {
+    return false;
+  }
+}
+
+function isListeningModeEnabled() {
+  try {
+    return localStorage.getItem('practiceListeningMode') === 'on';
+  } catch (e) {
+    return false;
+  }
+}
+
+function getEffectiveQuestion(item) {
+  if (!item) return '';
+  if (isSwapQAEnabled()) {
+    return item.answer || '';
+  }
+  return item.question || item.Question || '';
+}
+
+function getEffectiveAnswer(item) {
+  if (!item) return '';
+  if (isSwapQAEnabled()) {
+    return item.question || item.Question || '';
+  }
+  return item.answer || '';
+}
+
+function getEffectiveQTitle(item) {
+  if (!item) return '';
+  if (isSwapQAEnabled()) {
+    return item.a_title || '';
+  }
+  return item.q_title || '';
+}
+
+function getEffectiveATitle(item) {
+  if (!item) return '';
+  if (isSwapQAEnabled()) {
+    return item.q_title || '';
+  }
+  return item.a_title || '';
+}
+
+function updatePracticeSettingButtons(setting, isOn) {
+  var buttons = document.querySelectorAll('.practice-setting-button[data-setting="' + setting + '"]');
+  buttons.forEach(function(button) {
+    var shouldActive = (button.dataset.value === 'on') === isOn;
+    if (shouldActive) {
+      button.classList.add('practice-setting-button-active');
+    } else {
+      button.classList.remove('practice-setting-button-active');
+    }
+  });
+}
+
+function loadPracticeSettings() {
+  updatePracticeSettingButtons('swapQA', isSwapQAEnabled());
+  updatePracticeSettingButtons('listeningMode', isListeningModeEnabled());
+}
+
+function setPracticeSetting(setting, isOn) {
+  var key = setting === 'swapQA' ? 'practiceSwapQA' : 'practiceListeningMode';
+  try {
+    localStorage.setItem(key, isOn ? 'on' : 'off');
+  } catch (e) {
+    // localStorageが使えない場合は無視
+  }
+  updatePracticeSettingButtons(setting, isOn);
+  
+  // TOP画面のList表示を更新（学習中の現在問題は次問から反映）
+  var screen1 = document.getElementById('screen1');
+  if (screen1 && screen1.classList.contains('active') && currentCategoryData.length > 0) {
+    if (setting === 'listeningMode' || setting === 'swapQA') {
+      refreshHomeListForPracticeSettings();
+    }
+  }
+}
+
+function refreshHomeListForPracticeSettings() {
+  if (currentCategoryData.length === 0) return;
+  
+  if (isListeningModeEnabled()) {
+    selectedQuestionIndices = [];
+    updateSelectionCount();
+    
+    var tableBody = document.getElementById('listTableBody');
+    if (tableBody) tableBody.innerHTML = '';
+    
+    var listContainer = document.getElementById('listContainer');
+    if (listContainer) listContainer.style.display = 'none';
+    
+    var listMessage = document.getElementById('listMessage');
+    if (listMessage) {
+      listMessage.style.display = 'block';
+      listMessage.textContent = '出題数: ' + currentCategoryData.length;
+    }
+    
+    var startButton = document.getElementById('startButton');
+    if (startButton) startButton.style.display = 'block';
+  } else {
+    displayList();
+  }
 }
 
 // 音声キャッシュをクリア
@@ -1257,16 +1407,22 @@ function loadCategoryData(categoryNo) {
 
 // リストを表示
 function displayList() {
+  // リスニング練習モード時はListを出さず出題数のみ表示
+  if (isListeningModeEnabled()) {
+    refreshHomeListForPracticeSettings();
+    return;
+  }
+  
   var tableBody = document.getElementById('listTableBody');
   if (!tableBody) return;
   
   tableBody.innerHTML = '';
   
-  // 最初のアイテムからQ_Titleを取得してヘッダーに設定
-  if (currentCategoryData.length > 0 && currentCategoryData[0].q_title) {
+  // 最初のアイテムから出題側タイトルを取得してヘッダーに設定
+  if (currentCategoryData.length > 0) {
     var headerCell = document.getElementById('listTableHeader');
     if (headerCell) {
-      headerCell.textContent = currentCategoryData[0].q_title;
+      headerCell.textContent = getEffectiveQTitle(currentCategoryData[0]) || '';
     }
   }
   
@@ -1286,8 +1442,8 @@ function displayList() {
       noCell.classList.add('selected-no');
     }
     var questionCell = document.createElement('td');
-    // Question列の値を表示（画像対応）
-    var questionContent = item.question || item.Question || '';
+    // 出題側の値を表示（画像対応・入替え対応）
+    var questionContent = getEffectiveQuestion(item);
     if (isImageUrl(questionContent)) {
       // 画像URLの場合はサムネイル表示
       var imageUrl = convertGoogleDriveUrl(questionContent);
@@ -1631,9 +1787,10 @@ function startLearning() {
   originalCategoryData = currentCategoryData.slice();
   
   // 選択された問題のみを抽出（未選択時は全問）
+  // リスニング練習モード時は常に全問
   var filteredData = [];
-  if (selectedQuestionIndices.length === 0) {
-    // 未選択時は全問
+  if (isListeningModeEnabled() || selectedQuestionIndices.length === 0) {
+    // 未選択時／リスニング時は全問
     filteredData = currentCategoryData.slice();
   } else {
     // 選択された問題のみ（元の順序で）
@@ -1754,28 +1911,30 @@ function displayQuestion() {
   }
   
   var item = currentCategoryData[currentQuestionIndex];
+  var effectiveQuestion = getEffectiveQuestion(item);
+  var isListeningQuestion = isListeningModeEnabled() && effectiveQuestion && !isImageUrl(effectiveQuestion);
   
-  // セクションラベルをQ_TitleとA_Titleから設定
-  if (item.q_title) {
-    var questionLabel = document.getElementById('questionSectionLabel');
-    if (questionLabel) {
-      questionLabel.textContent = item.q_title;
-    }
+  // セクションラベルを出題／解答タイトルから設定（入替え対応）
+  var questionLabel = document.getElementById('questionSectionLabel');
+  if (questionLabel) {
+    questionLabel.textContent = getEffectiveQTitle(item) || '';
   }
-  if (item.a_title) {
-    var answerLabel = document.getElementById('answerSectionLabel');
-    if (answerLabel) {
-      answerLabel.textContent = item.a_title;
-    }
+  var answerLabel = document.getElementById('answerSectionLabel');
+  if (answerLabel) {
+    answerLabel.textContent = getEffectiveATitle(item) || '';
   }
   
   // 出題数表示
   updateQuestionInfoDisplay();
   
-  // 質問文を表示（画像対応）
+  // 質問文を表示（画像対応／リスニング時はプレースホルダ）
   var questionText = document.getElementById('questionText');
   if (questionText) {
-    displayImageOrText(questionText, item.question || '');
+    if (isListeningQuestion) {
+      questionText.textContent = LISTENING_PLACEHOLDER_TEXT;
+    } else {
+      displayImageOrText(questionText, effectiveQuestion);
+    }
   }
   
   // 上の黒いボックスを表示
@@ -1798,7 +1957,7 @@ function displayQuestion() {
   // 再生ボタンの制御（質問文が画像URLの場合は無効化、それ以外は有効化）
   var playButton = document.getElementById('playButton');
   if (playButton) {
-    if (isImageUrl(item.question || '')) {
+    if (isImageUrl(effectiveQuestion)) {
       // 質問文が画像URLの場合は無効化
       playButton.disabled = true;
     } else {
@@ -1819,11 +1978,13 @@ function displayQuestion() {
   var plusButton = document.getElementById('plusButton');
   if (plusButton) plusButton.disabled = true;
   
-  // 出題読みトグルボタンがONの場合、250ms待ってから出題文を自動再生
-  if (isQuestionToggleActive) {
+  // 出題読みトグルON、またはリスニング練習モード時は出題を自動再生
+  if ((isQuestionToggleActive || isListeningQuestion) && effectiveQuestion && !isImageUrl(effectiveQuestion)) {
     setTimeout(function() {
-      var item = currentCategoryData[currentQuestionIndex];
-      if (item && item.question && !isImageUrl(item.question)) {
+      var currentItem = currentCategoryData[currentQuestionIndex];
+      if (!currentItem || isAnswerShown) return;
+      var text = getEffectiveQuestion(currentItem);
+      if (text && !isImageUrl(text)) {
         playAnswer(); // 出題中なので質問文を読み上げ
       }
     }, 250);
@@ -1892,6 +2053,9 @@ function showAnswer() {
   stopStopwatch();
   
   var item = currentCategoryData[currentQuestionIndex];
+  var effectiveQuestion = getEffectiveQuestion(item);
+  var effectiveAnswer = getEffectiveAnswer(item);
+  var isListeningQuestion = isListeningModeEnabled() && effectiveQuestion && !isImageUrl(effectiveQuestion);
   
   // 上の黒いボックスを非表示
   var answerButtonContainer = document.getElementById('answerButtonContainer');
@@ -1903,10 +2067,18 @@ function showAnswer() {
   if (navAnswerButton) navAnswerButton.disabled = true;
   if (navAnswerText) navAnswerText.classList.remove('blinking');
   
-  // 回答文を表示（画像対応）
+  // リスニング練習モード時は出題側にも文字を表示
+  if (isListeningQuestion) {
+    var questionText = document.getElementById('questionText');
+    if (questionText) {
+      displayImageOrText(questionText, effectiveQuestion);
+    }
+  }
+  
+  // 回答文を表示（画像対応・入替え対応）
   var answerTextDisplay = document.getElementById('answerTextDisplay');
   if (answerTextDisplay) {
-    displayImageOrText(answerTextDisplay, item.answer || '');
+    displayImageOrText(answerTextDisplay, effectiveAnswer);
     answerTextDisplay.classList.remove('answer-hidden');
     answerTextDisplay.style.display = 'block';
   }
@@ -1914,7 +2086,7 @@ function showAnswer() {
   // 再生ボタンの制御（回答が画像URLの場合は無効化、テキストの場合は有効化）
   var playButton = document.getElementById('playButton');
   if (playButton) {
-    if (isImageUrl(item.answer || '')) {
+    if (isImageUrl(effectiveAnswer)) {
       // 画像URLの場合は無効化
       playButton.disabled = true;
     } else {
@@ -1963,7 +2135,13 @@ function setupAnswerDoubleClick() {
 function handleAnswerDoubleClick(e) {
   e.preventDefault();
   e.stopPropagation();
-  
+
+  // 入替えON時は画面上の解答が元の出題列になるため、既存のanswer更新APIでは保存できない
+  if (isSwapQAEnabled()) {
+    showError('出題と解答の入替えがONのときは、解答メモの更新はできません。');
+    return;
+  }
+
   // 更新モード開始
   startUpdateMode();
 }
@@ -2136,7 +2314,7 @@ function playAnswer() {
   
   // 出題中（isAnswerShown === false）の場合は質問文を読み上げ
   // 回答表示後（isAnswerShown === true）の場合は回答文を読み上げ
-  var text = isAnswerShown ? (item.answer || '') : (item.question || '');
+  var text = isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item);
   
   if (!text) return;
   
@@ -2427,7 +2605,7 @@ function playAudioFromCache(audioData) {
         var item = currentCategoryData[currentQuestionIndex];
         if (item) {
           // 出題中の場合は質問文、回答表示後の場合は回答文をチェック
-          var textToCheck = isAnswerShown ? (item.answer || '') : (item.question || '');
+          var textToCheck = isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item);
           if (!isImageUrl(textToCheck)) {
             playButton.disabled = false;
           }
@@ -2443,7 +2621,7 @@ function playAudioFromCache(audioData) {
         var item = currentCategoryData[currentQuestionIndex];
         if (item) {
           // 出題中の場合は質問文、回答表示後の場合は回答文をチェック
-          var textToCheck = isAnswerShown ? (item.answer || '') : (item.question || '');
+          var textToCheck = isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item);
           if (!isImageUrl(textToCheck)) {
             playButton.disabled = false;
           }
@@ -2460,7 +2638,7 @@ function playAudioFromCache(audioData) {
         var item = currentCategoryData[currentQuestionIndex];
         if (item) {
           // 出題中の場合は質問文、回答表示後の場合は回答文をチェック
-          var textToCheck = isAnswerShown ? (item.answer || '') : (item.question || '');
+          var textToCheck = isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item);
           if (!isImageUrl(textToCheck)) {
             playButton.disabled = false;
           }
@@ -2572,7 +2750,8 @@ function fetchAudioFromAPI(text, voiceGender, speed) {
           if (playButton) {
             // 回答が画像URLの場合は無効化のまま
             var item = currentCategoryData[currentQuestionIndex];
-            if (item && !isImageUrl(item.answer || '')) {
+            var textToCheck = item ? (isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item)) : '';
+            if (item && !isImageUrl(textToCheck)) {
               playButton.disabled = false;
             }
           }
@@ -2584,7 +2763,8 @@ function fetchAudioFromAPI(text, voiceGender, speed) {
           var playButton = document.getElementById('playButton');
           if (playButton) {
             var item = currentCategoryData[currentQuestionIndex];
-            if (item && !isImageUrl(item.answer || '')) {
+            var textToCheck = item ? (isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item)) : '';
+            if (item && !isImageUrl(textToCheck)) {
               playButton.disabled = false;
             }
           }
@@ -2597,7 +2777,8 @@ function fetchAudioFromAPI(text, voiceGender, speed) {
           var playButton = document.getElementById('playButton');
           if (playButton) {
             var item = currentCategoryData[currentQuestionIndex];
-            if (item && !isImageUrl(item.answer || '')) {
+            var textToCheck = item ? (isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item)) : '';
+            if (item && !isImageUrl(textToCheck)) {
               playButton.disabled = false;
             }
           }
@@ -2630,17 +2811,19 @@ function preloadAudioForCurrentAndNext() {
   if (currentQuestionIndex >= 0 && currentQuestionIndex < currentCategoryData.length) {
     var currentItem = currentCategoryData[currentQuestionIndex];
     if (currentItem) {
+      var effectiveQuestion = getEffectiveQuestion(currentItem);
+      var effectiveAnswer = getEffectiveAnswer(currentItem);
       // 出題文をプリロード（出題用設定）
-      if (currentItem.question && !isImageUrl(currentItem.question)) {
+      if (effectiveQuestion && !isImageUrl(effectiveQuestion)) {
         var questionVoice = getAudioVoice('question');
         var questionSpeed = getAudioSpeed('question');
-        preloadAudio(currentItem.question, questionVoice, questionSpeed);
+        preloadAudio(effectiveQuestion, questionVoice, questionSpeed);
       }
       // 解答文をプリロード（解答用設定）
-      if (currentItem.answer && !isImageUrl(currentItem.answer)) {
+      if (effectiveAnswer && !isImageUrl(effectiveAnswer)) {
         var answerVoice = getAudioVoice('answer');
         var answerSpeed = getAudioSpeed('answer');
-        preloadAudio(currentItem.answer, answerVoice, answerSpeed);
+        preloadAudio(effectiveAnswer, answerVoice, answerSpeed);
       }
     }
   }
@@ -2664,17 +2847,19 @@ function preloadNextQuestions() {
     if (nextIndex >= 0 && nextIndex < currentCategoryData.length) {
       var nextItem = currentCategoryData[nextIndex];
       if (nextItem) {
+        var effectiveQuestion = getEffectiveQuestion(nextItem);
+        var effectiveAnswer = getEffectiveAnswer(nextItem);
         // 出題文をプリロード（出題用設定）
-        if (nextItem.question && !isImageUrl(nextItem.question)) {
+        if (effectiveQuestion && !isImageUrl(effectiveQuestion)) {
           var questionVoice = getAudioVoice('question');
           var questionSpeed = getAudioSpeed('question');
-          preloadAudio(nextItem.question, questionVoice, questionSpeed);
+          preloadAudio(effectiveQuestion, questionVoice, questionSpeed);
         }
         // 解答文をプリロード（解答用設定）
-        if (nextItem.answer && !isImageUrl(nextItem.answer)) {
+        if (effectiveAnswer && !isImageUrl(effectiveAnswer)) {
           var answerVoice = getAudioVoice('answer');
           var answerSpeed = getAudioSpeed('answer');
-          preloadAudio(nextItem.answer, answerVoice, answerSpeed);
+          preloadAudio(effectiveAnswer, answerVoice, answerSpeed);
         }
       }
     }
@@ -3173,32 +3358,28 @@ function showModal(item, index) {
 
 // モーダルの内容を更新
 function updateModalContent(item) {
-  // A_Titleをラベルに設定
-  if (item.a_title) {
-    var modalAnswerLabel = document.getElementById('modalAnswerLabel');
-    if (modalAnswerLabel) {
-      modalAnswerLabel.textContent = item.a_title;
-    }
+  // 解答側タイトルをラベルに設定（入替え対応）
+  var modalAnswerLabel = document.getElementById('modalAnswerLabel');
+  if (modalAnswerLabel) {
+    modalAnswerLabel.textContent = getEffectiveATitle(item) || '';
   }
   
-  // Q_Titleをラベルに設定
-  if (item.q_title) {
-    var modalQuestionLabel = document.getElementById('modalQuestionLabel');
-    if (modalQuestionLabel) {
-      modalQuestionLabel.textContent = item.q_title;
-    }
+  // 出題側タイトルをラベルに設定（入替え対応）
+  var modalQuestionLabel = document.getElementById('modalQuestionLabel');
+  if (modalQuestionLabel) {
+    modalQuestionLabel.textContent = getEffectiveQTitle(item) || '';
   }
   
-  // 質問文を表示（画像対応）
+  // 質問文を表示（画像対応・入替え対応）
   var questionText = document.getElementById('modalQuestionText');
   if (questionText) {
-    displayImageOrText(questionText, item.question || '');
+    displayImageOrText(questionText, getEffectiveQuestion(item));
   }
   
-  // 回答文を表示（画像対応）
+  // 回答文を表示（画像対応・入替え対応）
   var answerText = document.getElementById('modalAnswerText');
   if (answerText) {
-    displayImageOrText(answerText, item.answer || '');
+    displayImageOrText(answerText, getEffectiveAnswer(item));
   }
   
   // noteを表示（ある場合のみ）
