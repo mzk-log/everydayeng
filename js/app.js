@@ -2,6 +2,7 @@
 var categories = [];
 var currentCategoryData = [];
 var currentCategoryNo = null;
+var categoryDataByNo = {}; // カテゴリ切替高速化用（セッション内キャッシュ）
 var currentQuestionIndex = 0;
 var learningStartTime = null;
 var learningTimeInterval = null;
@@ -45,6 +46,17 @@ var MAX_CACHE_SIZE = 10 * 1024 * 1024; // 最大キャッシュサイズ（10MB�
 // ここにGoogle Apps ScriptのWebアプリURLを設定してください
 //var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwysmu_TOO2CywifujRaRTGSZ-DE1GcOw2iZExPpdGPLweR2UBZp-5KPktHy3Ju9t58Gg/exec';  //DEV用
 var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';  //PRD用
+
+/**
+ * POST用URL（refererをクエリに付与）
+ * GAS WebアプリのリダイレクトでPOSTボディが欠落しても認証できるようにする
+ * @returns {string}
+ */
+function buildGasPostUrl() {
+  var params = new URLSearchParams();
+  params.append('referer', window.location.origin || '');
+  return WEB_APP_URL + '?' + params.toString();
+}
 
 
 // img/bgフォルダ内の背景画像ファイル一覧
@@ -390,10 +402,13 @@ function loadCategories(options) {
         if (quiet && currentCategoryNo != null && currentCategoryNo !== '' &&
             currentCategoryData && currentCategoryData.length > 0) {
           var listLastDate = computeCategoryLastDateFromItems(currentCategoryData);
+          var listStudyCounts = computeCategoryStudyCountsFromItems(currentCategoryData);
           for (var ci = 0; ci < categories.length; ci++) {
             if (String(categories[ci].no) === String(currentCategoryNo)) {
               categories[ci].last_date = listLastDate;
               categories[ci].count = currentCategoryData.length;
+              categories[ci].max_retry_count = listStudyCounts.max_retry_count;
+              categories[ci].min_total_study_count = listStudyCounts.min_total_study_count;
               break;
             }
           }
@@ -446,7 +461,7 @@ function loadCategories(options) {
 
 /**
  * カテゴリドロップダウン用の表示文言を生成
- * 例）[1] 名前（5問）：2026/8/1 ／ 空欄ありは（5問）：-
+ * 例）[1] 名前（5問）：2026/8/1 （3/1回） ／ 空欄ありは（5問）：-（回数なし）
  * @param {Object} cat
  * @returns {string}
  */
@@ -454,8 +469,16 @@ function formatCategoryOptionText(cat) {
   var displayText = '[' + cat.no + '] ' + cat.name;
   if (cat.count !== undefined && cat.count !== null) {
     displayText += '（' + cat.count + '問）';
-    // 空欄が1つでもあれば last_date は空 →「-」。全行埋まりなら最新日
-    displayText += '：' + formatYmdForDisplay(cat.last_date || '');
+    var lastDateYmd = normalizeToYmd(cat.last_date || '');
+    if (lastDateYmd) {
+      // 全行に学習日あり → 日付 + MAX(Retry)/MIN(Total)
+      var n = getRetryCountNumber(cat.max_retry_count);
+      var m = getRetryCountNumber(cat.min_total_study_count);
+      displayText += '：' + formatYmdForDisplay(lastDateYmd) + ' （' + n + '/' + m + '回）';
+    } else {
+      // 学習日が1つでも空 →「-」（回数は出さない）
+      displayText += '：-';
+    }
   }
   return displayText;
 }
@@ -484,7 +507,36 @@ function computeCategoryLastDateFromItems(items) {
 }
 
 /**
- * 表示中Listの学習日をカテゴリドロップダウンへ反映（HOME時の即時更新用）
+ * Listから回数集計（n=MAX RetryCount, m=MIN TotalStudyCount。空欄は0）
+ * @param {Array} items
+ * @returns {{max_retry_count: number, min_total_study_count: number}}
+ */
+function computeCategoryStudyCountsFromItems(items) {
+  var maxRetry = 0;
+  var minTotal = 0;
+  if (!items || items.length === 0) {
+    return { max_retry_count: 0, min_total_study_count: 0 };
+  }
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i] || {};
+    var retryNum = getRetryCountNumber(item.retry_count);
+    var totalNum = getRetryCountNumber(item.total_study_count);
+    if (i === 0) {
+      maxRetry = retryNum;
+      minTotal = totalNum;
+    } else {
+      if (retryNum > maxRetry) maxRetry = retryNum;
+      if (totalNum < minTotal) minTotal = totalNum;
+    }
+  }
+  return {
+    max_retry_count: maxRetry,
+    min_total_study_count: minTotal
+  };
+}
+
+/**
+ * 表示中Listの学習日・回数をカテゴリドロップダウンへ反映（HOME時の即時更新用）
  */
 function syncCategoryLastDateFromList() {
   if (currentCategoryNo == null || currentCategoryNo === '') {
@@ -494,12 +546,15 @@ function syncCategoryLastDateFromList() {
     return;
   }
   var lastDate = computeCategoryLastDateFromItems(currentCategoryData);
+  var studyCounts = computeCategoryStudyCountsFromItems(currentCategoryData);
   var catRef = null;
   if (categories && categories.length) {
     for (var i = 0; i < categories.length; i++) {
       if (String(categories[i].no) === String(currentCategoryNo)) {
         categories[i].last_date = lastDate;
         categories[i].count = currentCategoryData.length;
+        categories[i].max_retry_count = studyCounts.max_retry_count;
+        categories[i].min_total_study_count = studyCounts.min_total_study_count;
         catRef = categories[i];
         break;
       }
@@ -1411,32 +1466,33 @@ function loadCategoryData(categoryNo) {
     return;
   }
   
-  // ローディング表示
+  var categoryKey = String(categoryNo);
   var loadingSpinner = document.getElementById('categoryLoadingSpinner');
-  if (loadingSpinner) {
-    loadingSpinner.style.display = 'block';
-  }
-  
-  // ボタンを無効化
   var prevButton = document.getElementById('listPrevButton');
   var nextButton = document.getElementById('listNextButton');
   var startButton = document.getElementById('startButton');
-  if (prevButton) prevButton.disabled = true;
-  if (nextButton) nextButton.disabled = true;
-  if (startButton) startButton.disabled = true;
-  
-  // リストのクリックを無効化
   var listContainer = document.getElementById('listContainer');
-  if (listContainer) listContainer.style.pointerEvents = 'none';
   
-  // Google Apps Script経由でデータを取得
+  // セッション内キャッシュがあれば即表示（体感待ちを短縮）
+  var localCached = categoryDataByNo[categoryKey];
+  if (localCached && localCached.length > 0) {
+    applyLoadedCategoryData(categoryNo, localCached);
+    if (loadingSpinner) loadingSpinner.style.display = 'none';
+  } else {
+    if (loadingSpinner) loadingSpinner.style.display = 'block';
+    if (prevButton) prevButton.disabled = true;
+    if (nextButton) nextButton.disabled = true;
+    if (startButton) startButton.disabled = true;
+    if (listContainer) listContainer.style.pointerEvents = 'none';
+  }
+  
+  // Google Apps Script経由でデータを取得（裏で最新化）
   var params = new URLSearchParams();
   params.append('action', 'getCategoryData');
   params.append('categoryNo', categoryNo);
   params.append('email', userEmail);
   params.append('referer', window.location.origin);
   
-  // GETリクエストで送信
   var requestUrl = WEB_APP_URL + '?' + params.toString();
   
   fetch(requestUrl)
@@ -1456,59 +1512,61 @@ function loadCategoryData(categoryNo) {
           throw new Error('データがありません');
         }
         
-        currentCategoryData = data.items;
-        currentCategoryNo = categoryNo;
-        // 選択状態をリセット
-        selectedQuestionIndices = [];
-        displayList();
-        // Listの学習日とカテゴリドロップダウンの最終学習日を一致させる
-        syncCategoryLastDateFromList();
-        // ボタンの状態を更新（表示/非表示と有効/無効を設定）
-        updateListNavButtons();
+        // 切替が速いと古い応答が後着するため、現在選択中のカテゴリのみ反映
+        var selectEl = document.getElementById('categorySelect');
+        if (selectEl && String(selectEl.value) !== categoryKey) {
+          return;
+        }
         
-        // STARTボタンを有効化（読み込み完了時）
-        var startButton = document.getElementById('startButton');
-        if (startButton) startButton.disabled = false;
+        categoryDataByNo[categoryKey] = data.items;
+        applyLoadedCategoryData(categoryNo, data.items);
         
-        // リストのクリックを有効化（読み込み完了時）
-        var listContainer = document.getElementById('listContainer');
-        if (listContainer) listContainer.style.pointerEvents = 'auto';
-        
-        // ローディング非表示
         if (loadingSpinner) {
           loadingSpinner.style.display = 'none';
         }
       } catch (e) {
-        showError('データ読み込みエラー: ' + e.toString());
-        // ローディング非表示
+        if (!localCached) {
+          showError('データ読み込みエラー: ' + e.toString());
+        }
         if (loadingSpinner) {
           loadingSpinner.style.display = 'none';
         }
-        // ボタンの状態を更新（エラー時も無効化のまま）
         updateListNavButtons();
-        // STARTボタンを有効化（エラー時も有効化）
-        var startButton = document.getElementById('startButton');
         if (startButton) startButton.disabled = false;
-        // リストのクリックを有効化（エラー時も有効化）
-        var listContainer = document.getElementById('listContainer');
         if (listContainer) listContainer.style.pointerEvents = 'auto';
       }
     })
     .catch(function(error) {
-      showError('アクセスエラー: ' + error.toString());
-      // ローディング非表示
+      if (!localCached) {
+        showError('アクセスエラー: ' + error.toString());
+      }
       if (loadingSpinner) {
         loadingSpinner.style.display = 'none';
       }
-      // ボタンの状態を更新（エラー時も無効化のまま）
       updateListNavButtons();
-      // STARTボタンを有効化（エラー時も有効化）
-      var startButton = document.getElementById('startButton');
       if (startButton) startButton.disabled = false;
-      // リストのクリックを有効化（エラー時も有効化）
-      var listContainer = document.getElementById('listContainer');
       if (listContainer) listContainer.style.pointerEvents = 'auto';
     });
+}
+
+/**
+ * 取得済みカテゴリデータを画面へ反映
+ * @param {string|number} categoryNo
+ * @param {Array} items
+ */
+function applyLoadedCategoryData(categoryNo, items) {
+  currentCategoryData = items;
+  currentCategoryNo = categoryNo;
+  selectedQuestionIndices = [];
+  displayList();
+  syncCategoryLastDateFromList();
+  updateListNavButtons();
+  
+  var startButton = document.getElementById('startButton');
+  if (startButton) startButton.disabled = false;
+  
+  var listContainer = document.getElementById('listContainer');
+  if (listContainer) listContainer.style.pointerEvents = 'auto';
 }
 
 // リストを表示
@@ -2512,7 +2570,7 @@ function updateItemFieldAsync(item, field, value, onSuccess) {
   params.append('email', userEmail);
   params.append('referer', window.location.origin);
   
-  fetch(WEB_APP_URL, {
+  fetch(buildGasPostUrl(), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -3142,7 +3200,7 @@ function fetchAudioFromAPI(text, voiceGender, speed) {
   params.append('referer', window.location.origin);
   
   // Google Apps Scriptにリクエストを送信
-  fetch(WEB_APP_URL, {
+  fetch(buildGasPostUrl(), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -3336,7 +3394,7 @@ function preloadAudio(text, voiceGender, speed) {
     params.append('email', userEmail); // TTS処理にもメール認証を追加
     params.append('referer', window.location.origin);
     
-    fetch(WEB_APP_URL, {
+    fetch(buildGasPostUrl(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -4521,7 +4579,7 @@ function saveItemField() {
   params.append('email', userEmail);
   params.append('referer', window.location.origin);
   
-  fetch(WEB_APP_URL, {
+  fetch(buildGasPostUrl(), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -4673,7 +4731,7 @@ function processRecordedAudio() {
       micButton.disabled = true;
     }
     
-    fetch(WEB_APP_URL, {
+    fetch(buildGasPostUrl(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
