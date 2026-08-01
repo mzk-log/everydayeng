@@ -181,7 +181,7 @@
                   </th>
                   <th id="listTableHeader"></th>
                   <th class="list-col-study-count">学習回数</th>
-                  <th class="list-col-lastdate">学習日</th>
+                  <th class="list-col-lastdate">学習日時</th>
                 </tr>
               </thead>
               <tbody id="listTableBody">
@@ -204,6 +204,11 @@
         <div class="section">
           <div class="section-label">Category</div>
           <div id="currentCategory"></div>
+          <div class="select-container" id="learningCategorySelectContainer" style="display: none;">
+            <select id="learningCategorySelect">
+              <option value="">Categoryを選択してください</option>
+            </select>
+          </div>
         </div>
         
         <div class="section question-section" id="questionSection">

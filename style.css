@@ -597,6 +597,20 @@ select {
   transition: background-color 0.3s ease;
 }
 
+#categorySelect option:disabled,
+#learningCategorySelect option:disabled {
+  color: #999999;
+}
+
+/* 学習完了時のカテゴリ選択（初期画面と同様） */
+#screen2 #learningCategorySelectContainer {
+  margin: 3px 0;
+}
+
+#screen2 #learningCategorySelect {
+  width: 100%;
+}
+
 /* セレクトボックス無効時（グレーアウト） */
 select:disabled {
   background-color: #e0e0e0 !important;

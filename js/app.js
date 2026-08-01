@@ -415,17 +415,16 @@ function loadCategories(options) {
         }
         if (select) {
           var valueToRestore = preserveValue || select.value || '';
-          select.innerHTML = '<option value="">Categoryを選択してください</option>';
-          categories.forEach(function(cat) {
-            var option = document.createElement('option');
-            option.value = cat.no;
-            option.textContent = formatCategoryOptionText(cat);
-            select.appendChild(option);
-          });
-          if (valueToRestore) {
-            select.value = valueToRestore;
-          }
+          populateCategorySelectOptions(select, valueToRestore);
           select.disabled = false;
+        }
+        // 学習完了中なら学習画面のドロップダウンも同期
+        var learningSelectContainer = document.getElementById('learningCategorySelectContainer');
+        if (learningSelectContainer && learningSelectContainer.style.display !== 'none' && isLearningCompleted) {
+          populateCategorySelectOptions(
+            document.getElementById('learningCategorySelect'),
+            currentCategoryNo
+          );
         }
         if (loadingSpinner) {
           loadingSpinner.style.display = 'none';
@@ -460,21 +459,131 @@ function loadCategories(options) {
 }
 
 /**
+ * カテゴリ名が END（選択不可の区切り）か
+ * @param {Object} cat
+ * @returns {boolean}
+ */
+function isEndCategory(cat) {
+  if (!cat || cat.name == null) {
+    return false;
+  }
+  return String(cat.name).trim() === 'END';
+}
+
+/**
+ * 指定インデックスから前後方向に、選択可能なカテゴリのインデックスを探す
+ * @param {number} fromIndex
+ * @param {number} direction -1=前 / 1=次
+ * @returns {number} 見つからなければ -1
+ */
+function findSelectableCategoryIndex(fromIndex, direction) {
+  if (!categories || categories.length === 0) {
+    return -1;
+  }
+  var i = fromIndex + direction;
+  while (i >= 0 && i < categories.length) {
+    if (!isEndCategory(categories[i])) {
+      return i;
+    }
+    i += direction;
+  }
+  return -1;
+}
+
+/**
+ * カテゴリselectへ option を設定する（初期画面／学習完了時で共用）
+ * @param {HTMLSelectElement} select
+ * @param {string|number|null} selectedValue
+ */
+function populateCategorySelectOptions(select, selectedValue) {
+  if (!select) return;
+  
+  select.innerHTML = '<option value="">Categoryを選択してください</option>';
+  categories.forEach(function(cat) {
+    var option = document.createElement('option');
+    option.value = cat.no;
+    option.textContent = formatCategoryOptionText(cat);
+    if (isEndCategory(cat)) {
+      option.disabled = true;
+      option.style.color = '#999999';
+    }
+    select.appendChild(option);
+  });
+  
+  if (selectedValue != null && selectedValue !== '') {
+    var restoreCat = null;
+    for (var ri = 0; ri < categories.length; ri++) {
+      if (String(categories[ri].no) === String(selectedValue)) {
+        restoreCat = categories[ri];
+        break;
+      }
+    }
+    if (restoreCat && !isEndCategory(restoreCat)) {
+      select.value = String(selectedValue);
+    } else {
+      select.value = '';
+    }
+  } else {
+    select.value = '';
+  }
+}
+
+/**
+ * 学習完了時：Categoryドロップダウンを表示（Listは出さない）
+ */
+function showLearningCategorySelect() {
+  var currentCategory = document.getElementById('currentCategory');
+  var container = document.getElementById('learningCategorySelectContainer');
+  var learningSelect = document.getElementById('learningCategorySelect');
+  
+  if (currentCategory) {
+    currentCategory.style.display = 'none';
+  }
+  if (container) {
+    container.style.display = 'block';
+  }
+  populateCategorySelectOptions(learningSelect, currentCategoryNo);
+}
+
+/**
+ * 学習中表示に戻す（ドロップダウンを隠す）
+ */
+function hideLearningCategorySelect() {
+  var currentCategory = document.getElementById('currentCategory');
+  var container = document.getElementById('learningCategorySelectContainer');
+  var learningSelect = document.getElementById('learningCategorySelect');
+  
+  if (currentCategory) {
+    currentCategory.style.display = '';
+  }
+  if (container) {
+    container.style.display = 'none';
+  }
+  if (learningSelect) {
+    learningSelect.value = '';
+  }
+}
+
+/**
  * カテゴリドロップダウン用の表示文言を生成
  * 例）[1] 名前（5問）：2026/8/1 （3/1回） ／ 空欄ありは（5問）：-（回数なし）
  * @param {Object} cat
  * @returns {string}
  */
 function formatCategoryOptionText(cat) {
+  // ENDは区切り表示のみ（番号・問数・日付・回数なし）
+  if (isEndCategory(cat)) {
+    return 'END';
+  }
   var displayText = '[' + cat.no + '] ' + cat.name;
   if (cat.count !== undefined && cat.count !== null) {
     displayText += '（' + cat.count + '問）';
-    var lastDateYmd = normalizeToYmd(cat.last_date || '');
-    if (lastDateYmd) {
-      // 全行に学習日あり → 日付 + MAX(Retry)/MIN(Total)
+    var lastDateValue = normalizeLastDate(cat.last_date || '');
+    if (lastDateValue) {
+      // 全行に学習日あり → 日時 + MAX(Retry)/MIN(Total)
       var n = getRetryCountNumber(cat.max_retry_count);
       var m = getRetryCountNumber(cat.min_total_study_count);
-      displayText += '：' + formatYmdForDisplay(lastDateYmd) + ' （' + n + '/' + m + '回）';
+      displayText += '：' + formatYmdForDisplay(lastDateValue) + ' （' + n + '/' + m + '回）';
     } else {
       // 学習日が1つでも空 →「-」（回数は出さない）
       displayText += '：-';
@@ -484,8 +593,8 @@ function formatCategoryOptionText(cat) {
 }
 
 /**
- * List（当該カテゴリの全問）から最終学習日を算出
- * 1つでも空欄なら空文字、全行埋まりなら最新日（yyyy-mm-dd）
+ * List（当該カテゴリの全問）から最終学習日時を算出
+ * 1つでも空欄なら空文字、全行埋まりなら最新日時（yyyy-mm-dd HH:mm または日付のみ）
  * @param {Array} items
  * @returns {string}
  */
@@ -495,12 +604,12 @@ function computeCategoryLastDateFromItems(items) {
   }
   var latest = '';
   for (var i = 0; i < items.length; i++) {
-    var ymd = normalizeToYmd(items[i] ? items[i].last_date : '');
-    if (!ymd) {
+    var ymdHm = normalizeLastDate(items[i] ? items[i].last_date : '');
+    if (!ymdHm) {
       return '';
     }
-    if (!latest || ymd > latest) {
-      latest = ymd;
+    if (!latest || ymdHm > latest) {
+      latest = ymdHm;
     }
   }
   return latest;
@@ -561,13 +670,22 @@ function syncCategoryLastDateFromList() {
     }
   }
   var select = document.getElementById('categorySelect');
-  if (!select || !catRef) {
-    return;
+  if (select && catRef) {
+    for (var j = 0; j < select.options.length; j++) {
+      if (String(select.options[j].value) === String(currentCategoryNo)) {
+        select.options[j].textContent = formatCategoryOptionText(catRef);
+        break;
+      }
+    }
   }
-  for (var j = 0; j < select.options.length; j++) {
-    if (String(select.options[j].value) === String(currentCategoryNo)) {
-      select.options[j].textContent = formatCategoryOptionText(catRef);
-      break;
+  var learningSelect = document.getElementById('learningCategorySelect');
+  var learningContainer = document.getElementById('learningCategorySelectContainer');
+  if (learningSelect && catRef && learningContainer && learningContainer.style.display !== 'none') {
+    for (var k = 0; k < learningSelect.options.length; k++) {
+      if (String(learningSelect.options[k].value) === String(currentCategoryNo)) {
+        learningSelect.options[k].textContent = formatCategoryOptionText(catRef);
+        break;
+      }
     }
   }
 }
@@ -577,6 +695,18 @@ function setupEventListeners() {
   document.getElementById('categorySelect').addEventListener('change', function() {
     var categoryNo = this.value;
     if (categoryNo) {
+      // ENDカテゴリは選択不可
+      var selectedCat = null;
+      for (var si = 0; si < categories.length; si++) {
+        if (String(categories[si].no) === String(categoryNo)) {
+          selectedCat = categories[si];
+          break;
+        }
+      }
+      if (selectedCat && isEndCategory(selectedCat)) {
+        this.value = '';
+        return;
+      }
       // 学習時間のカウント開始（カテゴリ選択時）
       if (learningStartTime === null) {
         learningStartTime = Date.now();
@@ -588,6 +718,29 @@ function setupEventListeners() {
     }
     // ボタンの状態はloadCategoryData()内で更新されるため、ここでは呼び出さない
   });
+  
+  // 学習完了時のCategoryドロップダウン：選択でListなし・すぐ学習開始
+  var learningCategorySelect = document.getElementById('learningCategorySelect');
+  if (learningCategorySelect) {
+    learningCategorySelect.addEventListener('change', function() {
+      var categoryNo = this.value;
+      if (!categoryNo || !isLearningCompleted) {
+        return;
+      }
+      var selectedCat = null;
+      for (var si = 0; si < categories.length; si++) {
+        if (String(categories[si].no) === String(categoryNo)) {
+          selectedCat = categories[si];
+          break;
+        }
+      }
+      if (selectedCat && isEndCategory(selectedCat)) {
+        this.value = currentCategoryNo != null ? String(currentCategoryNo) : '';
+        return;
+      }
+      loadCategoryDataAndStartLearning(categoryNo);
+    });
+  }
   
   document.getElementById('startButton').addEventListener('click', function() {
     startLearning();
@@ -1741,11 +1894,10 @@ function navigateToPreviousCategory() {
     }
   }
   
-  // 前のカテゴリが存在する場合
-  if (currentIndex > 0) {
-    var previousCategory = categories[currentIndex - 1];
-    select.value = previousCategory.no;
-    // changeイベントを手動で発火
+  // 前の選択可能カテゴリへ
+  var previousIndex = findSelectableCategoryIndex(currentIndex, -1);
+  if (previousIndex >= 0) {
+    select.value = categories[previousIndex].no;
     var event = new Event('change', { bubbles: true });
     select.dispatchEvent(event);
   }
@@ -1773,11 +1925,10 @@ function navigateToNextCategory() {
     }
   }
   
-  // 次のカテゴリが存在する場合
-  if (currentIndex >= 0 && currentIndex < categories.length - 1) {
-    var nextCategory = categories[currentIndex + 1];
-    select.value = nextCategory.no;
-    // changeイベントを手動で発火
+  // 次の選択可能カテゴリへ
+  var nextIndex = findSelectableCategoryIndex(currentIndex, 1);
+  if (nextIndex >= 0) {
+    select.value = categories[nextIndex].no;
     var event = new Event('change', { bubbles: true });
     select.dispatchEvent(event);
   }
@@ -1814,16 +1965,13 @@ function updateListNavButtons() {
     }
   }
   
-  // ボタンの有効/無効を設定
+  // ボタンの有効/無効を設定（ENDカテゴリはスキップして前後の有無を判定）
   if (currentIndex === -1) {
-    // カテゴリが見つからない場合
     prevButton.disabled = true;
     nextButton.disabled = true;
   } else {
-    // 最初のカテゴリの場合
-    prevButton.disabled = (currentIndex === 0);
-    // 最後のカテゴリの場合
-    nextButton.disabled = (currentIndex === categories.length - 1);
+    prevButton.disabled = (findSelectableCategoryIndex(currentIndex, -1) < 0);
+    nextButton.disabled = (findSelectableCategoryIndex(currentIndex, 1) < 0);
   }
 }
 
@@ -2426,23 +2574,34 @@ function getConfirmTitleForStorageField(storageField) {
 }
 
 /**
- * 端末ローカルの今日を yyyy-mm-dd で返す
+ * 端末ローカルの現在日時を yyyy-mm-dd HH:mm で返す
  * @returns {string}
  */
-function getTodayYmdLocal() {
+function getNowYmdHmLocal() {
   var now = new Date();
   var y = now.getFullYear();
   var m = now.getMonth() + 1;
   var d = now.getDate();
-  return y + '-' + (m < 10 ? '0' + m : String(m)) + '-' + (d < 10 ? '0' + d : String(d));
+  var hh = now.getHours();
+  var mi = now.getMinutes();
+  return y + '-' + (m < 10 ? '0' + m : String(m)) + '-' + (d < 10 ? '0' + d : String(d)) +
+    ' ' + (hh < 10 ? '0' + hh : String(hh)) + ':' + (mi < 10 ? '0' + mi : String(mi));
 }
 
 /**
- * 日付値を yyyy-mm-dd に正規化
+ * 端末ローカルの今日を yyyy-mm-dd で返す（互換）
+ * @returns {string}
+ */
+function getTodayYmdLocal() {
+  return getNowYmdHmLocal().substring(0, 10);
+}
+
+/**
+ * LastDate 値を yyyy-mm-dd または yyyy-mm-dd HH:mm に正規化
  * @param {*} value
  * @returns {string}
  */
-function normalizeToYmd(value) {
+function normalizeLastDate(value) {
   if (value === '' || value === null || value === undefined) {
     return '';
   }
@@ -2450,46 +2609,72 @@ function normalizeToYmd(value) {
     var y = value.getFullYear();
     var m = value.getMonth() + 1;
     var d = value.getDate();
-    return y + '-' + (m < 10 ? '0' + m : String(m)) + '-' + (d < 10 ? '0' + d : String(d));
+    var hh = value.getHours();
+    var mi = value.getMinutes();
+    return y + '-' + (m < 10 ? '0' + m : String(m)) + '-' + (d < 10 ? '0' + d : String(d)) +
+      ' ' + (hh < 10 ? '0' + hh : String(hh)) + ':' + (mi < 10 ? '0' + mi : String(mi));
   }
   var s = String(value).trim();
   if (!s) {
     return '';
   }
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
-    return s.substring(0, 10);
+  var dtMatched = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})[ T](\d{1,2}):(\d{2})/);
+  if (dtMatched) {
+    var mm = dtMatched[2].length === 1 ? '0' + dtMatched[2] : dtMatched[2];
+    var dd = dtMatched[3].length === 1 ? '0' + dtMatched[3] : dtMatched[3];
+    var h = dtMatched[4].length === 1 ? '0' + dtMatched[4] : dtMatched[4];
+    return dtMatched[1] + '-' + mm + '-' + dd + ' ' + h + ':' + dtMatched[5];
   }
-  var matched = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
-  if (matched) {
-    var mm = matched[2].length === 1 ? '0' + matched[2] : matched[2];
-    var dd = matched[3].length === 1 ? '0' + matched[3] : matched[3];
-    return matched[1] + '-' + mm + '-' + dd;
-  }
-  // ISO datetime
   if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
     var dt = new Date(s);
     if (!isNaN(dt.getTime())) {
-      return normalizeToYmd(dt);
+      return normalizeLastDate(dt);
     }
+  }
+  var matched = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (matched) {
+    var mm2 = matched[2].length === 1 ? '0' + matched[2] : matched[2];
+    var dd2 = matched[3].length === 1 ? '0' + matched[3] : matched[3];
+    return matched[1] + '-' + mm2 + '-' + dd2;
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    return s.substring(0, 10);
   }
   return '';
 }
 
 /**
- * yyyy-mm-dd を表示用 yyyy/m/d に変換
- * @param {string} ymd
+ * 日付値を yyyy-mm-dd に正規化（日付部分のみ。互換用）
+ * @param {*} value
  * @returns {string}
  */
-function formatYmdForDisplay(ymd) {
-  var normalized = normalizeToYmd(ymd);
+function normalizeToYmd(value) {
+  var normalized = normalizeLastDate(value);
+  if (!normalized) {
+    return '';
+  }
+  return normalized.substring(0, 10);
+}
+
+/**
+ * LastDate を表示用 yyyy/m/d または yyyy/m/d H:mm に変換
+ * @param {string} value
+ * @returns {string}
+ */
+function formatYmdForDisplay(value) {
+  var normalized = normalizeLastDate(value);
   if (!normalized) {
     return '-';
   }
-  var parts = normalized.split('-');
-  if (parts.length !== 3) {
+  var matched = normalized.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{1,2}):(\d{2}))?/);
+  if (!matched) {
     return '-';
   }
-  return Number(parts[0]) + '/' + Number(parts[1]) + '/' + Number(parts[2]);
+  var text = Number(matched[1]) + '/' + Number(matched[2]) + '/' + Number(matched[3]);
+  if (matched[4] !== undefined && matched[5] !== undefined) {
+    text += ' ' + Number(matched[4]) + ':' + matched[5];
+  }
+  return text;
 }
 
 /**
@@ -2528,7 +2713,7 @@ function buildLearningMetaText(item) {
   var m = getRetryCountNumber(item ? item.retry_count : 0);
   var n = getRetryCountNumber(item ? item.total_study_count : 0);
   var lastDateText = formatYmdForDisplay(item ? item.last_date : '');
-  return '学習回数：' + m + '／' + n + '回　最終学習日：' + lastDateText;
+  return '学習回数：' + m + '／' + n + '回　最終学習日時：' + lastDateText;
 }
 
 /**
@@ -2611,22 +2796,17 @@ function incrementTotalStudyCountAsync(item) {
 }
 
 /**
- * Ans押下時: LastDate が今日でなければ非同期更新
+ * Ans押下時: LastDate を現在日時で非同期更新（毎回更新）
  * 学習画面のメタ表示は更新せず、メモリとシートのみ更新する
  * @param {Object} item
  */
 function updateLastDateIfNeededAsync(item) {
   if (!item) return;
   
-  var today = getTodayYmdLocal();
-  var current = normalizeToYmd(item.last_date);
-  if (current === today) {
-    return;
-  }
+  var now = getNowYmdHmLocal();
+  item.last_date = now;
   
-  item.last_date = today;
-  
-  updateItemFieldAsync(item, 'last_date', today);
+  updateItemFieldAsync(item, 'last_date', now);
 }
 
 /**
@@ -3824,10 +4004,10 @@ function updateCompletionCategoryNav() {
   var nextButton = document.getElementById('nextButton');
   
   if (playButton) {
-    playButton.disabled = !(idx > 0);
+    playButton.disabled = (idx < 0 || findSelectableCategoryIndex(idx, -1) < 0);
   }
   if (nextButton) {
-    nextButton.disabled = !(idx >= 0 && idx < categories.length - 1);
+    nextButton.disabled = (idx < 0 || findSelectableCategoryIndex(idx, 1) < 0);
   }
 }
 
@@ -3845,8 +4025,8 @@ function startLearningAdjacentCategory(direction) {
     return;
   }
   
-  var targetIndex = idx + direction;
-  if (targetIndex < 0 || targetIndex >= categories.length) {
+  var targetIndex = findSelectableCategoryIndex(idx, direction);
+  if (targetIndex < 0) {
     return;
   }
   
@@ -3858,6 +4038,17 @@ function startLearningAdjacentCategory(direction) {
  * @param {string|number} categoryNo
  */
 function loadCategoryDataAndStartLearning(categoryNo) {
+  var targetCat = null;
+  for (var ti = 0; ti < categories.length; ti++) {
+    if (String(categories[ti].no) === String(categoryNo)) {
+      targetCat = categories[ti];
+      break;
+    }
+  }
+  if (targetCat && isEndCategory(targetCat)) {
+    return;
+  }
+  
   if (!userEmail) {
     userEmail = localStorage.getItem('userEmail');
   }
@@ -3964,6 +4155,14 @@ function showCompletionMessage() {
       });
     }, 500);
   }
+  
+  // 初期画面と同様のCategoryドロップダウンを表示（Listなし）
+  showLearningCategorySelect();
+  // ドロップダウン文言を最新の学習日・回数に寄せる
+  loadCategories({
+    preserveValue: currentCategoryNo,
+    quiet: true
+  });
 }
 
 // 学習完了メッセージを非表示
@@ -3981,6 +4180,7 @@ function hideCompletionMessage() {
     completionMessageIcon.style.opacity = '';
     completionMessageIcon.style.transform = '';
   }
+  hideLearningCategorySelect();
 }
 
 // ホームに戻る
