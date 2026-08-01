@@ -730,10 +730,10 @@ th {
   white-space: pre-line;
 }
 
-/* リトライ・学習日：中央寄せ・狭め */
-#listTable thead th.list-col-retry,
+/* 学習回数・学習日：中央寄せ・狭め */
+#listTable thead th.list-col-study-count,
 #listTable thead th.list-col-lastdate,
-#listTable tbody td.list-col-retry,
+#listTable tbody td.list-col-study-count,
 #listTable tbody td.list-col-lastdate {
   width: 16%;
   text-align: center;
@@ -787,7 +787,7 @@ tr:last-child td {
   vertical-align: middle;
 }
 
-#listTable tbody td.list-col-retry,
+#listTable tbody td.list-col-study-count,
 #listTable tbody td.list-col-lastdate {
   white-space: normal;
 }
@@ -886,7 +886,7 @@ tr:last-child td {
   white-space: pre-line;
 }
 
-/* リトライ回数・最終学習日（背景なし） */
+/* 学習回数・最終学習日（背景なし） */
 .learning-meta {
   font-size: 13px;
   color: #444;
@@ -2590,9 +2590,9 @@ body:has(#screen2.active) .login-button {
     min-width: 0 !important;
   }
 
-  #listTable thead th.list-col-retry,
+  #listTable thead th.list-col-study-count,
   #listTable thead th.list-col-lastdate,
-  #listTable tbody td.list-col-retry,
+  #listTable tbody td.list-col-study-count,
   #listTable tbody td.list-col-lastdate {
     width: 15% !important;
     font-size: 11px !important;

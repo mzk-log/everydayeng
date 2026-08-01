@@ -326,7 +326,15 @@ function updateBrightnessButtons(activeLevel) {
 }
 
 // カテゴリ一覧を読み込む（最優先）
-function loadCategories() {
+// options.preserveValue: 再取得後に選択を復元する値
+// options.quiet: 読み込み中表示を出さず、裏で更新する（HOME復帰時など）
+function loadCategories(options) {
+  options = options || {};
+  var preserveValue = options.preserveValue != null && options.preserveValue !== ''
+    ? String(options.preserveValue)
+    : null;
+  var quiet = !!options.quiet;
+  
   // userEmailが設定されていない場合は、再度確認
   if (!userEmail) {
     userEmail = localStorage.getItem('userEmail');
@@ -341,12 +349,14 @@ function loadCategories() {
   // ローディング表示
   var select = document.getElementById('categorySelect');
   var loadingSpinner = document.getElementById('categoryLoadingSpinner');
-  if (select) {
-    select.innerHTML = '<option value="">読み込み中...</option>';
-    select.disabled = true;
-  }
-  if (loadingSpinner) {
-    loadingSpinner.style.display = 'block';
+  if (!quiet) {
+    if (select) {
+      select.innerHTML = '<option value="">読み込み中...</option>';
+      select.disabled = true;
+    }
+    if (loadingSpinner) {
+      loadingSpinner.style.display = 'block';
+    }
   }
   
   // Google Apps Script経由でデータを取得
@@ -376,19 +386,30 @@ function loadCategories() {
         }
         
         categories = data.categories;
+        // HOME直後など、表示中Listの学習日が新しい場合はそちらを優先して上書き
+        if (quiet && currentCategoryNo != null && currentCategoryNo !== '' &&
+            currentCategoryData && currentCategoryData.length > 0) {
+          var listLastDate = computeCategoryLastDateFromItems(currentCategoryData);
+          for (var ci = 0; ci < categories.length; ci++) {
+            if (String(categories[ci].no) === String(currentCategoryNo)) {
+              categories[ci].last_date = listLastDate;
+              categories[ci].count = currentCategoryData.length;
+              break;
+            }
+          }
+        }
         if (select) {
+          var valueToRestore = preserveValue || select.value || '';
           select.innerHTML = '<option value="">Categoryを選択してください</option>';
           categories.forEach(function(cat) {
             var option = document.createElement('option');
             option.value = cat.no;
-            // 設問数を表示（countが存在する場合のみ）
-            var displayText = cat.no + '-' + cat.name;
-            if (cat.count !== undefined && cat.count !== null) {
-              displayText += '（' + cat.count + '問）';
-            }
-            option.textContent = displayText;
+            option.textContent = formatCategoryOptionText(cat);
             select.appendChild(option);
           });
+          if (valueToRestore) {
+            select.value = valueToRestore;
+          }
           select.disabled = false;
         }
         if (loadingSpinner) {
@@ -421,6 +442,79 @@ function loadCategories() {
       // ページローディングを非表示（エラー時も非表示）
       hidePageLoading();
     });
+}
+
+/**
+ * カテゴリドロップダウン用の表示文言を生成
+ * 例）[1] 名前（5問）：2026/8/1 ／ 空欄ありは（5問）：-
+ * @param {Object} cat
+ * @returns {string}
+ */
+function formatCategoryOptionText(cat) {
+  var displayText = '[' + cat.no + '] ' + cat.name;
+  if (cat.count !== undefined && cat.count !== null) {
+    displayText += '（' + cat.count + '問）';
+    // 空欄が1つでもあれば last_date は空 →「-」。全行埋まりなら最新日
+    displayText += '：' + formatYmdForDisplay(cat.last_date || '');
+  }
+  return displayText;
+}
+
+/**
+ * List（当該カテゴリの全問）から最終学習日を算出
+ * 1つでも空欄なら空文字、全行埋まりなら最新日（yyyy-mm-dd）
+ * @param {Array} items
+ * @returns {string}
+ */
+function computeCategoryLastDateFromItems(items) {
+  if (!items || items.length === 0) {
+    return '';
+  }
+  var latest = '';
+  for (var i = 0; i < items.length; i++) {
+    var ymd = normalizeToYmd(items[i] ? items[i].last_date : '');
+    if (!ymd) {
+      return '';
+    }
+    if (!latest || ymd > latest) {
+      latest = ymd;
+    }
+  }
+  return latest;
+}
+
+/**
+ * 表示中Listの学習日をカテゴリドロップダウンへ反映（HOME時の即時更新用）
+ */
+function syncCategoryLastDateFromList() {
+  if (currentCategoryNo == null || currentCategoryNo === '') {
+    return;
+  }
+  if (!currentCategoryData || currentCategoryData.length === 0) {
+    return;
+  }
+  var lastDate = computeCategoryLastDateFromItems(currentCategoryData);
+  var catRef = null;
+  if (categories && categories.length) {
+    for (var i = 0; i < categories.length; i++) {
+      if (String(categories[i].no) === String(currentCategoryNo)) {
+        categories[i].last_date = lastDate;
+        categories[i].count = currentCategoryData.length;
+        catRef = categories[i];
+        break;
+      }
+    }
+  }
+  var select = document.getElementById('categorySelect');
+  if (!select || !catRef) {
+    return;
+  }
+  for (var j = 0; j < select.options.length; j++) {
+    if (String(select.options[j].value) === String(currentCategoryNo)) {
+      select.options[j].textContent = formatCategoryOptionText(catRef);
+      break;
+    }
+  }
 }
 
 // イベントリスナーの設定
@@ -1367,6 +1461,8 @@ function loadCategoryData(categoryNo) {
         // 選択状態をリセット
         selectedQuestionIndices = [];
         displayList();
+        // Listの学習日とカテゴリドロップダウンの最終学習日を一致させる
+        syncCategoryLastDateFromList();
         // ボタンの状態を更新（表示/非表示と有効/無効を設定）
         updateListNavButtons();
         
@@ -1478,9 +1574,9 @@ function displayList() {
       questionCell.textContent = questionContent;
     }
     
-    var retryCell = document.createElement('td');
-    retryCell.className = 'list-col-retry';
-    retryCell.textContent = formatRetryCountForList(item.retry_count);
+    var studyCountCell = document.createElement('td');
+    studyCountCell.className = 'list-col-study-count';
+    studyCountCell.textContent = formatStudyCountForList(item);
     
     var lastDateCell = document.createElement('td');
     lastDateCell.className = 'list-col-lastdate';
@@ -1488,7 +1584,7 @@ function displayList() {
     
     row.appendChild(noCell);
     row.appendChild(questionCell);
-    row.appendChild(retryCell);
+    row.appendChild(studyCountCell);
     row.appendChild(lastDateCell);
     
     // シングルクリックで選択/解除（トグル）
@@ -1961,7 +2057,7 @@ function displayQuestion() {
     }
   }
   
-  // リトライ回数・最終学習日
+  // 学習回数・最終学習日
   updateLearningMetaDisplay(item, 'learningMeta');
   
   // 上の黒いボックスを表示
@@ -2139,7 +2235,8 @@ function showAnswer() {
   
   isAnswerShown = true;
   
-  // LastDate を非同期更新（既に今日ならスキップ）
+  // TotalStudyCount +1 と LastDate 更新（非同期・学習フローは止めない）
+  incrementTotalStudyCountAsync(item);
   updateLastDateIfNeededAsync(item);
   
   // ナビゲーションボタンを有効化
@@ -2354,16 +2451,14 @@ function getRetryCountNumber(value) {
 }
 
 /**
- * List用のリトライ表示（0・空欄は空文字）
- * @param {*} value
+ * List用の学習回数表示（m／n回）
+ * @param {Object} item
  * @returns {string}
  */
-function formatRetryCountForList(value) {
-  var n = getRetryCountNumber(value);
-  if (n === 0) {
-    return '';
-  }
-  return String(n);
+function formatStudyCountForList(item) {
+  var m = getRetryCountNumber(item ? item.retry_count : 0);
+  var n = getRetryCountNumber(item ? item.total_study_count : 0);
+  return m + '／' + n + '回';
 }
 
 /**
@@ -2372,9 +2467,10 @@ function formatRetryCountForList(value) {
  * @returns {string}
  */
 function buildLearningMetaText(item) {
-  var retry = getRetryCountNumber(item ? item.retry_count : 0);
+  var m = getRetryCountNumber(item ? item.retry_count : 0);
+  var n = getRetryCountNumber(item ? item.total_study_count : 0);
   var lastDateText = formatYmdForDisplay(item ? item.last_date : '');
-  return 'リトライ回数：' + retry + '回　最終学習日：' + lastDateText;
+  return '学習回数：' + m + '／' + n + '回　最終学習日：' + lastDateText;
 }
 
 /**
@@ -2443,7 +2539,22 @@ function updateItemFieldAsync(item, field, value, onSuccess) {
 }
 
 /**
+ * Ans押下時: TotalStudyCount を常に +1（非同期）
+ * 学習画面のメタ表示は更新せず、メモリとシートのみ更新する
+ * @param {Object} item
+ */
+function incrementTotalStudyCountAsync(item) {
+  if (!item) return;
+  
+  var nextCount = getRetryCountNumber(item.total_study_count) + 1;
+  item.total_study_count = nextCount;
+  
+  updateItemFieldAsync(item, 'total_study_count', nextCount);
+}
+
+/**
  * Ans押下時: LastDate が今日でなければ非同期更新
+ * 学習画面のメタ表示は更新せず、メモリとシートのみ更新する
  * @param {Object} item
  */
 function updateLastDateIfNeededAsync(item) {
@@ -2456,13 +2567,13 @@ function updateLastDateIfNeededAsync(item) {
   }
   
   item.last_date = today;
-  updateLearningMetaDisplay(item, 'learningMeta');
   
   updateItemFieldAsync(item, 'last_date', today);
 }
 
 /**
  * プラス押下時: RetryCount を +1（非同期）
+ * 学習画面のメタ表示は更新せず、メモリとシートのみ更新する
  * @param {Object} item
  */
 function incrementRetryCountAsync(item) {
@@ -2470,8 +2581,6 @@ function incrementRetryCountAsync(item) {
   
   var nextCount = getRetryCountNumber(item.retry_count) + 1;
   item.retry_count = nextCount;
-  // 同一問題を表示中ならメタも更新（直後に遷移しても害はない）
-  updateLearningMetaDisplay(item, 'learningMeta');
   
   updateItemFieldAsync(item, 'retry_count', nextCount);
 }
@@ -3839,12 +3948,35 @@ function goToHome() {
   var container = document.querySelector('.container');
   if (container) container.classList.remove('learning-mode');
   
-  // 選択状態をリセット
+  // 学習中に絞り込んだデータを全問に戻し、更新済み回数・日付をListへ反映
+  if (originalCategoryData.length > 0) {
+    currentCategoryData = originalCategoryData.slice();
+  }
   selectedQuestionIndices = [];
   originalCategoryData = [];
   
   // 学習完了メッセージを非表示
   hideCompletionMessage();
+  
+  // Listを再描画（メモリ上の retry_count / total_study_count / last_date を反映）
+  if (currentCategoryData.length > 0) {
+    if (isListeningModeEnabled()) {
+      refreshHomeListForPracticeSettings();
+    } else {
+      displayList();
+    }
+    // Listと同一ルールでカテゴリ最終学習日を即時反映（全問埋まり→最新日、空欄あり→-）
+    syncCategoryLastDateFromList();
+    updateListNavButtons();
+  }
+  
+  // カテゴリ一覧を再取得し、ドロップダウンの最終学習日をシート集計でも更新
+  if (currentCategoryNo != null && currentCategoryNo !== '') {
+    loadCategories({
+      preserveValue: currentCategoryNo,
+      quiet: true
+    });
+  }
   
   // 学習時間はリセットしない（継続）
 }
@@ -3902,7 +4034,7 @@ function updateModalContent(item) {
     displayImageOrText(questionText, getEffectiveQuestion(item));
   }
   
-  // リトライ回数・最終学習日
+  // 学習回数・最終学習日
   updateLearningMetaDisplay(item, 'modalLearningMeta');
   
   // 回答文を表示（画像対応・入替え対応）
