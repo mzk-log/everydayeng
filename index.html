@@ -180,6 +180,8 @@
                     </button>
                   </th>
                   <th id="listTableHeader"></th>
+                  <th class="list-col-retry">リトライ</th>
+                  <th class="list-col-lastdate">学習日</th>
                 </tr>
               </thead>
               <tbody id="listTableBody">
@@ -204,10 +206,16 @@
           <div id="currentCategory"></div>
         </div>
         
-        <div class="section">
+        <div class="section question-section" id="questionSection">
           <div class="section-label" id="questionSectionLabel"></div>
           <div class="question-info" id="questionInfo">[1/1]</div>
           <div class="question-text" id="questionText"></div>
+          <div class="learning-meta" id="learningMeta"></div>
+          <textarea id="questionTextEdit" class="field-text-edit" style="display: none;"></textarea>
+          <div class="field-update-controls" id="questionUpdateControls" style="display: none;">
+            <button class="answer-update-button" id="questionUpdateButton" type="button">更新</button>
+            <button class="answer-end-button" id="questionEndButton" type="button">終了</button>
+          </div>
         </div>
         
         <div class="section answer-section" id="answerSection">
@@ -216,13 +224,11 @@
             <!-- 空の黒いボックスとして残す -->
           </div>
           <div class="answer-text answer-hidden" id="answerTextDisplay" style="display: none;"></div>
-          <!-- 更新モード用のテキストエリア -->
-          <textarea id="answerTextEdit" class="answer-text-edit" style="display: none;"></textarea>
-          <!-- 更新モード用のボタン -->
-          <div class="answer-update-controls" id="answerUpdateControls" style="display: none;">
+          <textarea id="answerTextEdit" class="field-text-edit answer-text-edit" style="display: none;"></textarea>
+          <div class="field-update-controls answer-update-controls" id="answerUpdateControls" style="display: none;">
             <button class="answer-update-button" id="answerUpdateButton" type="button">更新</button>
             <button class="answer-end-button" id="answerEndButton" type="button">終了</button>
-            <button class="answer-mic-button" id="answerMicButton" type="button">
+            <button class="answer-mic-button" id="answerMicButton" type="button" aria-hidden="true" tabindex="-1">
               <span class="mic-icon">🎤</span>
             </button>
           </div>
@@ -231,6 +237,11 @@
         <div class="section note-section" id="noteSection" style="display: none;">
           <div class="section-label">note:</div>
           <div class="note-text" id="noteText"></div>
+          <textarea id="noteTextEdit" class="field-text-edit" style="display: none;"></textarea>
+          <div class="field-update-controls" id="noteUpdateControls" style="display: none;">
+            <button class="answer-update-button" id="noteUpdateButton" type="button">更新</button>
+            <button class="answer-end-button" id="noteEndButton" type="button">終了</button>
+          </div>
         </div>
       </div>
       
@@ -254,8 +265,9 @@
         <button class="nav-button" id="nextButton" type="button">
           <img src="img/arrow.png" alt="次へ">
         </button>
-        <button class="nav-button" id="plusButton" type="button">
-          <img src="img/plus.png" alt="もう一度">
+        <button class="nav-button" id="plusButton" type="button" aria-label="もう一度">
+          <img src="img/rotate-right-solid.png" alt="">
+          <span class="plus-retry-badge" aria-hidden="true">1</span>
         </button>
         <button class="nav-button" id="homeButton" type="button">
           <img src="img/home.png" alt="ホーム">
@@ -271,6 +283,7 @@
           <div class="modal-question-section">
             <div class="modal-question-label" id="modalQuestionLabel"></div>
             <div class="modal-question-text" id="modalQuestionText"></div>
+            <div class="learning-meta modal-learning-meta" id="modalLearningMeta"></div>
           </div>
           <div class="modal-answer-section">
             <div class="modal-answer-label" id="modalAnswerLabel"></div>
@@ -347,7 +360,7 @@
       <button class="modal-close-button" id="answerUpdateConfirmCloseButton" type="button">×</button>
       <div class="modal-content">
         <div class="answer-update-confirm-section">
-          <h3 class="answer-update-confirm-title">回答メモを更新しますか？</h3>
+          <h3 class="answer-update-confirm-title" id="answerUpdateConfirmTitle">内容を更新しますか？</h3>
           <div class="answer-update-confirm-buttons">
             <button class="answer-update-confirm-button answer-update-confirm-cancel" id="answerUpdateConfirmCancelButton" type="button">キャンセル</button>
             <button class="answer-update-confirm-button answer-update-confirm-ok" id="answerUpdateConfirmOkButton" type="button">確定</button>

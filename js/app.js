@@ -23,7 +23,9 @@ var isQuestionToggleActive = false; // 出題読みトグルボタンの状態�
 var isAnswerToggleActive = false; // 解答読みトグルボタンの状態（ON/OFF）
 var currentAudio = null; // 現在再生中のAudioオブジェクト
 var isUpdateMode = false; // 更新モードかどうか
-var originalAnswerText = ''; // 更新前のAnswer欄の内容
+var originalEditText = ''; // 更新前の編集対象テキスト
+var updateDisplayTarget = null; // 'question' | 'answer' | 'note'
+var updateStorageField = null; // 保存先キー 'question' | 'answer' | 'note'
 var mediaRecorder = null; // 音声録音用のMediaRecorder
 var audioChunks = []; // 録音した音声データのチャンク
 var isRecording = false; // 録音中かどうか
@@ -448,10 +450,18 @@ function setupEventListeners() {
   });
   
   document.getElementById('playButton').addEventListener('click', function() {
+    if (isLearningCompleted) {
+      startLearningAdjacentCategory(-1);
+      return;
+    }
     playAnswer();
   });
   
   document.getElementById('nextButton').addEventListener('click', function() {
+    if (isLearningCompleted) {
+      startLearningAdjacentCategory(1);
+      return;
+    }
     goToNextQuestion();
   });
   
@@ -1467,8 +1477,19 @@ function displayList() {
       // テキストの場合はテキスト表示
       questionCell.textContent = questionContent;
     }
+    
+    var retryCell = document.createElement('td');
+    retryCell.className = 'list-col-retry';
+    retryCell.textContent = formatRetryCountForList(item.retry_count);
+    
+    var lastDateCell = document.createElement('td');
+    lastDateCell.className = 'list-col-lastdate';
+    lastDateCell.textContent = formatYmdForDisplay(item.last_date);
+    
     row.appendChild(noCell);
     row.appendChild(questionCell);
+    row.appendChild(retryCell);
+    row.appendChild(lastDateCell);
     
     // シングルクリックで選択/解除（トグル）
     var clickTimer = null;
@@ -1783,6 +1804,9 @@ function startLearning() {
     return;
   }
   
+  // 完了時カテゴリナビ用アイコンを通常（再生／次へ）に戻す
+  setLearningNavIconsNormal();
+  
   // 元のデータを保存
   originalCategoryData = currentCategoryData.slice();
   
@@ -1936,6 +1960,9 @@ function displayQuestion() {
       displayImageOrText(questionText, effectiveQuestion);
     }
   }
+  
+  // リトライ回数・最終学習日
+  updateLearningMetaDisplay(item, 'learningMeta');
   
   // 上の黒いボックスを表示
   var answerButtonContainer = document.getElementById('answerButtonContainer');
@@ -2095,15 +2122,25 @@ function showAnswer() {
     }
   }
   
-  // noteを表示
-  if (item.note) {
-    var noteText = document.getElementById('noteText');
-    var noteSection = document.getElementById('noteSection');
-    if (noteText) noteText.textContent = item.note;
-    if (noteSection) noteSection.style.display = 'block';
+  // noteを常に表示（空欄時は背景をより透明にして空欄を示す）
+  var noteText = document.getElementById('noteText');
+  var noteSection = document.getElementById('noteSection');
+  var noteValue = item.note || '';
+  var isNoteEmpty = !String(noteValue).trim();
+  if (noteText) {
+    noteText.textContent = noteValue;
+    if (isNoteEmpty) {
+      noteText.classList.add('note-empty');
+    } else {
+      noteText.classList.remove('note-empty');
+    }
   }
+  if (noteSection) noteSection.style.display = 'block';
   
   isAnswerShown = true;
+  
+  // LastDate を非同期更新（既に今日ならスキップ）
+  updateLastDateIfNeededAsync(item);
   
   // ナビゲーションボタンを有効化
   updateNavigationButtons();
@@ -2116,34 +2153,327 @@ function showAnswer() {
     playAnswer();
   }
   
-  // 回答メモ欄にダブルクリックイベントを追加（更新モード開始）
-  setupAnswerDoubleClick();
+  // 出題／解答／note のダブルクリック編集を有効化
+  setupFieldEditDoubleClick();
 }
 
-// 回答メモ欄のダブルクリックイベントを設定
-function setupAnswerDoubleClick() {
+// 学習画面の項目編集用ダブルクリックを設定
+function setupFieldEditDoubleClick() {
+  if (isUpdateMode) return;
+  
+  var questionText = document.getElementById('questionText');
+  if (questionText) {
+    questionText.removeEventListener('dblclick', handleQuestionDoubleClick);
+    questionText.addEventListener('dblclick', handleQuestionDoubleClick);
+  }
+  
   var answerTextDisplay = document.getElementById('answerTextDisplay');
-  if (answerTextDisplay && !isUpdateMode) {
-    // 既存のイベントリスナーを削除（重複防止）
+  if (answerTextDisplay) {
     answerTextDisplay.removeEventListener('dblclick', handleAnswerDoubleClick);
-    // ダブルクリックイベントを追加
     answerTextDisplay.addEventListener('dblclick', handleAnswerDoubleClick);
+  }
+  
+  var noteText = document.getElementById('noteText');
+  if (noteText) {
+    noteText.removeEventListener('dblclick', handleNoteDoubleClick);
+    noteText.addEventListener('dblclick', handleNoteDoubleClick);
   }
 }
 
-// 回答メモ欄のダブルクリック処理
+function handleQuestionDoubleClick(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  startUpdateMode('question');
+}
+
 function handleAnswerDoubleClick(e) {
   e.preventDefault();
   e.stopPropagation();
+  startUpdateMode('answer');
+}
 
-  // 入替えON時は画面上の解答が元の出題列になるため、既存のanswer更新APIでは保存できない
-  if (isSwapQAEnabled()) {
-    showError('出題と解答の入替えがONのときは、解答メモの更新はできません。');
+function handleNoteDoubleClick(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  startUpdateMode('note');
+}
+
+/**
+ * 画面上の欄から、スプレッドシート保存先フィールドを解決する
+ * @param {string} displayTarget - 'question' | 'answer' | 'note'
+ * @returns {string} 'question' | 'answer' | 'note'
+ */
+function resolveStorageField(displayTarget) {
+  if (displayTarget === 'note') {
+    return 'note';
+  }
+  if (displayTarget === 'question') {
+    return isSwapQAEnabled() ? 'answer' : 'question';
+  }
+  if (displayTarget === 'answer') {
+    return isSwapQAEnabled() ? 'question' : 'answer';
+  }
+  return displayTarget;
+}
+
+/**
+ * 編集UI要素のID等を返す
+ * @param {string} displayTarget
+ * @returns {Object|null}
+ */
+function getUpdateUiConfig(displayTarget) {
+  if (displayTarget === 'question') {
+    return {
+      displayId: 'questionText',
+      editId: 'questionTextEdit',
+      controlsId: 'questionUpdateControls',
+      sectionId: 'questionSection',
+      confirmTitle: '出題（Question）を更新しますか？'
+    };
+  }
+  if (displayTarget === 'answer') {
+    return {
+      displayId: 'answerTextDisplay',
+      editId: 'answerTextEdit',
+      controlsId: 'answerUpdateControls',
+      sectionId: 'answerSection',
+      confirmTitle: '解答（Answer）を更新しますか？'
+    };
+  }
+  if (displayTarget === 'note') {
+    return {
+      displayId: 'noteText',
+      editId: 'noteTextEdit',
+      controlsId: 'noteUpdateControls',
+      sectionId: 'noteSection',
+      confirmTitle: 'noteを更新しますか？'
+    };
+  }
+  return null;
+}
+
+/**
+ * 保存先フィールドの確認モーダルタイトル（実体列ベース）
+ * @param {string} storageField
+ * @returns {string}
+ */
+function getConfirmTitleForStorageField(storageField) {
+  if (storageField === 'question') {
+    return '出題（Question列）を更新しますか？';
+  }
+  if (storageField === 'answer') {
+    return '解答（Answer列）を更新しますか？';
+  }
+  if (storageField === 'note') {
+    return 'note列を更新しますか？';
+  }
+  return '内容を更新しますか？';
+}
+
+/**
+ * 端末ローカルの今日を yyyy-mm-dd で返す
+ * @returns {string}
+ */
+function getTodayYmdLocal() {
+  var now = new Date();
+  var y = now.getFullYear();
+  var m = now.getMonth() + 1;
+  var d = now.getDate();
+  return y + '-' + (m < 10 ? '0' + m : String(m)) + '-' + (d < 10 ? '0' + d : String(d));
+}
+
+/**
+ * 日付値を yyyy-mm-dd に正規化
+ * @param {*} value
+ * @returns {string}
+ */
+function normalizeToYmd(value) {
+  if (value === '' || value === null || value === undefined) {
+    return '';
+  }
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    var y = value.getFullYear();
+    var m = value.getMonth() + 1;
+    var d = value.getDate();
+    return y + '-' + (m < 10 ? '0' + m : String(m)) + '-' + (d < 10 ? '0' + d : String(d));
+  }
+  var s = String(value).trim();
+  if (!s) {
+    return '';
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    return s.substring(0, 10);
+  }
+  var matched = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (matched) {
+    var mm = matched[2].length === 1 ? '0' + matched[2] : matched[2];
+    var dd = matched[3].length === 1 ? '0' + matched[3] : matched[3];
+    return matched[1] + '-' + mm + '-' + dd;
+  }
+  // ISO datetime
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+    var dt = new Date(s);
+    if (!isNaN(dt.getTime())) {
+      return normalizeToYmd(dt);
+    }
+  }
+  return '';
+}
+
+/**
+ * yyyy-mm-dd を表示用 yyyy/m/d に変換
+ * @param {string} ymd
+ * @returns {string}
+ */
+function formatYmdForDisplay(ymd) {
+  var normalized = normalizeToYmd(ymd);
+  if (!normalized) {
+    return '-';
+  }
+  var parts = normalized.split('-');
+  if (parts.length !== 3) {
+    return '-';
+  }
+  return Number(parts[0]) + '/' + Number(parts[1]) + '/' + Number(parts[2]);
+}
+
+/**
+ * RetryCount を表示用数値にする（空欄は0）
+ * @param {*} value
+ * @returns {number}
+ */
+function getRetryCountNumber(value) {
+  if (value === '' || value === null || value === undefined) {
+    return 0;
+  }
+  var n = Number(value);
+  if (isNaN(n) || n < 0) {
+    return 0;
+  }
+  return n;
+}
+
+/**
+ * List用のリトライ表示（0・空欄は空文字）
+ * @param {*} value
+ * @returns {string}
+ */
+function formatRetryCountForList(value) {
+  var n = getRetryCountNumber(value);
+  if (n === 0) {
+    return '';
+  }
+  return String(n);
+}
+
+/**
+ * 学習メタ情報テキストを生成
+ * @param {Object} item
+ * @returns {string}
+ */
+function buildLearningMetaText(item) {
+  var retry = getRetryCountNumber(item ? item.retry_count : 0);
+  var lastDateText = formatYmdForDisplay(item ? item.last_date : '');
+  return 'リトライ回数：' + retry + '回　最終学習日：' + lastDateText;
+}
+
+/**
+ * 学習メタ情報を要素へ表示
+ * @param {Object} item
+ * @param {string} elementId
+ */
+function updateLearningMetaDisplay(item, elementId) {
+  var el = document.getElementById(elementId);
+  if (!el) return;
+  el.textContent = buildLearningMetaText(item);
+}
+
+/**
+ * updateItemField を非同期で呼び出す（失敗時はエラー表示のみ）
+ * @param {Object} item
+ * @param {string} field
+ * @param {string|number} value
+ * @param {Function} [onSuccess]
+ */
+function updateItemFieldAsync(item, field, value, onSuccess) {
+  if (!item || !item.id) {
+    showError('IDが見つかりません。');
     return;
   }
+  if (!userEmail) {
+    userEmail = localStorage.getItem('userEmail');
+  }
+  if (!userEmail) {
+    showError('メールアドレスが設定されていません。');
+    return;
+  }
+  
+  var params = new URLSearchParams();
+  params.append('action', 'updateItemField');
+  params.append('id', item.id);
+  params.append('field', field);
+  params.append('value', String(value));
+  params.append('email', userEmail);
+  params.append('referer', window.location.origin);
+  
+  fetch(WEB_APP_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: params
+  })
+  .then(function(response) {
+    if (!response.ok) {
+      throw new Error('ネットワークエラー: ' + response.status);
+    }
+    return response.json();
+  })
+  .then(function(data) {
+    if (!data.success) {
+      throw new Error(data.error || 'Unknown error');
+    }
+    if (typeof onSuccess === 'function') {
+      onSuccess(data);
+    }
+  })
+  .catch(function(error) {
+    showError('更新エラー: ' + error.toString());
+  });
+}
 
-  // 更新モード開始
-  startUpdateMode();
+/**
+ * Ans押下時: LastDate が今日でなければ非同期更新
+ * @param {Object} item
+ */
+function updateLastDateIfNeededAsync(item) {
+  if (!item) return;
+  
+  var today = getTodayYmdLocal();
+  var current = normalizeToYmd(item.last_date);
+  if (current === today) {
+    return;
+  }
+  
+  item.last_date = today;
+  updateLearningMetaDisplay(item, 'learningMeta');
+  
+  updateItemFieldAsync(item, 'last_date', today);
+}
+
+/**
+ * プラス押下時: RetryCount を +1（非同期）
+ * @param {Object} item
+ */
+function incrementRetryCountAsync(item) {
+  if (!item) return;
+  
+  var nextCount = getRetryCountNumber(item.retry_count) + 1;
+  item.retry_count = nextCount;
+  // 同一問題を表示中ならメタも更新（直後に遷移しても害はない）
+  updateLearningMetaDisplay(item, 'learningMeta');
+  
+  updateItemFieldAsync(item, 'retry_count', nextCount);
 }
 
 /**
@@ -3006,6 +3336,10 @@ function goToNextQuestion() {
 // プラスボタンクリック処理
 function handlePlusButtonClick() {
   if (isAnswerShown) {
+    // RetryCount を非同期で +1（学習フローは止めない）
+    var plusTargetItem = currentCategoryData[currentQuestionIndex];
+    incrementRetryCountAsync(plusTargetItem);
+    
     if (isInRetryMode) {
       // 再チャレンジモードの場合
       // 現在の問題を再チャレンジリストに追加（重複チェック）
@@ -3037,6 +3371,7 @@ function handlePlusButtonClick() {
           // 再チャレンジ問題がなければ学習完了
           isLearningCompleted = true;
           updateNavigationButtons();
+          updatePlusButton();
           // 学習完了メッセージを表示
           showCompletionMessage();
         }
@@ -3219,8 +3554,8 @@ function updateNavigationButtons() {
       }
     }
   } else if (isLearningCompleted) {
-    // 学習完了の場合、次へボタンを無効化
-    if (nextButton) nextButton.disabled = true;
+    // 学習完了：再生→<<・次へ→>> で前後カテゴリへ移動
+    updateCompletionCategoryNav();
   } else if (isInRetryMode) {
     // 再チャレンジモードの場合（回答表示前）
     if (nextButton) nextButton.disabled = true;
@@ -3228,6 +3563,194 @@ function updateNavigationButtons() {
     // 通常モード（回答表示前）
     if (nextButton) nextButton.disabled = true;
   }
+}
+
+/**
+ * 現在カテゴリの categories 内インデックスを返す
+ * @returns {number}
+ */
+function getCurrentCategoryIndex() {
+  if (currentCategoryNo == null || categories.length === 0) {
+    return -1;
+  }
+  for (var i = 0; i < categories.length; i++) {
+    if (categories[i].no == currentCategoryNo) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * 学習ナビアイコンを通常（再生／次へ）に戻す
+ */
+function setLearningNavIconsNormal() {
+  var playButton = document.getElementById('playButton');
+  var nextButton = document.getElementById('nextButton');
+  
+  if (playButton) {
+    playButton.classList.remove('category-nav-mode');
+    var playImg = playButton.querySelector('img');
+    if (playImg) {
+      playImg.src = 'img/play-button.png';
+      playImg.alt = '再生';
+    } else {
+      playButton.innerHTML = '';
+      playImg = document.createElement('img');
+      playImg.src = 'img/play-button.png';
+      playImg.alt = '再生';
+      playButton.appendChild(playImg);
+    }
+  }
+  
+  if (nextButton) {
+    nextButton.classList.remove('category-nav-mode');
+    var nextImg = nextButton.querySelector('img');
+    if (nextImg) {
+      nextImg.src = 'img/arrow.png';
+      nextImg.alt = '次へ';
+    }
+  }
+}
+
+/**
+ * 学習完了時のカテゴリナビアイコン（<< / >>）に切り替える
+ */
+function setLearningNavIconsCategoryMode() {
+  var playButton = document.getElementById('playButton');
+  var nextButton = document.getElementById('nextButton');
+  
+  if (playButton) {
+    playButton.classList.add('category-nav-mode');
+    var playImg = playButton.querySelector('img');
+    if (!playImg) {
+      playButton.innerHTML = '';
+      playImg = document.createElement('img');
+      playButton.appendChild(playImg);
+    }
+    playImg.src = 'img/angles-right-solid.png';
+    playImg.alt = '前のカテゴリ';
+  }
+  
+  if (nextButton) {
+    nextButton.classList.add('category-nav-mode');
+    var nextImg = nextButton.querySelector('img');
+    if (nextImg) {
+      nextImg.src = 'img/angles-right-solid.png';
+      nextImg.alt = '次のカテゴリ';
+    }
+  }
+}
+
+/**
+ * 学習完了時：<< / >> の表示と前後カテゴリ有無に応じた有効／無効を更新
+ */
+function updateCompletionCategoryNav() {
+  if (!isLearningCompleted) {
+    return;
+  }
+  
+  setLearningNavIconsCategoryMode();
+  
+  var idx = getCurrentCategoryIndex();
+  var playButton = document.getElementById('playButton');
+  var nextButton = document.getElementById('nextButton');
+  
+  if (playButton) {
+    playButton.disabled = !(idx > 0);
+  }
+  if (nextButton) {
+    nextButton.disabled = !(idx >= 0 && idx < categories.length - 1);
+  }
+}
+
+/**
+ * 前後カテゴリへ移動し、全問で学習をすぐ開始する
+ * @param {number} direction -1: 前, 1: 次
+ */
+function startLearningAdjacentCategory(direction) {
+  if (!isLearningCompleted) {
+    return;
+  }
+  
+  var idx = getCurrentCategoryIndex();
+  if (idx < 0) {
+    return;
+  }
+  
+  var targetIndex = idx + direction;
+  if (targetIndex < 0 || targetIndex >= categories.length) {
+    return;
+  }
+  
+  loadCategoryDataAndStartLearning(categories[targetIndex].no);
+}
+
+/**
+ * 指定カテゴリのデータを取得し、学習画面のまま全問で学習開始する
+ * @param {string|number} categoryNo
+ */
+function loadCategoryDataAndStartLearning(categoryNo) {
+  if (!userEmail) {
+    userEmail = localStorage.getItem('userEmail');
+  }
+  if (!userEmail) {
+    showError('メールアドレスが設定されていません。');
+    checkUserEmail();
+    return;
+  }
+  
+  if (currentAudio) {
+    try {
+      currentAudio.pause();
+    } catch (e) {
+      // ignore
+    }
+    currentAudio = null;
+  }
+  
+  var playButton = document.getElementById('playButton');
+  var nextButton = document.getElementById('nextButton');
+  if (playButton) playButton.disabled = true;
+  if (nextButton) nextButton.disabled = true;
+  
+  var select = document.getElementById('categorySelect');
+  if (select) {
+    select.value = categoryNo;
+  }
+  
+  var params = new URLSearchParams();
+  params.append('action', 'getCategoryData');
+  params.append('categoryNo', categoryNo);
+  params.append('email', userEmail);
+  params.append('referer', window.location.origin);
+  
+  fetch(WEB_APP_URL + '?' + params.toString())
+    .then(function(response) {
+      if (!response.ok) {
+        throw new Error('ネットワークエラー: ' + response.status);
+      }
+      return response.json();
+    })
+    .then(function(data) {
+      if (!data.success) {
+        throw new Error(data.error || 'データの取得に失敗しました');
+      }
+      if (!data.items || data.items.length === 0) {
+        throw new Error('データがありません');
+      }
+      
+      currentCategoryData = data.items;
+      currentCategoryNo = categoryNo;
+      selectedQuestionIndices = [];
+      displayList();
+      updateListNavButtons();
+      startLearning();
+    })
+    .catch(function(error) {
+      showError('アクセスエラー: ' + error.toString());
+      updateCompletionCategoryNav();
+    });
 }
 
 // プラスボタンの状態を更新
@@ -3297,6 +3820,9 @@ function hideCompletionMessage() {
 function goToHome() {
   // ストップウォッチを停止
   stopStopwatch();
+  
+  // 完了時カテゴリナビ用アイコンを通常に戻す
+  setLearningNavIconsNormal();
   
   // 画面遷移
   var screen2 = document.getElementById('screen2');
@@ -3376,26 +3902,23 @@ function updateModalContent(item) {
     displayImageOrText(questionText, getEffectiveQuestion(item));
   }
   
+  // リトライ回数・最終学習日
+  updateLearningMetaDisplay(item, 'modalLearningMeta');
+  
   // 回答文を表示（画像対応・入替え対応）
   var answerText = document.getElementById('modalAnswerText');
   if (answerText) {
     displayImageOrText(answerText, getEffectiveAnswer(item));
   }
   
-  // noteを表示（ある場合のみ）
+  // noteを常に表示（空欄でも note: を出す。背景透明度は変更しない）
   var noteSection = document.getElementById('modalNoteSection');
   var noteText = document.getElementById('modalNoteText');
-  if (item.note && item.note.trim()) {
-    if (noteText) {
-      noteText.textContent = item.note;
-    }
-    if (noteSection) {
-      noteSection.style.display = 'block';
-    }
-  } else {
-    if (noteSection) {
-      noteSection.style.display = 'none';
-    }
+  if (noteText) {
+    noteText.textContent = item.note || '';
+  }
+  if (noteSection) {
+    noteSection.style.display = 'block';
   }
 }
 
@@ -3562,117 +4085,175 @@ function updateToggleButtonPosition() {
 // 更新モード関連の関数
 // ========================================
 
-// 更新モードを開始
-function startUpdateMode() {
+/**
+ * 更新モードを開始
+ * @param {string} displayTarget - 'question' | 'answer' | 'note'
+ */
+function startUpdateMode(displayTarget) {
   if (isUpdateMode) return;
+  if (isLearningCompleted) return;
+  if (!isAnswerShown) return;
   
   var item = currentCategoryData[currentQuestionIndex];
   if (!item) return;
   
+  var ui = getUpdateUiConfig(displayTarget);
+  if (!ui) return;
+  
+  updateDisplayTarget = displayTarget;
+  updateStorageField = resolveStorageField(displayTarget);
+  originalEditText = item[updateStorageField] || '';
+  
   isUpdateMode = true;
   
-  // 元の内容を保持
-  originalAnswerText = item.answer || '';
-  
-  // 回答表示欄を非表示
-  var answerTextDisplay = document.getElementById('answerTextDisplay');
-  if (answerTextDisplay) {
-    answerTextDisplay.style.display = 'none';
+  var displayEl = document.getElementById(ui.displayId);
+  if (displayEl) {
+    displayEl.style.display = 'none';
   }
   
-  // 編集用テキストエリアを表示
-  var answerTextEdit = document.getElementById('answerTextEdit');
-  if (answerTextEdit) {
-    answerTextEdit.value = originalAnswerText;
-    answerTextEdit.style.display = 'block';
-    answerTextEdit.focus();
+  var editEl = document.getElementById(ui.editId);
+  if (editEl) {
+    editEl.value = originalEditText;
+    editEl.style.display = 'block';
+    editEl.focus();
   }
   
-  // 更新コントロールボタンを表示
-  var answerUpdateControls = document.getElementById('answerUpdateControls');
-  if (answerUpdateControls) {
-    answerUpdateControls.style.display = 'flex';
+  var controlsEl = document.getElementById(ui.controlsId);
+  if (controlsEl) {
+    controlsEl.style.display = 'flex';
   }
   
-  // 他の要素をグレーアウト
-  applyUpdateModeOverlay();
+  var activeSection = document.getElementById(ui.sectionId);
+  if (activeSection) {
+    activeSection.classList.add('field-editing-active');
+  }
   
-  // イベントリスナーを設定
+  applyUpdateModeOverlay(ui.sectionId);
   setupUpdateModeEventListeners();
 }
 
-// 更新モードを終了
-function endUpdateMode(restoreOriginal) {
-  if (!isUpdateMode) return;
+/**
+ * 編集対象の表示を反映する
+ * @param {Object} item
+ * @param {string} text
+ */
+function refreshEditedFieldDisplay(item, text) {
+  if (!updateDisplayTarget) return;
   
-  isUpdateMode = false;
-  
-  // 編集用テキストエリアを非表示
-  var answerTextEdit = document.getElementById('answerTextEdit');
-  if (answerTextEdit) {
-    answerTextEdit.style.display = 'none';
-  }
-  
-  // 更新コントロールボタンを非表示
-  var answerUpdateControls = document.getElementById('answerUpdateControls');
-  if (answerUpdateControls) {
-    answerUpdateControls.style.display = 'none';
-  }
-  
-  // グレーアウトを解除
-  removeUpdateModeOverlay();
-  
-  // 元の内容を復元する場合
-  if (restoreOriginal) {
-    var item = currentCategoryData[currentQuestionIndex];
-    if (item) {
-      item.answer = originalAnswerText;
-      // 回答表示欄を再表示
-      var answerTextDisplay = document.getElementById('answerTextDisplay');
-      if (answerTextDisplay) {
-        displayImageOrText(answerTextDisplay, originalAnswerText);
-        answerTextDisplay.style.display = 'block';
+  if (updateDisplayTarget === 'question') {
+    var questionText = document.getElementById('questionText');
+    if (questionText) {
+      var effectiveQuestion = getEffectiveQuestion(item);
+      var isListeningQuestion = isListeningModeEnabled() && effectiveQuestion && !isImageUrl(effectiveQuestion);
+      if (isListeningQuestion && !isAnswerShown) {
+        questionText.textContent = LISTENING_PLACEHOLDER_TEXT;
+      } else {
+        displayImageOrText(questionText, effectiveQuestion);
       }
+      questionText.style.display = '';
     }
-  } else {
-    // 更新後の内容を表示
-    var answerTextEdit = document.getElementById('answerTextEdit');
-    var item = currentCategoryData[currentQuestionIndex];
-    if (answerTextEdit && item) {
-      item.answer = answerTextEdit.value;
-      var answerTextDisplay = document.getElementById('answerTextDisplay');
-      if (answerTextDisplay) {
-        displayImageOrText(answerTextDisplay, item.answer);
-        answerTextDisplay.style.display = 'block';
-      }
-    }
+    return;
   }
   
-  // 録音を停止（録音中の場合）
-  if (isRecording) {
-    stopVoiceRecognition();
+  if (updateDisplayTarget === 'answer') {
+    var answerTextDisplay = document.getElementById('answerTextDisplay');
+    if (answerTextDisplay) {
+      displayImageOrText(answerTextDisplay, getEffectiveAnswer(item));
+      answerTextDisplay.style.display = 'block';
+    }
+    return;
+  }
+  
+  if (updateDisplayTarget === 'note') {
+    var noteText = document.getElementById('noteText');
+    var noteValue = item.note || '';
+    var isNoteEmpty = !String(noteValue).trim();
+    if (noteText) {
+      noteText.textContent = noteValue;
+      if (isNoteEmpty) {
+        noteText.classList.add('note-empty');
+      } else {
+        noteText.classList.remove('note-empty');
+      }
+      noteText.style.display = '';
+    }
   }
 }
 
-// 更新モード中のオーバーレイを適用
-function applyUpdateModeOverlay() {
-  // 既存のオーバーレイを削除
+/**
+ * 更新モードを終了
+ * @param {boolean} restoreOriginal - trueなら編集前に戻す
+ */
+function endUpdateMode(restoreOriginal) {
+  if (!isUpdateMode) return;
+  
+  var ui = getUpdateUiConfig(updateDisplayTarget);
+  var item = currentCategoryData[currentQuestionIndex];
+  
+  isUpdateMode = false;
+  
+  if (ui) {
+    var editEl = document.getElementById(ui.editId);
+    if (editEl) {
+      editEl.style.display = 'none';
+    }
+    var controlsEl = document.getElementById(ui.controlsId);
+    if (controlsEl) {
+      controlsEl.style.display = 'none';
+    }
+    var activeSection = document.getElementById(ui.sectionId);
+    if (activeSection) {
+      activeSection.classList.remove('field-editing-active');
+    }
+  }
+  
+  removeUpdateModeOverlay();
+  
+  if (item && updateStorageField) {
+    if (restoreOriginal) {
+      item[updateStorageField] = originalEditText;
+    } else if (ui) {
+      var editElAfter = document.getElementById(ui.editId);
+      if (editElAfter) {
+        item[updateStorageField] = editElAfter.value || '';
+      }
+    }
+    refreshEditedFieldDisplay(item, item[updateStorageField] || '');
+  }
+  
+  if (isRecording) {
+    stopVoiceRecognition();
+  }
+  
+  updateDisplayTarget = null;
+  updateStorageField = null;
+  originalEditText = '';
+  
+  setupFieldEditDoubleClick();
+}
+
+/**
+ * 更新モード中のオーバーレイを適用
+ * @param {string} activeSectionId - 編集中セクションのID
+ */
+function applyUpdateModeOverlay(activeSectionId) {
   var existingOverlay = document.getElementById('updateModeOverlay');
   if (existingOverlay) {
     existingOverlay.remove();
   }
   
-  // オーバーレイを作成
   var overlay = document.createElement('div');
   overlay.id = 'updateModeOverlay';
   overlay.className = 'update-mode-overlay';
   document.body.appendChild(overlay);
   
-  // 学習画面の要素をグレーアウト
   var screen2 = document.getElementById('screen2');
   if (screen2) {
-    var elementsToDisable = screen2.querySelectorAll('.title, .learning-time, .section:not(.answer-section), .navigation-bar');
+    var elementsToDisable = screen2.querySelectorAll('.title, .learning-time, .section, .navigation-bar');
     elementsToDisable.forEach(function(element) {
+      if (activeSectionId && element.id === activeSectionId) {
+        return;
+      }
       element.classList.add('update-mode-disabled');
     });
   }
@@ -3685,7 +4266,6 @@ function removeUpdateModeOverlay() {
     overlay.remove();
   }
   
-  // グレーアウトを解除
   var screen2 = document.getElementById('screen2');
   if (screen2) {
     var elementsToEnable = screen2.querySelectorAll('.update-mode-disabled');
@@ -3697,23 +4277,26 @@ function removeUpdateModeOverlay() {
 
 // 更新モード用のイベントリスナーを設定
 function setupUpdateModeEventListeners() {
-  // 更新ボタン
-  var updateButton = document.getElementById('answerUpdateButton');
-  if (updateButton) {
-    updateButton.onclick = function() {
-      showUpdateConfirmModal();
-    };
-  }
+  var updateButtonIds = ['questionUpdateButton', 'answerUpdateButton', 'noteUpdateButton'];
+  updateButtonIds.forEach(function(id) {
+    var button = document.getElementById(id);
+    if (button) {
+      button.onclick = function() {
+        showUpdateConfirmModal();
+      };
+    }
+  });
   
-  // 終了ボタン
-  var endButton = document.getElementById('answerEndButton');
-  if (endButton) {
-    endButton.onclick = function() {
-      endUpdateMode(true); // 元の内容に復元
-    };
-  }
+  var endButtonIds = ['questionEndButton', 'answerEndButton', 'noteEndButton'];
+  endButtonIds.forEach(function(id) {
+    var button = document.getElementById(id);
+    if (button) {
+      button.onclick = function() {
+        endUpdateMode(true);
+      };
+    }
+  });
   
-  // マイクボタン
   var micButton = document.getElementById('answerMicButton');
   if (micButton) {
     micButton.onclick = function() {
@@ -3721,7 +4304,6 @@ function setupUpdateModeEventListeners() {
     };
   }
   
-  // 更新確認モーダルの閉じるボタン
   var closeButton = document.getElementById('answerUpdateConfirmCloseButton');
   if (closeButton) {
     closeButton.onclick = function() {
@@ -3729,7 +4311,6 @@ function setupUpdateModeEventListeners() {
     };
   }
   
-  // 更新確認モーダルのキャンセルボタン
   var cancelButton = document.getElementById('answerUpdateConfirmCancelButton');
   if (cancelButton) {
     cancelButton.onclick = function() {
@@ -3737,15 +4318,13 @@ function setupUpdateModeEventListeners() {
     };
   }
   
-  // 更新確認モーダルの確定ボタン
   var okButton = document.getElementById('answerUpdateConfirmOkButton');
   if (okButton) {
     okButton.onclick = function() {
-      saveAnswerMemo();
+      saveItemField();
     };
   }
   
-  // 更新確認モーダルのオーバーレイクリックで閉じる
   var modal = document.getElementById('answerUpdateConfirmModal');
   if (modal) {
     modal.onclick = function(e) {
@@ -3759,6 +4338,10 @@ function setupUpdateModeEventListeners() {
 // 更新確認モーダルを表示
 function showUpdateConfirmModal() {
   var modal = document.getElementById('answerUpdateConfirmModal');
+  var title = document.getElementById('answerUpdateConfirmTitle');
+  if (title) {
+    title.textContent = getConfirmTitleForStorageField(updateStorageField);
+  }
   if (modal) {
     modal.classList.add('active');
   }
@@ -3772,10 +4355,15 @@ function closeUpdateConfirmModal() {
   }
 }
 
-// 回答メモを保存
-function saveAnswerMemo() {
-  var answerTextEdit = document.getElementById('answerTextEdit');
-  if (!answerTextEdit) return;
+/**
+ * 編集中フィールドをスプレッドシートへ保存
+ */
+function saveItemField() {
+  var ui = getUpdateUiConfig(updateDisplayTarget);
+  if (!ui || !updateStorageField) return;
+  
+  var editEl = document.getElementById(ui.editId);
+  if (!editEl) return;
   
   var item = currentCategoryData[currentQuestionIndex];
   if (!item || !item.id) {
@@ -3785,20 +4373,19 @@ function saveAnswerMemo() {
     return;
   }
   
-  var newAnswer = answerTextEdit.value || '';
+  var newValue = editEl.value || '';
   
-  // ローディング表示
   var okButton = document.getElementById('answerUpdateConfirmOkButton');
   if (okButton) {
     okButton.disabled = true;
     okButton.textContent = '更新中...';
   }
   
-  // Google Apps Script経由でスプレッドシートを更新
   var params = new URLSearchParams();
-  params.append('action', 'updateAnswerMemo');
+  params.append('action', 'updateItemField');
   params.append('id', item.id);
-  params.append('answer', newAnswer);
+  params.append('field', updateStorageField);
+  params.append('value', newValue);
   params.append('email', userEmail);
   params.append('referer', window.location.origin);
   
@@ -3822,17 +4409,13 @@ function saveAnswerMemo() {
     }
     
     if (data.success) {
-      // 更新成功
+      item[updateStorageField] = newValue;
       closeUpdateConfirmModal();
-      endUpdateMode(false); // 更新後の内容を表示
-      
-      // データを更新
-      item.answer = newAnswer;
+      endUpdateMode(false);
     } else {
-      // 更新失敗
       showError('更新に失敗しました: ' + (data.error || 'Unknown error'));
       closeUpdateConfirmModal();
-      endUpdateMode(true); // 元の内容に復元
+      endUpdateMode(true);
     }
   })
   .catch(function(error) {
@@ -3842,8 +4425,13 @@ function saveAnswerMemo() {
     }
     showError('更新エラー: ' + error.toString());
     closeUpdateConfirmModal();
-    endUpdateMode(true); // 元の内容に復元
+    endUpdateMode(true);
   });
+}
+
+// 互換: 旧関数名
+function saveAnswerMemo() {
+  saveItemField();
 }
 
 // ========================================

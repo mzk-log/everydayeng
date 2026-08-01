@@ -632,6 +632,7 @@ select:disabled {
 /* テーブルコンテナ */
 .table-container {
   overflow-y: auto;
+  overflow-x: hidden;
   border: 1px solid #000;
   background-color: #fff;
   border-radius: 4px;
@@ -650,7 +651,7 @@ table {
 #listTable {
   display: table;
   width: 100%;
-  table-layout: auto;
+  table-layout: fixed;
 }
 
 /* リストテーブルのtbody */
@@ -698,8 +699,10 @@ th {
 /* No列の最小幅設定（クリアボタンが下に落ちないように） */
 #listTable thead th:first-child,
 #listTable tbody td:first-child {
-  min-width: 60px;
+  width: 14%;
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
 }
 
 /* No列ヘッダー内のspanとbuttonを横並びに */
@@ -715,7 +718,30 @@ th {
 
 /* No列ヘッダー内のspanとbuttonの間隔 */
 #listTable thead th:first-child span {
-  margin-right: 30px;
+  margin-right: 8px;
+}
+
+/* Question列：折り返し可・残り幅 */
+#listTable thead th:nth-child(2),
+#listTable tbody td:nth-child(2) {
+  width: auto;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+/* リトライ・学習日：中央寄せ・狭め */
+#listTable thead th.list-col-retry,
+#listTable thead th.list-col-lastdate,
+#listTable tbody td.list-col-retry,
+#listTable tbody td.list-col-lastdate {
+  width: 16%;
+  text-align: center;
+  white-space: normal;
+  word-break: break-word;
+  padding-left: 4px;
+  padding-right: 4px;
+  font-size: 12px;
 }
 
 /* クリアボタン */
@@ -758,6 +784,12 @@ tr:last-child td {
 #listTable td {
   white-space: pre-line;
   display: table-cell;
+  vertical-align: middle;
+}
+
+#listTable tbody td.list-col-retry,
+#listTable tbody td.list-col-lastdate {
+  white-space: normal;
 }
 
 /* 行のホバー効果 */
@@ -852,6 +884,22 @@ tr:last-child td {
   background-color: rgba(255, 255, 255, 0.9);
   border-radius: 8px;
   white-space: pre-line;
+}
+
+/* リトライ回数・最終学習日（背景なし） */
+.learning-meta {
+  font-size: 13px;
+  color: #444;
+  margin: -4px 0 10px;
+  padding: 0;
+  background: none;
+  white-space: pre-wrap;
+}
+
+.modal-learning-meta {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #555;
 }
 
 /* アイコンボタン */
@@ -953,6 +1001,7 @@ tr:last-child td {
 }
 
 /* 更新モード用のテキストエリア */
+.field-text-edit,
 .answer-text-edit {
   font-size: 18px;
   margin: 5px 0;
@@ -967,7 +1016,13 @@ tr:last-child td {
   box-sizing: border-box;
 }
 
+#noteTextEdit {
+  min-height: 100px;
+  font-size: 16px;
+}
+
 /* 更新モード用のコントロールボタン */
+.field-update-controls,
 .answer-update-controls {
   display: flex;
   gap: 10px;
@@ -1074,6 +1129,12 @@ tr:last-child td {
   z-index: 1;
 }
 
+/* 編集中セクションはオーバーレイより前面に出す */
+.section.field-editing-active {
+  position: relative;
+  z-index: 60;
+}
+
 /* 回答メモ更新確認モーダル */
 .answer-update-confirm-section {
   text-align: center;
@@ -1142,6 +1203,12 @@ tr:last-child td {
   white-space: pre-line;
 }
 
+/* 学習画面：note空欄時は白背景の透明度を上げて空欄であることを示す */
+#screen2 .note-text.note-empty {
+  background-color: rgba(255, 255, 255, 0.35);
+  min-height: 1.5em;
+}
+
 /* ナビゲーションバー（480pxより大きい画面） */
 .navigation-bar {
   display: flex;
@@ -1201,11 +1268,32 @@ tr:last-child td {
   order: 3;
 }
 
-/* プラスボタン: 絶対配置を解除、順序を4に */
+/* プラスボタン（もう一度）: 順序を4に。回転アイコン中央に「1」を重ねる */
 #plusButton {
   position: relative;
   left: auto;
   order: 4;
+}
+
+/* 他ボタンよりアイコンが小さく見えるため画像のみ拡大（「1」は据え置き） */
+#plusButton img {
+  width: 130%;
+  height: 130%;
+  max-width: none;
+}
+
+#plusButton .plus-retry-badge {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: #203354;
+  pointer-events: none;
+  user-select: none;
 }
 
 /* ホームボタン: 右余白を削除、順序を5に */
@@ -1225,6 +1313,18 @@ tr:last-child td {
 .nav-button:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* 学習完了時のカテゴリ移動（再生→<< / 次へ→>>） */
+#playButton.category-nav-mode img,
+#nextButton.category-nav-mode img {
+  width: 130%;
+  height: 130%;
+  max-width: none;
+}
+
+#playButton.category-nav-mode img {
+  transform: scaleX(-1);
 }
 
 
@@ -1758,6 +1858,11 @@ body:has(#screen2.active) .login-button {
   margin: 5px 0;
   padding: 8px;
   border-radius: 6px;
+}
+
+#screen2 .learning-meta {
+  font-size: 12px;
+  margin: 0 0 8px;
 }
 
 /* 学習画面のアイコンボタン（1/2サイズ） */
@@ -2478,10 +2583,21 @@ body:has(#screen2.active) .login-button {
     max-height: 85vh;
   }
 
-  /* No列の最小幅設定(480px) */
+  /* No列の幅設定(480px) */
   #listTable thead th:first-child,
   #listTable tbody td:first-child {
-    min-width: 50px !important;
+    width: 16% !important;
+    min-width: 0 !important;
+  }
+
+  #listTable thead th.list-col-retry,
+  #listTable thead th.list-col-lastdate,
+  #listTable tbody td.list-col-retry,
+  #listTable tbody td.list-col-lastdate {
+    width: 15% !important;
+    font-size: 11px !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
   }
 
   /* No列ヘッダー内のspanとbuttonの間隔(480px) */
