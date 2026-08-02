@@ -602,6 +602,11 @@ select.native-category-select-hidden {
   position: relative;
 }
 
+/* 開いているとき：START／ナビ／完了メッセージ／トグルより手前、メニュー・モーダルより後ろ */
+.custom-category-select.is-open {
+  z-index: 210;
+}
+
 .custom-category-select-trigger {
   width: 100%;
   box-sizing: border-box;
@@ -640,7 +645,7 @@ select.native-category-select-hidden {
   left: 0;
   right: 0;
   top: 100%;
-  z-index: 40;
+  z-index: 1;
   max-height: min(50vh, 320px);
   overflow-y: auto;
   border: 1px solid #000;
