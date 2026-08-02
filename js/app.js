@@ -2441,9 +2441,10 @@ function showAnswer() {
   
   isAnswerShown = true;
   
-  // TotalStudyCount +1 と LastDate 更新（非同期・学習フローは止めない）
+  // TotalStudyCount +1 と LastDate 更新（メモリ即反映 → 画面メタ更新 → GASは非同期）
   incrementTotalStudyCountAsync(item);
   updateLastDateIfNeededAsync(item);
+  updateLearningMetaDisplay(item, 'learningMeta');
   
   // ナビゲーションボタンを有効化
   updateNavigationButtons();
@@ -2783,7 +2784,7 @@ function updateItemFieldAsync(item, field, value, onSuccess) {
 
 /**
  * Ans押下時: TotalStudyCount を常に +1（非同期）
- * 学習画面のメタ表示は更新せず、メモリとシートのみ更新する
+ * メモリを先に更新し、呼び出し側で学習画面メタ表示を更新する
  * @param {Object} item
  */
 function incrementTotalStudyCountAsync(item) {
@@ -2797,7 +2798,7 @@ function incrementTotalStudyCountAsync(item) {
 
 /**
  * Ans押下時: LastDate を現在日時で非同期更新（毎回更新）
- * 学習画面のメタ表示は更新せず、メモリとシートのみ更新する
+ * メモリを先に更新し、呼び出し側で学習画面メタ表示を更新する
  * @param {Object} item
  */
 function updateLastDateIfNeededAsync(item) {
