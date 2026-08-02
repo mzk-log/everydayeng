@@ -365,6 +365,7 @@ function loadCategories(options) {
     if (select) {
       select.innerHTML = '<option value="">読み込み中...</option>';
       select.disabled = true;
+      syncCustomCategorySelect(select);
     }
     if (loadingSpinner) {
       loadingSpinner.style.display = 'block';
@@ -415,8 +416,8 @@ function loadCategories(options) {
         }
         if (select) {
           var valueToRestore = preserveValue || select.value || '';
-          populateCategorySelectOptions(select, valueToRestore);
           select.disabled = false;
+          populateCategorySelectOptions(select, valueToRestore);
         }
         // 学習完了中なら学習画面のドロップダウンも同期
         var learningSelectContainer = document.getElementById('learningCategorySelectContainer');
@@ -437,6 +438,7 @@ function loadCategories(options) {
         showError('データ読み込みエラー: ' + e.toString());
         if (select) {
           select.disabled = false;
+          syncCustomCategorySelect(select);
         }
         if (loadingSpinner) {
           loadingSpinner.style.display = 'none';
@@ -449,6 +451,7 @@ function loadCategories(options) {
       showError('アクセスエラー: ' + error.toString());
       if (select) {
         select.disabled = false;
+        syncCustomCategorySelect(select);
       }
       if (loadingSpinner) {
         loadingSpinner.style.display = 'none';
@@ -526,6 +529,139 @@ function populateCategorySelectOptions(select, selectedValue) {
   } else {
     select.value = '';
   }
+  
+  syncCustomCategorySelect(select);
+}
+
+/**
+ * ネイティブselect用のカスタムUIを用意（全文折り返し表示）
+ * @param {HTMLSelectElement} select
+ */
+function ensureCustomCategorySelect(select) {
+  if (!select || select.dataset.customSelectReady === '1') {
+    return;
+  }
+  var container = select.closest('.select-container');
+  if (!container) {
+    return;
+  }
+  
+  select.classList.add('native-category-select-hidden');
+  
+  var custom = document.createElement('div');
+  custom.className = 'custom-category-select';
+  custom.setAttribute('data-for-select', select.id || '');
+  
+  var trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'custom-category-select-trigger';
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', 'false');
+  
+  var panel = document.createElement('div');
+  panel.className = 'custom-category-select-panel';
+  panel.setAttribute('role', 'listbox');
+  
+  custom.appendChild(trigger);
+  custom.appendChild(panel);
+  if (select.nextSibling) {
+    container.insertBefore(custom, select.nextSibling);
+  } else {
+    container.appendChild(custom);
+  }
+  
+  trigger.addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (select.disabled || trigger.disabled) {
+      return;
+    }
+    var willOpen = !custom.classList.contains('is-open');
+    closeAllCustomCategorySelects();
+    if (willOpen) {
+      custom.classList.add('is-open');
+      trigger.setAttribute('aria-expanded', 'true');
+    }
+  });
+  
+  select.dataset.customSelectReady = '1';
+}
+
+/**
+ * 開いているカスタムカテゴリselectをすべて閉じる
+ */
+function closeAllCustomCategorySelects() {
+  var opens = document.querySelectorAll('.custom-category-select.is-open');
+  for (var i = 0; i < opens.length; i++) {
+    opens[i].classList.remove('is-open');
+    var trig = opens[i].querySelector('.custom-category-select-trigger');
+    if (trig) {
+      trig.setAttribute('aria-expanded', 'false');
+    }
+  }
+}
+
+/**
+ * ネイティブselectの内容をカスタムUIへ同期
+ * @param {HTMLSelectElement} select
+ */
+function syncCustomCategorySelect(select) {
+  if (!select) return;
+  ensureCustomCategorySelect(select);
+  var container = select.closest('.select-container');
+  if (!container) return;
+  var custom = container.querySelector('.custom-category-select');
+  if (!custom) return;
+  var trigger = custom.querySelector('.custom-category-select-trigger');
+  var panel = custom.querySelector('.custom-category-select-panel');
+  if (!trigger || !panel) return;
+  
+  trigger.disabled = !!select.disabled;
+  panel.innerHTML = '';
+  
+  var selectedLabel = 'Categoryを選択してください';
+  for (var i = 0; i < select.options.length; i++) {
+    var opt = select.options[i];
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'custom-category-select-option';
+    btn.textContent = opt.textContent;
+    btn.setAttribute('data-value', opt.value);
+    btn.setAttribute('role', 'option');
+    
+    if (opt.disabled) {
+      btn.disabled = true;
+      btn.classList.add('is-disabled');
+    }
+    if (opt.selected || String(opt.value) === String(select.value)) {
+      btn.classList.add('is-selected');
+      btn.setAttribute('aria-selected', 'true');
+      selectedLabel = opt.textContent || selectedLabel;
+    } else {
+      btn.setAttribute('aria-selected', 'false');
+    }
+    
+    (function(optionValue, isDisabled) {
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (isDisabled) {
+          return;
+        }
+        if (String(select.value) !== String(optionValue)) {
+          select.value = optionValue;
+          var changeEvent = new Event('change', { bubbles: true });
+          select.dispatchEvent(changeEvent);
+        }
+        closeAllCustomCategorySelects();
+        syncCustomCategorySelect(select);
+      });
+    })(opt.value, opt.disabled);
+    
+    panel.appendChild(btn);
+  }
+  
+  trigger.textContent = selectedLabel;
 }
 
 /**
@@ -537,6 +673,7 @@ function showLearningCategorySelect() {
   var learningSelect = document.getElementById('learningCategorySelect');
   
   if (currentCategory) {
+    currentCategory.classList.add('is-hidden');
     currentCategory.style.display = 'none';
   }
   if (container) {
@@ -554,6 +691,7 @@ function hideLearningCategorySelect() {
   var learningSelect = document.getElementById('learningCategorySelect');
   
   if (currentCategory) {
+    currentCategory.classList.remove('is-hidden');
     currentCategory.style.display = '';
   }
   if (container) {
@@ -677,6 +815,7 @@ function syncCategoryLastDateFromList() {
         break;
       }
     }
+    syncCustomCategorySelect(select);
   }
   var learningSelect = document.getElementById('learningCategorySelect');
   var learningContainer = document.getElementById('learningCategorySelectContainer');
@@ -687,6 +826,7 @@ function syncCategoryLastDateFromList() {
         break;
       }
     }
+    syncCustomCategorySelect(learningSelect);
   }
 }
 
@@ -705,6 +845,7 @@ function setupEventListeners() {
       }
       if (selectedCat && isEndCategory(selectedCat)) {
         this.value = '';
+        syncCustomCategorySelect(this);
         return;
       }
       // 学習時間のカウント開始（カテゴリ選択時）
@@ -736,11 +877,24 @@ function setupEventListeners() {
       }
       if (selectedCat && isEndCategory(selectedCat)) {
         this.value = currentCategoryNo != null ? String(currentCategoryNo) : '';
+        syncCustomCategorySelect(this);
         return;
       }
       loadCategoryDataAndStartLearning(categoryNo);
     });
   }
+  
+  // カテゴリ・カスタムドロップダウン初期化（全文折り返し）
+  syncCustomCategorySelect(document.getElementById('categorySelect'));
+  syncCustomCategorySelect(document.getElementById('learningCategorySelect'));
+  document.addEventListener('click', function() {
+    closeAllCustomCategorySelects();
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      closeAllCustomCategorySelects();
+    }
+  });
   
   document.getElementById('startButton').addEventListener('click', function() {
     startLearning();
@@ -1900,6 +2054,7 @@ function navigateToPreviousCategory() {
     select.value = categories[previousIndex].no;
     var event = new Event('change', { bubbles: true });
     select.dispatchEvent(event);
+    syncCustomCategorySelect(select);
   }
 }
 
@@ -1931,6 +2086,7 @@ function navigateToNextCategory() {
     select.value = categories[nextIndex].no;
     var event = new Event('change', { bubbles: true });
     select.dispatchEvent(event);
+    syncCustomCategorySelect(select);
   }
 }
 
@@ -2141,14 +2297,23 @@ function startLearning() {
   var container = document.querySelector('.container');
   if (container) container.classList.add('learning-mode');
   
-  // カテゴリ情報を表示
+  // カテゴリ情報を表示（初期画面と同じ全文＋折り返し）
   var selectedCategory = categories.find(function(cat) {
     return cat.no == currentCategoryNo;
   });
   if (selectedCategory) {
     var currentCategory = document.getElementById('currentCategory');
     if (currentCategory) {
-      currentCategory.textContent = selectedCategory.no + '. ' + selectedCategory.name;
+      currentCategory.classList.remove('is-hidden');
+      currentCategory.textContent = formatCategoryOptionText(selectedCategory);
+      currentCategory.style.display = 'block';
+      currentCategory.style.width = '100%';
+      currentCategory.style.maxWidth = '100%';
+      currentCategory.style.minWidth = '0';
+      currentCategory.style.whiteSpace = 'pre-wrap';
+      currentCategory.style.overflowWrap = 'anywhere';
+      currentCategory.style.wordBreak = 'break-word';
+      currentCategory.style.overflow = 'visible';
     }
   }
   
@@ -4076,6 +4241,7 @@ function loadCategoryDataAndStartLearning(categoryNo) {
   var select = document.getElementById('categorySelect');
   if (select) {
     select.value = categoryNo;
+    syncCustomCategorySelect(select);
   }
   
   var params = new URLSearchParams();
