@@ -23,6 +23,7 @@ var originalCategoryData = []; // 元の全問題データ（出題数表示用�
 var isQuestionToggleActive = false; // 出題読みトグルボタンの状態（ON/OFF）
 var isAnswerToggleActive = false; // 解答読みトグルボタンの状態（ON/OFF）
 var currentAudio = null; // 現在再生中のAudioオブジェクト
+var activePlayField = null; // 再生／取得中の欄 'question' | 'answer' | null
 var isUpdateMode = false; // 更新モードかどうか
 var originalEditText = ''; // 更新前の編集対象テキスト
 var updateDisplayTarget = null; // 'question' | 'answer' | 'note'
@@ -40,6 +41,7 @@ var audioCache = {};
 // キャッシュの設定
 var CACHE_PREFIX = 'tts_audio_'; // localStorageのキープレフィックス
 var MAX_CACHE_SIZE = 10 * 1024 * 1024; // 最大キャッシュサイズ（10MB）
+var FIELD_PLAY_LONG_PRESS_MS = 700; // 再生ボタン長押しで音声再作成
 
 // Google Apps Script WebアプリのURL（統合版：TTSとDATAの両方を処理）
 // 注意: Gas_Main.gsをWebアプリとして公開した際のURLを設定してください
@@ -204,10 +206,12 @@ function setButtonImages() {
     'home': 'img/home.png'
   };
   
-  // play-button
-  var playButtonImg = document.querySelector('#playButton img');
-  if (playButtonImg && images['play-button']) {
-    playButtonImg.src = images['play-button'];
+  // play-button（欄横の再生）
+  var fieldPlayImgs = document.querySelectorAll('#questionPlayButton img, #answerPlayButton img');
+  for (var i = 0; i < fieldPlayImgs.length; i++) {
+    if (images['play-button']) {
+      fieldPlayImgs[i].src = images['play-button'];
+    }
   }
   
   // arrow (next)
@@ -908,10 +912,11 @@ function setupEventListeners() {
   document.getElementById('playButton').addEventListener('click', function() {
     if (isLearningCompleted) {
       startLearningAdjacentCategory(-1);
-      return;
     }
-    playAnswer();
   });
+  
+  bindFieldPlayButton(document.getElementById('questionPlayButton'), 'question');
+  bindFieldPlayButton(document.getElementById('answerPlayButton'), 'answer');
   
   document.getElementById('nextButton').addEventListener('click', function() {
     if (isLearningCompleted) {
@@ -2401,6 +2406,8 @@ function displayQuestion() {
     return;
   }
   
+  stopCurrentAudioPlayback();
+  
   var item = currentCategoryData[currentQuestionIndex];
   var effectiveQuestion = getEffectiveQuestion(item);
   var isListeningQuestion = isListeningModeEnabled() && effectiveQuestion && !isImageUrl(effectiveQuestion);
@@ -2448,17 +2455,8 @@ function displayQuestion() {
   if (noteSection) noteSection.style.display = 'none';
   isAnswerShown = false;
   
-  // 再生ボタンの制御（質問文が画像URLの場合は無効化、それ以外は有効化）
-  var playButton = document.getElementById('playButton');
-  if (playButton) {
-    if (isImageUrl(effectiveQuestion)) {
-      // 質問文が画像URLの場合は無効化
-      playButton.disabled = true;
-    } else {
-      // 質問文がテキストの場合は有効化（出題中に質問文を読み上げ可能）
-      playButton.disabled = false;
-    }
-  }
+  // 出題／解答の再生ボタンを更新
+  updateFieldPlayButtons();
   
   // ストップウォッチをリセットして開始
   resetStopwatch();
@@ -2479,7 +2477,7 @@ function displayQuestion() {
       if (!currentItem || isAnswerShown) return;
       var text = getEffectiveQuestion(currentItem);
       if (text && !isImageUrl(text)) {
-        playAnswer(); // 出題中なので質問文を読み上げ
+        playFieldAudio('question');
       }
     }, 250);
   }
@@ -2577,18 +2575,6 @@ function showAnswer() {
     answerTextDisplay.style.display = 'block';
   }
   
-  // 再生ボタンの制御（回答が画像URLの場合は無効化、テキストの場合は有効化）
-  var playButton = document.getElementById('playButton');
-  if (playButton) {
-    if (isImageUrl(effectiveAnswer)) {
-      // 画像URLの場合は無効化
-      playButton.disabled = true;
-    } else {
-      // テキストの場合は有効化（回答表示後は回答文を読み上げ可能）
-      playButton.disabled = false;
-    }
-  }
-  
   // noteを常に表示（空欄時は背景をより透明にして空欄を示す）
   var noteText = document.getElementById('noteText');
   var noteSection = document.getElementById('noteSection');
@@ -2606,6 +2592,9 @@ function showAnswer() {
   
   isAnswerShown = true;
   
+  // 出題／解答の再生ボタンを更新（Ans後なので解答再生を有効化）
+  updateFieldPlayButtons();
+  
   // TotalStudyCount +1 と LastDate 更新（メモリ即反映 → 画面メタ更新 → GASは非同期）
   incrementTotalStudyCountAsync(item);
   updateLastDateIfNeededAsync(item);
@@ -2619,7 +2608,7 @@ function showAnswer() {
   
   // 解答読みトグルボタンがONの場合、自動再生（更新モード中は再生しない）
   if (isAnswerToggleActive && !isUpdateMode) {
-    playAnswer();
+    playFieldAudio('answer');
   }
   
   // 出題／解答／note のダブルクリック編集を有効化
@@ -3152,41 +3141,239 @@ function showImageModal(imageUrl) {
 
 // 回答を読み上げ（出題中は質問文、回答表示後は回答文を読み上げ）
 function playAnswer() {
+  playFieldAudio(isAnswerShown ? 'answer' : 'question');
+}
+
+/**
+ * 出題／解答欄の再生ボタン参照を返す
+ * @param {string} fieldType - 'question' | 'answer'
+ * @returns {HTMLElement|null}
+ */
+function getFieldPlayButton(fieldType) {
+  return document.getElementById(fieldType === 'answer' ? 'answerPlayButton' : 'questionPlayButton');
+}
+
+/**
+ * 再生ボタンに短押し再生／長押し再作成を割り当て（マウス・タッチ両対応）
+ * @param {HTMLElement|null} button
+ * @param {string} fieldType - 'question' | 'answer'
+ */
+function bindFieldPlayButton(button, fieldType) {
+  if (!button) return;
+  
+  var pressTimer = null;
+  var longPressFired = false;
+  var pressActive = false;
+  var activePointerId = null;
+  
+  function clearPressTimer() {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+    button.classList.remove('is-long-pressing');
+  }
+  
+  button.addEventListener('pointerdown', function(e) {
+    if (button.disabled) return;
+    if (typeof e.button === 'number' && e.button !== 0) return;
+    
+    pressActive = true;
+    longPressFired = false;
+    activePointerId = e.pointerId;
+    clearPressTimer();
+    
+    try {
+      button.setPointerCapture(e.pointerId);
+    } catch (err) {
+      // ignore
+    }
+    
+    pressTimer = setTimeout(function() {
+      pressTimer = null;
+      if (!pressActive || button.disabled) return;
+      longPressFired = true;
+      button.classList.add('is-long-pressing');
+      if (navigator.vibrate) {
+        try { navigator.vibrate(30); } catch (err) { /* ignore */ }
+      }
+      recreateFieldAudio(fieldType);
+      button.classList.remove('is-long-pressing');
+    }, FIELD_PLAY_LONG_PRESS_MS);
+  });
+  
+  function handlePressEnd(e) {
+    if (activePointerId != null && e.pointerId != null && e.pointerId !== activePointerId) {
+      return;
+    }
+    var wasActive = pressActive;
+    var wasLong = longPressFired;
+    clearPressTimer();
+    pressActive = false;
+    activePointerId = null;
+    
+    try {
+      if (e.pointerId != null && button.hasPointerCapture && button.hasPointerCapture(e.pointerId)) {
+        button.releasePointerCapture(e.pointerId);
+      }
+    } catch (err) {
+      // ignore
+    }
+    
+    if (!wasActive || wasLong || button.disabled) return;
+    playFieldAudio(fieldType, false);
+  }
+  
+  button.addEventListener('pointerup', handlePressEnd);
+  button.addEventListener('pointercancel', function(e) {
+    if (activePointerId != null && e.pointerId != null && e.pointerId !== activePointerId) {
+      return;
+    }
+    longPressFired = true; // 短押し再生を抑止
+    clearPressTimer();
+    pressActive = false;
+    activePointerId = null;
+  });
+  
+  // click は pointer で処理済み（二重発火防止）
+  button.addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  
+  // 長押し時のコンテキストメニューを抑止
+  button.addEventListener('contextmenu', function(e) {
+    e.preventDefault();
+  });
+}
+
+/**
+ * 出題／解答の再生ボタン有効／無効を更新
+ */
+function updateFieldPlayButtons() {
   var item = currentCategoryData[currentQuestionIndex];
-  if (!item) return;
+  var qBtn = getFieldPlayButton('question');
+  var aBtn = getFieldPlayButton('answer');
   
-  // 出題中（isAnswerShown === false）の場合は質問文を読み上げ
-  // 回答表示後（isAnswerShown === true）の場合は回答文を読み上げ
-  var text = isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item);
+  function isLoading(btn) {
+    return !!(btn && btn.querySelector('.play-button-spinner'));
+  }
   
-  if (!text) return;
-  
-  // 画像URLの場合は音声読み上げをスキップ
-  if (isImageUrl(text)) {
+  if (!item || isLearningCompleted) {
+    if (qBtn && !isLoading(qBtn)) qBtn.disabled = true;
+    if (aBtn && !isLoading(aBtn)) aBtn.disabled = true;
     return;
   }
   
-  // WebアプリURLが設定されていない場合はエラー
+  var qText = getEffectiveQuestion(item);
+  if (qBtn && !isLoading(qBtn)) {
+    qBtn.disabled = !qText || isImageUrl(qText) || activePlayField === 'question';
+  }
+  
+  var aText = getEffectiveAnswer(item);
+  if (aBtn && !isLoading(aBtn)) {
+    aBtn.disabled = !isAnswerShown || !aText || isImageUrl(aText) || activePlayField === 'answer';
+  }
+}
+
+/**
+ * 再生中の音声を停止し、欄の再生ボタン状態を戻す
+ */
+function stopCurrentAudioPlayback() {
+  var prevField = activePlayField;
+  if (currentAudio) {
+    try {
+      currentAudio.pause();
+      currentAudio.currentTime = 0;
+    } catch (e) {
+      // ignore
+    }
+    currentAudio = null;
+  }
+  activePlayField = null;
+  if (prevField) {
+    var prevBtn = getFieldPlayButton(prevField);
+    if (prevBtn && prevBtn.querySelector('.play-button-spinner')) {
+      hidePlayButtonLoading(prevField);
+      return;
+    }
+  }
+  updateFieldPlayButtons();
+}
+
+/**
+ * 指定欄のテキストを読み上げる
+ * @param {string} fieldType - 'question' | 'answer'
+ * @param {boolean} [forceRefresh=false] - true のときキャッシュを使わず再生成
+ */
+function playFieldAudio(fieldType, forceRefresh) {
+  var item = currentCategoryData[currentQuestionIndex];
+  if (!item || isLearningCompleted) return;
+  
+  if (fieldType === 'answer' && !isAnswerShown) return;
+  
+  var text = fieldType === 'answer' ? getEffectiveAnswer(item) : getEffectiveQuestion(item);
+  if (!text || isImageUrl(text)) return;
+  
   if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
     showError('音声読み上げの設定が完了していません。WebアプリURLを設定してください。');
     return;
   }
   
-  // 出題/解答に応じて設定を取得
-  var isQuestion = !isAnswerShown;
-  var voiceGender = isQuestion ? getAudioVoice('question') : getAudioVoice('answer');
-  var speed = isQuestion ? getAudioSpeed('question') : getAudioSpeed('answer');
+  stopCurrentAudioPlayback();
   
-  // キャッシュから音声データを取得（設定情報を含む）
-  var cachedAudio = getCachedAudio(text, voiceGender, speed);
-  if (cachedAudio) {
-    // キャッシュから即座に再生
-    playAudioFromCache(cachedAudio);
-    return;
+  var voiceGender = fieldType === 'question' ? getAudioVoice('question') : getAudioVoice('answer');
+  var speed = fieldType === 'question' ? getAudioSpeed('question') : getAudioSpeed('answer');
+  
+  if (!forceRefresh) {
+    var cachedAudio = getCachedAudio(text, voiceGender, speed);
+    if (cachedAudio) {
+      playAudioFromCache(cachedAudio, fieldType);
+      return;
+    }
   }
   
-  // キャッシュにない場合はAPI呼び出し
-  fetchAudioFromAPI(text, voiceGender, speed);
+  fetchAudioFromAPI(text, voiceGender, speed, fieldType);
+}
+
+/**
+ * 指定欄のキャッシュを消して音声を再作成・再生する
+ * @param {string} fieldType - 'question' | 'answer'
+ */
+function recreateFieldAudio(fieldType) {
+  var item = currentCategoryData[currentQuestionIndex];
+  if (!item || isLearningCompleted) return;
+  if (fieldType === 'answer' && !isAnswerShown) return;
+  
+  var text = fieldType === 'answer' ? getEffectiveAnswer(item) : getEffectiveQuestion(item);
+  if (!text || isImageUrl(text)) return;
+  
+  var voiceGender = fieldType === 'question' ? getAudioVoice('question') : getAudioVoice('answer');
+  var speed = fieldType === 'question' ? getAudioSpeed('question') : getAudioSpeed('answer');
+  
+  removeCachedAudio(text, voiceGender, speed);
+  playFieldAudio(fieldType, true);
+}
+
+/**
+ * 指定キーの音声キャッシュをメモリ／localStorage から削除
+ * @param {string} text
+ * @param {string} voiceGender
+ * @param {string} speed
+ */
+function removeCachedAudio(text, voiceGender, speed) {
+  var normalizedText = normalizeTextForTTS(text);
+  var cacheKey = normalizedText + '_' + (voiceGender || 'female') + '_' + (speed || 'fast');
+  
+  if (audioCache[cacheKey]) {
+    delete audioCache[cacheKey];
+  }
+  
+  try {
+    localStorage.removeItem(CACHE_PREFIX + hashText(cacheKey));
+  } catch (e) {
+    console.warn('Cache remove error:', e);
+  }
 }
 
 /**
@@ -3416,96 +3603,66 @@ function clearOldCacheEntries() {
 
 /**
  * キャッシュから音声を再生
+ * @param {Object} audioData - キャッシュ音声データ
+ * @param {string} fieldType - 'question' | 'answer'
  */
-function playAudioFromCache(audioData) {
+function playAudioFromCache(audioData, fieldType) {
   if (!audioData || !audioData.audioContent) {
     return;
   }
   
   try {
-    // 既存のAudioがあれば停止
     if (currentAudio) {
-      currentAudio.pause();
-      currentAudio.currentTime = 0;
+      try {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+      } catch (e) {
+        // ignore
+      }
       currentAudio = null;
     }
     
     var audio = new Audio('data:audio/mp3;base64,' + audioData.audioContent);
     currentAudio = audio;
+    activePlayField = fieldType || null;
+    updateFieldPlayButtons();
     
-    // 再生開始時に再生ボタンを無効化
-    audio.addEventListener('play', function() {
-      var playButton = document.getElementById('playButton');
-      if (playButton) {
-        playButton.disabled = true;
-      }
-    });
-    
-    // 再生終了時に再生ボタンを有効化
     audio.addEventListener('ended', function() {
-      var playButton = document.getElementById('playButton');
-      if (playButton) {
-        var item = currentCategoryData[currentQuestionIndex];
-        if (item) {
-          // 出題中の場合は質問文、回答表示後の場合は回答文をチェック
-          var textToCheck = isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item);
-          if (!isImageUrl(textToCheck)) {
-            playButton.disabled = false;
-          }
-        }
-      }
+      activePlayField = null;
       currentAudio = null;
+      updateFieldPlayButtons();
     });
     
-    // エラー時に再生ボタンを有効化
     audio.addEventListener('error', function() {
-      var playButton = document.getElementById('playButton');
-      if (playButton) {
-        var item = currentCategoryData[currentQuestionIndex];
-        if (item) {
-          // 出題中の場合は質問文、回答表示後の場合は回答文をチェック
-          var textToCheck = isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item);
-          if (!isImageUrl(textToCheck)) {
-            playButton.disabled = false;
-          }
-        }
-      }
+      activePlayField = null;
       currentAudio = null;
+      updateFieldPlayButtons();
     });
     
     audio.play().catch(function(error) {
       showError('音声の再生に失敗しました: ' + error.toString());
-      // エラー時も再生ボタンを有効化
-      var playButton = document.getElementById('playButton');
-      if (playButton) {
-        var item = currentCategoryData[currentQuestionIndex];
-        if (item) {
-          // 出題中の場合は質問文、回答表示後の場合は回答文をチェック
-          var textToCheck = isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item);
-          if (!isImageUrl(textToCheck)) {
-            playButton.disabled = false;
-          }
-        }
-      }
+      activePlayField = null;
       currentAudio = null;
+      updateFieldPlayButtons();
     });
   } catch (error) {
     showError('音声の再生に失敗しました: ' + error.toString());
+    activePlayField = null;
     currentAudio = null;
+    updateFieldPlayButtons();
   }
 }
 
 /**
  * ローディング表示を開始
+ * @param {string} fieldType - 'question' | 'answer'
  */
-function showPlayButtonLoading() {
-  var playButton = document.getElementById('playButton');
+function showPlayButtonLoading(fieldType) {
+  var playButton = getFieldPlayButton(fieldType);
   if (playButton) {
     playButton.disabled = true;
-    // スピナーを表示
     var spinner = document.createElement('div');
     spinner.className = 'play-button-spinner';
-    spinner.id = 'playButtonSpinner';
     playButton.innerHTML = '';
     playButton.appendChild(spinner);
   }
@@ -3513,18 +3670,18 @@ function showPlayButtonLoading() {
 
 /**
  * ローディング表示を終了
+ * @param {string} fieldType - 'question' | 'answer'
  */
-function hidePlayButtonLoading() {
-  var playButton = document.getElementById('playButton');
+function hidePlayButtonLoading(fieldType) {
+  var playButton = getFieldPlayButton(fieldType);
   if (playButton) {
-    playButton.disabled = false;
-    // 元の画像を復元
     var playButtonImg = document.createElement('img');
     playButtonImg.src = 'img/play-button.png';
-    playButtonImg.alt = '再生';
+    playButtonImg.alt = '';
     playButton.innerHTML = '';
     playButton.appendChild(playButtonImg);
   }
+  updateFieldPlayButtons();
 }
 
 /**
@@ -3532,20 +3689,19 @@ function hidePlayButtonLoading() {
  * @param {string} text - 読み上げるテキスト
  * @param {string} voiceGender - 音声の性別（'male' または 'female'）
  * @param {string} speed - 読み上げの速さ（'fast', 'medium', 'slow'）
+ * @param {string} fieldType - 'question' | 'answer'
  */
-function fetchAudioFromAPI(text, voiceGender, speed) {
-  // ローディング表示を開始
-  showPlayButtonLoading();
+function fetchAudioFromAPI(text, voiceGender, speed, fieldType) {
+  activePlayField = fieldType || null;
+  showPlayButtonLoading(fieldType);
   
-  // リクエストパラメータを準備
   var params = new URLSearchParams();
   params.append('text', text);
-  params.append('voiceGender', voiceGender || 'female'); // デフォルト値：女性
-  params.append('speed', speed || 'fast'); // デフォルト値：fast
-  params.append('email', userEmail); // TTS処理にもメール認証を追加
+  params.append('voiceGender', voiceGender || 'female');
+  params.append('speed', speed || 'fast');
+  params.append('email', userEmail);
   params.append('referer', window.location.origin);
   
-  // Google Apps Scriptにリクエストを送信
   fetch(buildGasPostUrl(), {
     method: 'POST',
     headers: {
@@ -3560,84 +3716,61 @@ function fetchAudioFromAPI(text, voiceGender, speed) {
     return response.json();
   })
   .then(function(data) {
-    // ローディング表示を終了
-    hidePlayButtonLoading();
+    hidePlayButtonLoading(fieldType);
     
     if (data.success && data.audioContent) {
-      // キャッシュに保存（設定情報を含む）
       saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
       
-      // 音声データ（base64）を再生
       try {
-        // 既存のAudioがあれば停止
         if (currentAudio) {
-          currentAudio.pause();
-          currentAudio.currentTime = 0;
+          try {
+            currentAudio.pause();
+            currentAudio.currentTime = 0;
+          } catch (e) {
+            // ignore
+          }
           currentAudio = null;
         }
         
         var audio = new Audio('data:audio/mp3;base64,' + data.audioContent);
         currentAudio = audio;
+        activePlayField = fieldType || null;
+        updateFieldPlayButtons();
         
-        // 再生開始時に再生ボタンを無効化
-        audio.addEventListener('play', function() {
-          var playButton = document.getElementById('playButton');
-          if (playButton) {
-            playButton.disabled = true;
-          }
-        });
-        
-        // 再生終了時に再生ボタンを有効化
         audio.addEventListener('ended', function() {
-          var playButton = document.getElementById('playButton');
-          if (playButton) {
-            // 回答が画像URLの場合は無効化のまま
-            var item = currentCategoryData[currentQuestionIndex];
-            var textToCheck = item ? (isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item)) : '';
-            if (item && !isImageUrl(textToCheck)) {
-              playButton.disabled = false;
-            }
-          }
+          activePlayField = null;
           currentAudio = null;
+          updateFieldPlayButtons();
         });
         
-        // エラー時に再生ボタンを有効化
         audio.addEventListener('error', function() {
-          var playButton = document.getElementById('playButton');
-          if (playButton) {
-            var item = currentCategoryData[currentQuestionIndex];
-            var textToCheck = item ? (isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item)) : '';
-            if (item && !isImageUrl(textToCheck)) {
-              playButton.disabled = false;
-            }
-          }
+          activePlayField = null;
           currentAudio = null;
+          updateFieldPlayButtons();
         });
         
         audio.play().catch(function(error) {
           showError('音声の再生に失敗しました: ' + error.toString());
-          // エラー時も再生ボタンを有効化
-          var playButton = document.getElementById('playButton');
-          if (playButton) {
-            var item = currentCategoryData[currentQuestionIndex];
-            var textToCheck = item ? (isAnswerShown ? getEffectiveAnswer(item) : getEffectiveQuestion(item)) : '';
-            if (item && !isImageUrl(textToCheck)) {
-              playButton.disabled = false;
-            }
-          }
+          activePlayField = null;
           currentAudio = null;
+          updateFieldPlayButtons();
         });
       } catch (error) {
         showError('音声の再生に失敗しました: ' + error.toString());
+        activePlayField = null;
         currentAudio = null;
+        updateFieldPlayButtons();
       }
     } else {
+      activePlayField = null;
+      updateFieldPlayButtons();
       showError('音声の生成に失敗しました: ' + (data.error || 'Unknown error'));
     }
   })
   .catch(function(error) {
-    // ローディング表示を終了
-    hidePlayButtonLoading();
+    hidePlayButtonLoading(fieldType);
+    activePlayField = null;
+    updateFieldPlayButtons();
     showError('音声読み上げエラー: ' + error.toString());
   });
 }
@@ -4095,25 +4228,21 @@ function getCurrentCategoryIndex() {
 }
 
 /**
- * 学習ナビアイコンを通常（再生／次へ）に戻す
+ * 学習ナビを通常状態に戻す（下ナビ左は学習中非表示。欄横の再生を使用）
  */
 function setLearningNavIconsNormal() {
+  var playButtonContainer = document.getElementById('playButtonContainer');
   var playButton = document.getElementById('playButton');
   var nextButton = document.getElementById('nextButton');
   
+  if (playButtonContainer) {
+    playButtonContainer.classList.add('is-hidden');
+    playButtonContainer.setAttribute('aria-hidden', 'true');
+  }
+  
   if (playButton) {
     playButton.classList.remove('category-nav-mode');
-    var playImg = playButton.querySelector('img');
-    if (playImg) {
-      playImg.src = 'img/play-button.png';
-      playImg.alt = '再生';
-    } else {
-      playButton.innerHTML = '';
-      playImg = document.createElement('img');
-      playImg.src = 'img/play-button.png';
-      playImg.alt = '再生';
-      playButton.appendChild(playImg);
-    }
+    playButton.disabled = true;
   }
   
   if (nextButton) {
@@ -4130,8 +4259,14 @@ function setLearningNavIconsNormal() {
  * 学習完了時のカテゴリナビアイコン（<< / >>）に切り替える
  */
 function setLearningNavIconsCategoryMode() {
+  var playButtonContainer = document.getElementById('playButtonContainer');
   var playButton = document.getElementById('playButton');
   var nextButton = document.getElementById('nextButton');
+  
+  if (playButtonContainer) {
+    playButtonContainer.classList.remove('is-hidden');
+    playButtonContainer.setAttribute('aria-hidden', 'false');
+  }
   
   if (playButton) {
     playButton.classList.add('category-nav-mode');
@@ -4153,6 +4288,8 @@ function setLearningNavIconsCategoryMode() {
       nextImg.alt = '次のカテゴリ';
     }
   }
+  
+  updateFieldPlayButtons();
 }
 
 /**

@@ -1011,6 +1011,69 @@ tr:last-child td {
   white-space: pre-line;
 }
 
+/* 出題／解答欄＋再生ボタン横並び */
+.field-with-play {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.field-with-play-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.field-with-play-main .question-text,
+.field-with-play-main .answer-button-container,
+.field-with-play-main .answer-text,
+.field-with-play-main .field-text-edit {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.field-play-button {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.field-play-button img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.field-play-button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.field-play-button.is-long-pressing {
+  transform: scale(0.92);
+  opacity: 0.85;
+}
+
+.field-play-button .play-button-spinner {
+  width: 20px;
+  height: 20px;
+  border-width: 2.5px;
+}
+
 /* 学習回数・最終学習日（背景なし） */
 .learning-meta {
   font-size: 13px;
@@ -1987,6 +2050,20 @@ body:has(#screen2.active) .login-button {
   border-radius: 6px;
 }
 
+#screen2 .field-with-play {
+  margin: 5px 0;
+  gap: 6px;
+}
+
+#screen2 .field-with-play-main .question-text {
+  margin: 0;
+}
+
+#screen2 .field-play-button {
+  width: 32px;
+  height: 32px;
+}
+
 #screen2 .learning-meta {
   font-size: 12px;
   margin: 0 0 8px;
@@ -2118,12 +2195,16 @@ body:has(#screen2.active) .login-button {
   display: none !important;
 }
 
-/* 再生ボタンコンテナ */
+/* 再生ボタンコンテナ（下ナビ：学習完了時の<<専用。学習中は非表示） */
 .play-button-container {
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 10px;
+}
+
+.play-button-container.is-hidden {
+  display: none !important;
 }
 
 /* Answerボタンのスタイル */
@@ -2133,6 +2214,11 @@ body:has(#screen2.active) .login-button {
   min-height: 50px;
   background-color: #000;
   border-radius: 8px;
+  box-sizing: border-box;
+}
+
+.field-with-play-main .answer-button-container {
+  margin: 0;
 }
 
 .answer-button {
