@@ -22,6 +22,7 @@ var selectedQuestionIndices = []; // 選択された問題のインデックス�
 var originalCategoryData = []; // 元の全問題データ（出題数表示用）
 var isQuestionToggleActive = false; // 出題読みトグルボタンの状態（ON/OFF）
 var isAnswerToggleActive = false; // 解答読みトグルボタンの状態（ON/OFF）
+var questionToggleBeforeListeningLock = null; // リスニングON固定前の出題読み状態
 var currentAudio = null; // 現在再生中のAudioオブジェクト
 var activePlayField = null; // 再生／取得中の欄 'question' | 'answer' | null
 var isUpdateMode = false; // 更新モードかどうか
@@ -112,16 +113,12 @@ window.onload = function() {
   setBackgroundImage();
   setButtonImages();
   
-  // トグルボタンの初期状態を設定
-  var questionToggleButton = document.getElementById('questionToggleButton');
+  // 出題設定（入替え・リスニング）を読み込み
+  loadPracticeSettings();
+  
+  // トグルボタンの初期状態を設定（リスニングON時は出題読みON固定）
+  syncQuestionToggleForListeningMode();
   var answerToggleButton = document.getElementById('answerToggleButton');
-  if (questionToggleButton) {
-    if (isQuestionToggleActive) {
-      questionToggleButton.classList.add('active');
-    } else {
-      questionToggleButton.classList.remove('active');
-    }
-  }
   if (answerToggleButton) {
     if (isAnswerToggleActive) {
       answerToggleButton.classList.add('active');
@@ -129,9 +126,6 @@ window.onload = function() {
       answerToggleButton.classList.remove('active');
     }
   }
-  
-  // 出題設定（入替え・リスニング）を読み込み
-  loadPracticeSettings();
   
   // トグルボタンの位置を設定（タイトルが表示された後に実行）
   requestAnimationFrame(function() {
@@ -904,9 +898,9 @@ function setupEventListeners() {
     startLearning();
   });
   
-  // 旧Answerボタン（削除済み）の代わりに、ナビゲーションバーのAnswerボタンを使用
+  // ナビゲーションバー中央ボタン（Ans / Next）
   document.getElementById('navAnswerButton').addEventListener('click', function() {
-    showAnswer();
+    handleNavAnswerButtonClick();
   });
   
   document.getElementById('playButton').addEventListener('click', function() {
@@ -936,6 +930,9 @@ function setupEventListeners() {
   
   // 出題読みトグルボタン
   document.getElementById('questionToggleButton').addEventListener('click', function() {
+    if (isListeningModeEnabled()) {
+      return; // リスニング練習中はON固定
+    }
     isQuestionToggleActive = !isQuestionToggleActive;
     if (isQuestionToggleActive) {
       this.classList.add('active');
@@ -1427,12 +1424,51 @@ function setPracticeSetting(setting, isOn) {
   }
   updatePracticeSettingButtons(setting, isOn);
   
+  if (setting === 'listeningMode') {
+    syncQuestionToggleForListeningMode();
+  }
+  
   // TOP画面のList表示を更新（学習中の現在問題は次問から反映）
   var screen1 = document.getElementById('screen1');
   if (screen1 && screen1.classList.contains('active') && currentCategoryData.length > 0) {
     if (setting === 'listeningMode' || setting === 'swapQA') {
       refreshHomeListForPracticeSettings();
     }
+  }
+}
+
+/**
+ * リスニング練習モードに応じて出題読みトグルを同期する
+ * ON時は出題読みをON固定（操作不可）。OFF時は固定解除し、固定前の状態へ戻す
+ */
+function syncQuestionToggleForListeningMode() {
+  var questionToggleButton = document.getElementById('questionToggleButton');
+  if (!questionToggleButton) return;
+  
+  if (isListeningModeEnabled()) {
+    if (questionToggleBeforeListeningLock === null) {
+      questionToggleBeforeListeningLock = isQuestionToggleActive;
+    }
+    isQuestionToggleActive = true;
+    questionToggleButton.classList.add('active');
+    questionToggleButton.classList.add('is-locked');
+    questionToggleButton.setAttribute('aria-disabled', 'true');
+    questionToggleButton.title = 'リスニング練習中は出題読みON固定';
+    return;
+  }
+  
+  if (questionToggleBeforeListeningLock !== null) {
+    isQuestionToggleActive = questionToggleBeforeListeningLock;
+    questionToggleBeforeListeningLock = null;
+  }
+  
+  questionToggleButton.classList.remove('is-locked');
+  questionToggleButton.removeAttribute('aria-disabled');
+  questionToggleButton.title = '';
+  if (isQuestionToggleActive) {
+    questionToggleButton.classList.add('active');
+  } else {
+    questionToggleButton.classList.remove('active');
   }
 }
 
@@ -1452,7 +1488,9 @@ function refreshHomeListForPracticeSettings() {
     var listMessage = document.getElementById('listMessage');
     if (listMessage) {
       listMessage.style.display = 'block';
-      listMessage.textContent = '出題数: ' + currentCategoryData.length;
+      listMessage.style.whiteSpace = 'pre-line';
+      listMessage.textContent =
+        'リスニング練習モードのため、Listは表示しません\n出題数: ' + currentCategoryData.length;
     }
     
     var startButton = document.getElementById('startButton');
@@ -2175,7 +2213,11 @@ function resetListDisplay() {
   var startButton = document.getElementById('startButton');
   var selectionCount = document.getElementById('selectionCount');
   
-  if (listMessage) listMessage.style.display = 'block';
+  if (listMessage) {
+    listMessage.style.display = 'block';
+    listMessage.style.whiteSpace = '';
+    listMessage.textContent = 'Categoryを選択してください。';
+  }
   if (listContainer) listContainer.style.display = 'none';
   if (startButton) startButton.style.display = 'none';
   if (selectionCount) selectionCount.style.display = 'none';
@@ -2343,16 +2385,9 @@ function startLearning() {
   // 最初の問題と次の問題をプリロード
   preloadAudioForCurrentAndNext();
   
-  // トグルボタンの状態を引き継ぐ
-  var questionToggleButton = document.getElementById('questionToggleButton');
+  // トグルボタンの状態を同期（リスニングON時は出題読みON固定）
+  syncQuestionToggleForListeningMode();
   var answerToggleButton = document.getElementById('answerToggleButton');
-  if (questionToggleButton) {
-    if (isQuestionToggleActive) {
-      questionToggleButton.classList.add('active');
-    } else {
-      questionToggleButton.classList.remove('active');
-    }
-  }
   if (answerToggleButton) {
     if (isAnswerToggleActive) {
       answerToggleButton.classList.add('active');
@@ -2442,18 +2477,15 @@ function displayQuestion() {
   var answerButtonContainer = document.getElementById('answerButtonContainer');
   if (answerButtonContainer) answerButtonContainer.style.display = 'block';
   
-  // ナビゲーションバーのAnswerボタンを有効化
-  var navAnswerButton = document.getElementById('navAnswerButton');
-  var navAnswerText = document.getElementById('navAnswerText');
-  if (navAnswerButton) navAnswerButton.disabled = false;
-  if (navAnswerText) navAnswerText.classList.add('blinking');
-  
   // 回答テキストを非表示
   var answerTextDisplay = document.getElementById('answerTextDisplay');
   var noteSection = document.getElementById('noteSection');
   if (answerTextDisplay) answerTextDisplay.style.display = 'none';
   if (noteSection) noteSection.style.display = 'none';
   isAnswerShown = false;
+  
+  // ナビゲーションバーの中央ボタンを Ans に戻す
+  updateNavAnswerButton();
   
   // 出題／解答の再生ボタンを更新
   updateFieldPlayButtons();
@@ -2553,12 +2585,6 @@ function showAnswer() {
   var answerButtonContainer = document.getElementById('answerButtonContainer');
   if (answerButtonContainer) answerButtonContainer.style.display = 'none';
   
-  // ナビゲーションバーのAnswerボタンを無効化
-  var navAnswerButton = document.getElementById('navAnswerButton');
-  var navAnswerText = document.getElementById('navAnswerText');
-  if (navAnswerButton) navAnswerButton.disabled = true;
-  if (navAnswerText) navAnswerText.classList.remove('blinking');
-  
   // リスニング練習モード時は出題側にも文字を表示
   if (isListeningQuestion) {
     var questionText = document.getElementById('questionText');
@@ -2591,6 +2617,9 @@ function showAnswer() {
   if (noteSection) noteSection.style.display = 'block';
   
   isAnswerShown = true;
+  
+  // 中央ボタンを Next に切り替え（時間表示は維持）
+  updateNavAnswerButton();
   
   // 出題／解答の再生ボタンを更新（Ans後なので解答再生を有効化）
   updateFieldPlayButtons();
@@ -4200,7 +4229,7 @@ function updateNavigationButtons() {
       }
     }
   } else if (isLearningCompleted) {
-    // 学習完了：再生→<<・次へ→>> で前後カテゴリへ移動
+    // 学習完了：<< / >> と中央 Next でカテゴリ移動
     updateCompletionCategoryNav();
   } else if (isInRetryMode) {
     // 再チャレンジモードの場合（回答表示前）
@@ -4209,6 +4238,55 @@ function updateNavigationButtons() {
     // 通常モード（回答表示前）
     if (nextButton) nextButton.disabled = true;
   }
+  
+  updateNavAnswerButton();
+}
+
+/**
+ * 中央ナビボタン（Ans / Next）のクリック処理
+ */
+function handleNavAnswerButtonClick() {
+  var navAnswerButton = document.getElementById('navAnswerButton');
+  if (navAnswerButton && navAnswerButton.disabled) return;
+  
+  if (isLearningCompleted) {
+    startLearningAdjacentCategory(1);
+    return;
+  }
+  if (isAnswerShown) {
+    goToNextQuestion();
+    return;
+  }
+  showAnswer();
+}
+
+/**
+ * 中央ナビボタンのラベル／有効状態を更新（Ans ↔ Next）
+ * ストップウォッチ表示は維持する
+ */
+function updateNavAnswerButton() {
+  var navAnswerButton = document.getElementById('navAnswerButton');
+  var navAnswerText = document.getElementById('navAnswerText');
+  if (!navAnswerButton || !navAnswerText) return;
+  
+  if (isLearningCompleted) {
+    navAnswerText.textContent = 'Next';
+    navAnswerText.classList.remove('blinking');
+    var idx = getCurrentCategoryIndex();
+    navAnswerButton.disabled = (idx < 0 || findSelectableCategoryIndex(idx, 1) < 0);
+    return;
+  }
+  
+  if (isAnswerShown) {
+    navAnswerText.textContent = 'Next';
+    navAnswerText.classList.remove('blinking');
+    navAnswerButton.disabled = false;
+    return;
+  }
+  
+  navAnswerText.textContent = 'Ans';
+  navAnswerText.classList.add('blinking');
+  navAnswerButton.disabled = false;
 }
 
 /**
@@ -4228,7 +4306,7 @@ function getCurrentCategoryIndex() {
 }
 
 /**
- * 学習ナビを通常状態に戻す（下ナビ左は学習中非表示。欄横の再生を使用）
+ * 学習ナビを通常状態に戻す（左枠は透明スペーサー。欄右上の再生を使用）
  */
 function setLearningNavIconsNormal() {
   var playButtonContainer = document.getElementById('playButtonContainer');
@@ -4236,7 +4314,8 @@ function setLearningNavIconsNormal() {
   var nextButton = document.getElementById('nextButton');
   
   if (playButtonContainer) {
-    playButtonContainer.classList.add('is-hidden');
+    playButtonContainer.classList.add('is-spacer');
+    playButtonContainer.classList.remove('is-hidden');
     playButtonContainer.setAttribute('aria-hidden', 'true');
   }
   
@@ -4253,6 +4332,8 @@ function setLearningNavIconsNormal() {
       nextImg.alt = '次へ';
     }
   }
+  
+  updateNavAnswerButton();
 }
 
 /**
@@ -4264,6 +4345,7 @@ function setLearningNavIconsCategoryMode() {
   var nextButton = document.getElementById('nextButton');
   
   if (playButtonContainer) {
+    playButtonContainer.classList.remove('is-spacer');
     playButtonContainer.classList.remove('is-hidden');
     playButtonContainer.setAttribute('aria-hidden', 'false');
   }
@@ -4312,6 +4394,8 @@ function updateCompletionCategoryNav() {
   if (nextButton) {
     nextButton.disabled = (idx < 0 || findSelectableCategoryIndex(idx, 1) < 0);
   }
+  
+  updateNavAnswerButton();
 }
 
 /**

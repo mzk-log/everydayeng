@@ -1011,12 +1011,9 @@ tr:last-child td {
   white-space: pre-line;
 }
 
-/* 出題／解答欄（全幅）＋再生ボタン（欄の上） */
+/* 出題／解答欄（全幅）＋再生ボタン（欄の右上・フロー外） */
 .field-with-play {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
+  position: relative;
   width: 100%;
   box-sizing: border-box;
 }
@@ -1026,11 +1023,15 @@ tr:last-child td {
   min-width: 0;
 }
 
+/* 欄の右上に重ねる（高さは取らず、直上の行右端に見える） */
 .field-play-button {
-  flex: 0 0 auto;
-  align-self: flex-end;
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
   width: 27px;  /* 旧36pxの75% */
   height: 27px;
+  margin: 0;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -1038,6 +1039,7 @@ tr:last-child td {
   display: flex;
   align-items: center;
   justify-content: center;
+  transform: translateY(calc(-100% - 2px));
   touch-action: manipulation;
   -webkit-touch-callout: none;
   user-select: none;
@@ -1057,7 +1059,7 @@ tr:last-child td {
 }
 
 .field-play-button.is-long-pressing {
-  transform: scale(0.92);
+  transform: translateY(calc(-100% - 2px)) scale(0.92);
   opacity: 0.85;
 }
 
@@ -1065,6 +1067,17 @@ tr:last-child td {
   width: 15px;
   height: 15px;
   border-width: 2px;
+}
+
+/* 再生ボタンと重ならないよう直上行の右に余白 */
+.question-section .question-info {
+  padding-right: 34px;
+  box-sizing: border-box;
+}
+
+.answer-section > .section-label {
+  padding-right: 34px;
+  box-sizing: border-box;
 }
 
 /* 学習回数・最終学習日（背景なし） */
@@ -1620,6 +1633,14 @@ tr:last-child td {
   border-color: #4CAF50;
 }
 
+/* リスニング練習中：出題読みON固定（黒背景で操作不可を明示） */
+.toggle-button.active.is-locked {
+  background-color: #000;
+  border-color: #000;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
 .toggle-slider {
   position: absolute;
   top: 0px; 
@@ -2019,6 +2040,19 @@ body:has(#screen2.active) .login-button {
   margin-bottom: 5px;
 }
 
+#screen2 .field-play-button {
+  width: 24px;  /* 旧32pxの75% */
+  height: 24px;
+}
+
+#screen2 .question-section .question-info {
+  padding-right: 30px;
+}
+
+#screen2 .answer-section > .section-label {
+  padding-right: 30px;
+}
+
 /* 学習画面の学習時間 */
 #screen2 .learning-time {
   font-size: 14px;
@@ -2041,16 +2075,6 @@ body:has(#screen2.active) .login-button {
   margin: 5px 0;
   padding: 8px;
   border-radius: 6px;
-}
-
-#screen2 .field-with-play {
-  margin: 5px 0;
-  gap: 3px;
-}
-
-#screen2 .field-play-button {
-  width: 24px;  /* 旧32pxの75% */
-  height: 24px;
 }
 
 #screen2 .learning-meta {
@@ -2184,12 +2208,18 @@ body:has(#screen2.active) .login-button {
   display: none !important;
 }
 
-/* 再生ボタンコンテナ（下ナビ：学習完了時の<<専用。学習中は非表示） */
+/* 再生ボタンコンテナ（下ナビ左：<<用。学習中は透明スペーサーで中央位置を固定） */
 .play-button-container {
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 10px;
+}
+
+/* 学習中：枠の幅だけ残し、<<は見えない／押せない */
+.play-button-container.is-spacer {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .play-button-container.is-hidden {
