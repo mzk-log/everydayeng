@@ -1011,33 +1011,26 @@ tr:last-child td {
   white-space: pre-line;
 }
 
-/* 出題／解答欄＋再生ボタン横並び */
+/* 出題／解答欄（全幅）＋再生ボタン（欄の上） */
 .field-with-play {
   display: flex;
+  flex-direction: column;
   align-items: stretch;
-  gap: 8px;
+  gap: 4px;
   width: 100%;
   box-sizing: border-box;
 }
 
 .field-with-play-main {
-  flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
-}
-
-.field-with-play-main .question-text,
-.field-with-play-main .answer-button-container,
-.field-with-play-main .answer-text,
-.field-with-play-main .field-text-edit {
-  margin-top: 0;
-  margin-bottom: 0;
 }
 
 .field-play-button {
   flex: 0 0 auto;
-  align-self: center;
-  width: 36px;
-  height: 36px;
+  align-self: flex-end;
+  width: 27px;  /* 旧36pxの75% */
+  height: 27px;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -1069,9 +1062,9 @@ tr:last-child td {
 }
 
 .field-play-button .play-button-spinner {
-  width: 20px;
-  height: 20px;
-  border-width: 2.5px;
+  width: 15px;
+  height: 15px;
+  border-width: 2px;
 }
 
 /* 学習回数・最終学習日（背景なし） */
@@ -2052,16 +2045,12 @@ body:has(#screen2.active) .login-button {
 
 #screen2 .field-with-play {
   margin: 5px 0;
-  gap: 6px;
-}
-
-#screen2 .field-with-play-main .question-text {
-  margin: 0;
+  gap: 3px;
 }
 
 #screen2 .field-play-button {
-  width: 32px;
-  height: 32px;
+  width: 24px;  /* 旧32pxの75% */
+  height: 24px;
 }
 
 #screen2 .learning-meta {
@@ -2218,7 +2207,7 @@ body:has(#screen2.active) .login-button {
 }
 
 .field-with-play-main .answer-button-container {
-  margin: 0;
+  margin-top: 0;
 }
 
 .answer-button {
