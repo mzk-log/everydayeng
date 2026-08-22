@@ -857,8 +857,10 @@ th {
 
 /* 学習回数・学習日：中央寄せ・狭め */
 #listTable thead th.list-col-study-count,
+#listTable thead th.list-col-duration,
 #listTable thead th.list-col-lastdate,
 #listTable tbody td.list-col-study-count,
+#listTable tbody td.list-col-duration,
 #listTable tbody td.list-col-lastdate {
   width: 16%;
   text-align: center;
@@ -913,6 +915,7 @@ tr:last-child td {
 }
 
 #listTable tbody td.list-col-study-count,
+#listTable tbody td.list-col-duration,
 #listTable tbody td.list-col-lastdate {
   white-space: normal;
 }
@@ -2847,10 +2850,12 @@ body:has(#screen2.active) .login-button {
   }
 
   #listTable thead th.list-col-study-count,
+  #listTable thead th.list-col-duration,
   #listTable thead th.list-col-lastdate,
   #listTable tbody td.list-col-study-count,
+  #listTable tbody td.list-col-duration,
   #listTable tbody td.list-col-lastdate {
-    width: 15% !important;
+    width: 13% !important;
     font-size: 11px !important;
     padding-left: 2px !important;
     padding-right: 2px !important;
