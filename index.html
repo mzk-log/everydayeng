@@ -267,12 +267,40 @@
             <button class="answer-end-button" id="noteEndButton" type="button">終了</button>
           </div>
         </div>
-      </div>
-      
-      <div class="completion-message-section" id="completionMessageSection" style="display: none;">
-        <div class="completion-message" id="completionMessage">
-          <span class="completion-message-text"></span>
-          <img class="completion-message-icon" id="completionMessageIcon" src="" alt="">
+        
+        <div class="section completion-list-section" id="completionListSection" style="display: none;">
+          <div class="section-label-container">
+            <div class="section-label">List</div>
+            <span id="completionSelectionCount" class="selection-count" style="display: none;"></span>
+          </div>
+          <div id="completionListMessage" class="message" style="display: none;">読み込み中...</div>
+          <div id="completionListContainer" class="table-container completion-list-container" style="display: none;">
+            <table id="completionListTable">
+              <thead>
+                <tr>
+                  <th>
+                    <span>No</span>
+                    <button id="completionClearSelectionButton" type="button" class="clear-button">
+                      <img src="img/clear.png" alt="クリア">
+                    </button>
+                  </th>
+                  <th id="completionListTableHeader"></th>
+                  <th class="list-col-study-count">学習回数</th>
+                  <th class="list-col-duration">平均解答時間</th>
+                  <th class="list-col-lastdate">学習日時</th>
+                </tr>
+              </thead>
+              <tbody id="completionListTableBody">
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <div class="completion-message-section" id="completionMessageSection" style="display: none;">
+          <div class="completion-message" id="completionMessage">
+            <span class="completion-message-text"></span>
+            <img class="completion-message-icon" id="completionMessageIcon" src="" alt="">
+          </div>
         </div>
       </div>
       

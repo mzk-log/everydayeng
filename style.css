@@ -2123,13 +2123,12 @@ body:has(#screen2.active) .login-button {
   border-radius: 6px;
 }
 
-/* 学習完了メッセージセクション */
+/* 学習完了メッセージ（List下・ナビ上の通常フロー） */
 #screen2 .completion-message-section {
-  position: fixed;
-  bottom: 80px; /* navigation-barの高さ(概算)分を調整 */ 
-  left: 0;
-  right: 0;
-  z-index: 90; /* navigation-bar（z-index: 100）より低く */
+  position: static;
+  margin: 12px 0 8px;
+  padding: 0 15px;
+  flex-shrink: 0;
 }
 
 /* 学習完了メッセージ */
@@ -2184,6 +2183,19 @@ body:has(#screen2.active) .login-button {
   min-width: 0;
   min-height: 0;
   max-height: calc(100dvh - 0px);
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 学習完了時のList（note下） */
+#screen2 .completion-list-section {
+  margin-top: 8px;
+  margin-bottom: 12px;
+}
+
+#screen2 .completion-list-container {
+  max-height: 40vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
 }
 
