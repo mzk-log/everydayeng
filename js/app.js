@@ -30,6 +30,13 @@ var waitingListeningAnsGate = false; // リスニング時：出題音声終了�
 var isCategoryTransitionInProgress = false; // カテゴリ切替：データ取得〜1問目表示まで
 var isRefreshingAdvanceNavControls = false; // refreshAdvanceNavControls の再入防止
 var justCompletedCategoryNo = null; // 直前に完了したカテゴリ（完了画面のList／中央Next/Start判定用）
+var justCompletedLastDatePageIndex = null; // 解答時間優先：再ソート後のページ比較用（未使用時は null）
+var isLastDateCompletionSessionView = false; // 解答時間優先：完了直後に今回学習分をList表示中
+var LAST_DATE_PAGE_SIZE = 7; // 解答時間優先：1ページあたりの件数
+var lastDateModeSortedItems = []; // 解答時間優先：全件ソート結果
+var lastDateModePageIndex = 0; // 解答時間優先：現在ページ（0始まり）
+var lastDateModeSessionItems = []; // 解答時間優先：今回学習開始時の最大7件（Plus再学習用）
+var lastDateModeLoadRequestId = 0; // 解答時間優先：取得リクエスト世代
 var completionBrowseRequestId = 0; // 完了画面List参照の取得リクエスト世代
 var isUpdateMode = false; // 更新モードかどうか
 var originalEditText = ''; // 更新前の編集対象テキスト
@@ -432,6 +439,11 @@ function loadCategories(options) {
         }
         // ボタンの状態を更新
         updateListNavButtons();
+        // 解答時間優先モードなら全件Listを読み込み
+        if (isDurationQuestionMethod()) {
+          applyQuestionMethodModeUi();
+          loadLastDateModeData({ resetPage: true, resort: true, forceFetch: true });
+        }
         // ページローディングを非表示（Googleスプレッドシートの読み込み完了）
         hidePageLoading();
       } catch (e) {
@@ -1142,6 +1154,19 @@ function setupEventListeners() {
     });
   });
   
+  // 出題方法（ラジオ）
+  var questionMethodRadios = document.querySelectorAll('input[name="questionMethod"]');
+  questionMethodRadios.forEach(function(radio) {
+    radio.addEventListener('change', function() {
+      if (!this.checked) return;
+      if (isQuestionMethodLockedOnLearningScreen()) {
+        updateQuestionMethodRadios(getQuestionMethod());
+        return;
+      }
+      setQuestionMethod(this.value);
+    });
+  });
+  
   // 背景画像を選択ボタン
   document.getElementById('selectBackgroundButton').addEventListener('click', function() {
     closeSideMenu();
@@ -1221,6 +1246,7 @@ function openSideMenu() {
   }
   // メニューが開いている間は背景のスクロールを無効化
   document.body.style.overflow = 'hidden';
+  updateLearningLockedSideMenuControls();
 }
 
 // サイドメニューを閉じる
@@ -1400,8 +1426,512 @@ function loadAudioSettings() {
 }
 
 // ========================================
-// 出題設定（入替え・リスニング）
+// 出題設定（入替え・リスニング・出題方法）
 // ========================================
+
+/** 出題方法の有効値 */
+var QUESTION_METHOD_VALUES = {
+  category: true,  // カテゴリ毎（通常）
+  lastDate: true,  // 学習日優先
+  duration: true   // 解答時間優先
+};
+
+/**
+ * 出題方法を取得（未設定・不正値は category）
+ * 旧 lastDate 選択は duration（解答時間優先）へ移行
+ * @returns {string} 'category' | 'lastDate' | 'duration'
+ */
+function getQuestionMethod() {
+  try {
+    var value = localStorage.getItem('practiceQuestionMethod');
+    if (value === 'lastDate') {
+      try {
+        localStorage.setItem('practiceQuestionMethod', 'duration');
+      } catch (eMigrate) {
+        // ignore
+      }
+      return 'duration';
+    }
+    if (value && QUESTION_METHOD_VALUES[value]) {
+      return value;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return 'category';
+}
+
+/**
+ * 出題方法ラジオUIを同期
+ * @param {string} method
+ */
+function updateQuestionMethodRadios(method) {
+  var radios = document.querySelectorAll('input[name="questionMethod"]');
+  radios.forEach(function(radio) {
+    radio.checked = (radio.value === method);
+  });
+}
+
+/**
+ * 出題方法を保存し、画面を切替
+ * @param {string} method - 'category' | 'lastDate' | 'duration'
+ */
+function setQuestionMethod(method) {
+  if (isQuestionMethodLockedOnLearningScreen()) {
+    updateQuestionMethodRadios(getQuestionMethod());
+    updateLearningLockedSideMenuControls();
+    return;
+  }
+  var next = QUESTION_METHOD_VALUES[method] ? method : 'category';
+  try {
+    localStorage.setItem('practiceQuestionMethod', next);
+  } catch (e) {
+    // localStorageが使えない場合は無視
+  }
+  updateQuestionMethodRadios(next);
+  applyQuestionMethodModeUi();
+  
+  if (next === 'duration') {
+    loadLastDateModeData({ resetPage: true, resort: true, forceFetch: true });
+  } else if (next === 'lastDate') {
+    showError('「学習日優先」は準備中です。');
+    restoreCategoryModeListFromSelection();
+  } else {
+    restoreCategoryModeListFromSelection();
+  }
+}
+
+/**
+ * 学習画面（screen2）表示中は出題方法の変更をロックする
+ * @returns {boolean}
+ */
+function isQuestionMethodLockedOnLearningScreen() {
+  var screen2 = document.getElementById('screen2');
+  return !!(screen2 && screen2.classList.contains('active'));
+}
+
+/**
+ * 学習中に変更すべきでないサイドメニュー項目の有効／無効を更新
+ */
+function updateLearningLockedSideMenuControls() {
+  var locked = isQuestionMethodLockedOnLearningScreen();
+  var item = document.getElementById('questionMethodSettingItem');
+  var radios = document.querySelectorAll('input[name="questionMethod"]');
+  var lockTitle = '学習中は出題方法を変更できません。HOMEへ戻ってから変更してください。';
+  
+  if (item) {
+    if (locked) {
+      item.classList.add('is-locked');
+      item.title = lockTitle;
+    } else {
+      item.classList.remove('is-locked');
+      item.removeAttribute('title');
+    }
+  }
+  radios.forEach(function(radio) {
+    radio.disabled = locked;
+    if (locked) {
+      radio.setAttribute('title', lockTitle);
+    } else {
+      radio.removeAttribute('title');
+    }
+  });
+}
+
+/**
+ * 解答時間優先モードか
+ * @returns {boolean}
+ */
+function isDurationQuestionMethod() {
+  return getQuestionMethod() === 'duration';
+}
+
+/**
+ * @deprecated isDurationQuestionMethod を使用
+ */
+function isLastDateQuestionMethod() {
+  return isDurationQuestionMethod();
+}
+
+/**
+ * 出題方法に応じて Category 欄／モード表示を切替
+ */
+function applyQuestionMethodModeUi() {
+  var isLastDate = isLastDateQuestionMethod();
+  var selectContainer = document.getElementById('categorySelectContainer');
+  var modeLabel = document.getElementById('questionMethodModeLabel');
+  var sectionLabel = document.getElementById('categorySectionLabel');
+  var learningSelectContainer = document.getElementById('learningCategorySelectContainer');
+  var currentCategory = document.getElementById('currentCategory');
+  
+  if (selectContainer) {
+    selectContainer.style.display = isLastDate ? 'none' : '';
+  }
+  if (modeLabel) {
+    modeLabel.style.display = isLastDate ? 'block' : 'none';
+    modeLabel.textContent = '解答時間優先モード';
+  }
+  if (sectionLabel) {
+    sectionLabel.textContent = isLastDate ? '出題方法' : 'Category';
+  }
+  var learningSectionLabel = document.getElementById('learningCategorySectionLabel');
+  if (learningSectionLabel) {
+    learningSectionLabel.textContent = isLastDate ? '出題方法' : 'Category';
+  }
+  
+  if (isLastDate) {
+    if (learningSelectContainer) learningSelectContainer.style.display = 'none';
+    if (currentCategory) {
+      currentCategory.classList.remove('is-hidden');
+      currentCategory.style.display = 'block';
+      currentCategory.textContent = '解答時間優先モード';
+    }
+  } else if (!isLearningCompleted) {
+    if (currentCategory && currentCategory.classList.contains('is-hidden') === false) {
+      // 学習中のカテゴリ表示は startLearning 側で設定
+    }
+  }
+}
+
+/**
+ * カテゴリ毎モードへ戻すときのList復元
+ */
+function restoreCategoryModeListFromSelection() {
+  var select = document.getElementById('categorySelect');
+  var categoryNo = select ? select.value : '';
+  lastDateModeSortedItems = [];
+  lastDateModePageIndex = 0;
+  lastDateModeSessionItems = [];
+  isLastDateCompletionSessionView = false;
+  applyQuestionMethodModeUi();
+  
+  if (categoryNo) {
+    loadCategoryData(categoryNo);
+  } else {
+    currentCategoryData = [];
+    selectedQuestionIndices = [];
+    var listMessage = document.getElementById('listMessage');
+    var listContainer = document.getElementById('listContainer');
+    var startButton = document.getElementById('startButton');
+    if (listMessage) {
+      listMessage.style.display = 'block';
+      listMessage.textContent = 'Categoryを選択してください。';
+    }
+    if (listContainer) listContainer.style.display = 'none';
+    if (startButton) startButton.style.display = 'none';
+    updateListNavButtons();
+  }
+}
+
+/**
+ * LastDate 比較用キー（空は先頭＝最小。昇順で先頭になる）
+ * @param {string} value
+ * @returns {string}
+ */
+function getLastDateSortKey(value) {
+  var normalized = normalizeLastDate(value);
+  if (!normalized) {
+    return '';
+  }
+  return normalized;
+}
+
+/**
+ * Duration 比較用ミリ秒（空は数値MAX）
+ * @param {string} value
+ * @returns {number}
+ */
+function getDurationSortMs(value) {
+  var ms = parseDurationToMs(value);
+  if (ms === null) {
+    return 1e15;
+  }
+  return ms;
+}
+
+/**
+ * カテゴリ番号の数値化（比較用）
+ * @param {*} value
+ * @returns {number}
+ */
+function getCategoryNoSortValue(value) {
+  var n = Number(value);
+  return isNaN(n) ? 0 : n;
+}
+
+/**
+ * 解答時間優先のソート（破壊的）
+ * Duration降順（空=MAX）→ LastDate昇順（空先頭）→ Category_No降順
+ * @param {Array} items
+ * @returns {Array}
+ */
+function sortItemsForLastDateMode(items) {
+  if (!items || items.length === 0) {
+    return items || [];
+  }
+  items.sort(function(a, b) {
+    var durA = getDurationSortMs(a ? a.duration : '');
+    var durB = getDurationSortMs(b ? b.duration : '');
+    if (durA < durB) return 1;
+    if (durA > durB) return -1;
+    
+    var dateA = getLastDateSortKey(a ? a.last_date : '');
+    var dateB = getLastDateSortKey(b ? b.last_date : '');
+    if (dateA < dateB) return -1;
+    if (dateA > dateB) return 1;
+    
+    var catA = getCategoryNoSortValue(a ? a.category_no : 0);
+    var catB = getCategoryNoSortValue(b ? b.category_no : 0);
+    if (catA < catB) return 1;
+    if (catA > catB) return -1;
+    return 0;
+  });
+  return items;
+}
+
+/**
+ * 解答時間優先：完了直後に今回学習分を List 表示
+ */
+function applyLastDateModeSessionToCompletionList() {
+  currentCategoryData = (lastDateModeSessionItems && lastDateModeSessionItems.length > 0)
+    ? lastDateModeSessionItems.slice()
+    : [];
+  currentCategoryNo = null;
+  selectedQuestionIndices = [];
+  isLastDateCompletionSessionView = true;
+  justCompletedLastDatePageIndex = null;
+
+  var listMessage = document.getElementById('completionListMessage');
+  var listContainer = document.getElementById('completionListContainer');
+  if (currentCategoryData.length === 0) {
+    if (listMessage) {
+      listMessage.style.display = 'block';
+      listMessage.textContent = '表示できる問題がありません。';
+    }
+    if (listContainer) listContainer.style.display = 'none';
+  } else {
+    displayList();
+  }
+  updateListNavButtons();
+  refreshAdvanceNavControls();
+}
+
+/**
+ * 解答時間優先：完了セッション表示から再ソートして先頭ページへ
+ * @returns {boolean}
+ */
+function exitLastDateCompletionSessionWithResort() {
+  if (!isLearningCompleted || !isLastDateCompletionSessionView) {
+    return false;
+  }
+  isLastDateCompletionSessionView = false;
+  justCompletedLastDatePageIndex = null;
+  if (lastDateModeSortedItems.length > 0) {
+    sortItemsForLastDateMode(lastDateModeSortedItems);
+    lastDateModePageIndex = 0;
+    applyLastDateModePageToList();
+  } else {
+    loadLastDateModeData({ resetPage: true, resort: true, forceFetch: true });
+  }
+  maintainCompletionScrollAtBottom();
+  return true;
+}
+
+/**
+ * 学習日優先の総ページ数
+ * @returns {number}
+ */
+function getLastDateModePageCount() {
+  if (!lastDateModeSortedItems.length) return 0;
+  return Math.ceil(lastDateModeSortedItems.length / LAST_DATE_PAGE_SIZE);
+}
+
+/**
+ * 現在ページの件数を currentCategoryData へ反映してList表示
+ */
+function applyLastDateModePageToList() {
+  isLastDateCompletionSessionView = false;
+  var pageCount = getLastDateModePageCount();
+  if (pageCount <= 0) {
+    lastDateModePageIndex = 0;
+    currentCategoryData = [];
+    selectedQuestionIndices = [];
+    var listMessage = document.getElementById(isLearningCompleted ? 'completionListMessage' : 'listMessage');
+    var listContainer = document.getElementById(isLearningCompleted ? 'completionListContainer' : 'listContainer');
+    var startButton = document.getElementById('startButton');
+    if (listMessage) {
+      listMessage.style.display = 'block';
+      listMessage.textContent = '表示できる問題がありません。';
+    }
+    if (listContainer) listContainer.style.display = 'none';
+    if (!isLearningCompleted && startButton) startButton.style.display = 'none';
+    updateListNavButtons();
+    if (isLearningCompleted) {
+      refreshAdvanceNavControls();
+    }
+    return;
+  }
+  
+  if (lastDateModePageIndex < 0) lastDateModePageIndex = 0;
+  if (lastDateModePageIndex >= pageCount) lastDateModePageIndex = pageCount - 1;
+  
+  var start = lastDateModePageIndex * LAST_DATE_PAGE_SIZE;
+  currentCategoryData = lastDateModeSortedItems.slice(start, start + LAST_DATE_PAGE_SIZE);
+  currentCategoryNo = null;
+  selectedQuestionIndices = [];
+  displayList();
+  
+  if (!isLearningCompleted) {
+    var startButton = document.getElementById('startButton');
+    if (startButton) {
+      startButton.style.display = 'block';
+      startButton.disabled = false;
+    }
+    showListNavButtons();
+  }
+  updateListNavButtons();
+  if (isLearningCompleted) {
+    refreshAdvanceNavControls();
+  }
+}
+
+/**
+ * 学習日優先データを取得・ソートして表示
+ * @param {Object} [options]
+ * @param {boolean} [options.resetPage]
+ * @param {boolean} [options.resort]
+ * @param {boolean} [options.forceFetch]
+ */
+function loadLastDateModeData(options) {
+  options = options || {};
+  var resetPage = options.resetPage !== false;
+  var resort = options.resort !== false;
+  var forceFetch = !!options.forceFetch;
+  
+  applyQuestionMethodModeUi();
+  
+  if (!forceFetch && lastDateModeSortedItems.length > 0) {
+    if (resort) {
+      sortItemsForLastDateMode(lastDateModeSortedItems);
+    }
+    if (resetPage) {
+      lastDateModePageIndex = 0;
+    }
+    applyLastDateModePageToList();
+    return;
+  }
+  
+  if (!userEmail) {
+    userEmail = localStorage.getItem('userEmail');
+  }
+  if (!userEmail) {
+    showError('メールアドレスが設定されていません。');
+    checkUserEmail();
+    return;
+  }
+  
+  lastDateModeLoadRequestId++;
+  var requestId = lastDateModeLoadRequestId;
+  var loadingSpinner = document.getElementById('categoryLoadingSpinner');
+  var listMessage = document.getElementById('listMessage');
+  if (loadingSpinner) loadingSpinner.style.display = 'block';
+  if (listMessage && !isLearningCompleted) {
+    listMessage.style.display = 'block';
+    listMessage.textContent = '読み込み中...';
+  }
+  
+  var params = new URLSearchParams();
+  params.append('action', 'getAllStudyItems');
+  params.append('email', userEmail);
+  params.append('referer', window.location.origin);
+  
+  fetch(WEB_APP_URL + '?' + params.toString())
+    .then(function(response) {
+      if (!response.ok) {
+        throw new Error('ネットワークエラー: ' + response.status);
+      }
+      return response.json();
+    })
+    .then(function(data) {
+      if (requestId !== lastDateModeLoadRequestId) return;
+      if (!isLastDateQuestionMethod()) return;
+      if (!data.success) {
+        throw new Error(data.error || 'データの取得に失敗しました');
+      }
+      var items = data.items || [];
+      // セッション内の更新済み値を id でマージ
+      var byId = {};
+      Object.keys(categoryDataByNo).forEach(function(catKey) {
+        var catItems = categoryDataByNo[catKey] || [];
+        catItems.forEach(function(it) {
+          if (it && it.id != null) {
+            if (it.category_no == null || it.category_no === '') {
+              it.category_no = catKey;
+            }
+            byId[String(it.id)] = it;
+          }
+        });
+      });
+      lastDateModeSortedItems.forEach(function(it) {
+        if (it && it.id != null) {
+          byId[String(it.id)] = it;
+        }
+      });
+      items = items.map(function(it) {
+        var mem = it && it.id != null ? byId[String(it.id)] : null;
+        if (!mem) return it;
+        return {
+          id: it.id,
+          category_no: it.category_no != null ? it.category_no : mem.category_no,
+          no: it.no,
+          q_title: it.q_title,
+          question: mem.question != null ? mem.question : it.question,
+          a_title: it.a_title,
+          answer: mem.answer != null ? mem.answer : it.answer,
+          note: mem.note != null ? mem.note : it.note,
+          retry_count: mem.retry_count != null ? mem.retry_count : it.retry_count,
+          total_study_count: mem.total_study_count != null ? mem.total_study_count : it.total_study_count,
+          duration_old: mem.duration_old != null ? mem.duration_old : it.duration_old,
+          duration: mem.duration != null ? mem.duration : it.duration,
+          last_date: mem.last_date != null ? mem.last_date : it.last_date
+        };
+      });
+      lastDateModeSortedItems = items;
+      sortItemsForLastDateMode(lastDateModeSortedItems);
+      if (resetPage) lastDateModePageIndex = 0;
+      applyLastDateModePageToList();
+      if (loadingSpinner) loadingSpinner.style.display = 'none';
+    })
+    .catch(function(error) {
+      if (requestId !== lastDateModeLoadRequestId) return;
+      showError('アクセスエラー: ' + error.toString());
+      if (loadingSpinner) loadingSpinner.style.display = 'none';
+    });
+}
+
+/**
+ * 学習日優先：ページ移動（再ソートしない）
+ * @param {number} direction -1 | 1
+ * @returns {boolean} 移動できたか
+ */
+function navigateLastDateModePage(direction) {
+  if (isLearningCompleted && isLastDateCompletionSessionView) {
+    if (direction > 0) {
+      return exitLastDateCompletionSessionWithResort();
+    }
+    return false;
+  }
+  var pageCount = getLastDateModePageCount();
+  if (pageCount <= 0) return false;
+  var nextPage = lastDateModePageIndex + direction;
+  if (nextPage < 0 || nextPage >= pageCount) return false;
+  lastDateModePageIndex = nextPage;
+  applyLastDateModePageToList();
+  if (isLearningCompleted) {
+    maintainCompletionScrollAtBottom();
+  }
+  return true;
+}
 
 function isSwapQAEnabled() {
   try {
@@ -1466,6 +1996,9 @@ function updatePracticeSettingButtons(setting, isOn) {
 function loadPracticeSettings() {
   updatePracticeSettingButtons('swapQA', isSwapQAEnabled());
   updatePracticeSettingButtons('listeningMode', isListeningModeEnabled());
+  updateQuestionMethodRadios(getQuestionMethod());
+  applyQuestionMethodModeUi();
+  updateLearningLockedSideMenuControls();
 }
 
 function setPracticeSetting(setting, isOn) {
@@ -2190,8 +2723,12 @@ function hideListNavButtons() {
   }
 }
 
-// 前のカテゴリに移動
+// 前のカテゴリに移動（学習日優先時はページ戻し）
 function navigateToPreviousCategory() {
+  if (isLastDateQuestionMethod()) {
+    navigateLastDateModePage(-1);
+    return;
+  }
   var select = document.getElementById('categorySelect');
   if (!select || !select.value || categories.length === 0) {
     return;
@@ -2222,8 +2759,12 @@ function navigateToPreviousCategory() {
   }
 }
 
-// 次のカテゴリに移動
+// 次のカテゴリに移動（学習日優先時はページ送り）
 function navigateToNextCategory() {
+  if (isLastDateQuestionMethod()) {
+    navigateLastDateModePage(1);
+    return;
+  }
   var select = document.getElementById('categorySelect');
   if (!select || !select.value || categories.length === 0) {
     return;
@@ -2260,15 +2801,36 @@ function updateListNavButtons() {
   var nextButton = document.getElementById('listNextButton');
   var select = document.getElementById('categorySelect');
   
-  if (!prevButton || !nextButton || !select || categories.length === 0) {
-    // カテゴリが読み込まれていない場合は非表示
+  if (!prevButton || !nextButton) {
+    return;
+  }
+  
+  // 学習日優先：7件ページ送り
+  if (isLastDateQuestionMethod()) {
+    if (isLearningCompleted && isLastDateCompletionSessionView) {
+      showListNavButtons();
+      prevButton.disabled = true;
+      nextButton.disabled = false;
+      return;
+    }
+    var pageCount = getLastDateModePageCount();
+    if (pageCount <= 0) {
+      hideListNavButtons();
+      return;
+    }
+    showListNavButtons();
+    prevButton.disabled = lastDateModePageIndex <= 0;
+    nextButton.disabled = lastDateModePageIndex >= pageCount - 1;
+    return;
+  }
+  
+  if (!select || categories.length === 0) {
     hideListNavButtons();
     return;
   }
   
   // カテゴリが選択されていない場合
   if (!select.value) {
-    // 非表示にする
     hideListNavButtons();
     return;
   }
@@ -2434,8 +2996,11 @@ function startLearning() {
   // 完了時カテゴリナビ用アイコンを通常（再生／次へ）に戻す
   setLearningNavIconsNormal();
   
-  // 元のデータを保存
+  // 元のデータを保存（学習日優先の Plus 用セッションも保持）
   originalCategoryData = currentCategoryData.slice();
+  if (isLastDateQuestionMethod()) {
+    lastDateModeSessionItems = originalCategoryData.slice();
+  }
   
   // 選択された問題のみを抽出（未選択時は全問）
   var filteredData = [];
@@ -2465,13 +3030,27 @@ function startLearning() {
   var container = document.querySelector('.container');
   if (container) container.classList.add('learning-mode');
   
-  // カテゴリ情報を表示（初期画面と同じ全文＋折り返し）
-  var selectedCategory = categories.find(function(cat) {
-    return cat.no == currentCategoryNo;
-  });
-  if (selectedCategory) {
-    var currentCategory = document.getElementById('currentCategory');
+  // カテゴリ情報／出題方法を表示
+  var currentCategory = document.getElementById('currentCategory');
+  if (isLastDateQuestionMethod()) {
+    hideLearningCategorySelect();
     if (currentCategory) {
+      currentCategory.classList.remove('is-hidden');
+      currentCategory.textContent = '解答時間優先モード';
+      currentCategory.style.display = 'block';
+      currentCategory.style.width = '100%';
+      currentCategory.style.maxWidth = '100%';
+      currentCategory.style.minWidth = '0';
+      currentCategory.style.whiteSpace = 'pre-wrap';
+      currentCategory.style.overflowWrap = 'anywhere';
+      currentCategory.style.wordBreak = 'break-word';
+      currentCategory.style.overflow = 'visible';
+    }
+  } else {
+    var selectedCategory = categories.find(function(cat) {
+      return cat.no == currentCategoryNo;
+    });
+    if (selectedCategory && currentCategory) {
       currentCategory.classList.remove('is-hidden');
       currentCategory.textContent = formatCategoryOptionText(selectedCategory);
       currentCategory.style.display = 'block';
@@ -2517,6 +3096,7 @@ function startLearning() {
   isCategoryTransitionInProgress = false;
   setLearningCategorySelectDisabled(false);
   refreshAdvanceNavControls();
+  updateLearningLockedSideMenuControls();
 }
 
 // 学習時間カウンターを開始
@@ -3033,22 +3613,56 @@ function formatDurationForSheet(elapsedMs) {
 }
 
 /**
+ * Duration を MM:SS:CS に正規化（不正・空は空文字）
+ * シート由来の Date.toString（1899 基準）も H:M:S → MM:SS:CS として復元する
+ * @param {*} duration
+ * @returns {string}
+ */
+function coerceDurationToMmSsCs(duration) {
+  if (duration === '' || duration === null || duration === undefined) {
+    return '';
+  }
+  var text = String(duration).trim();
+  if (!text) {
+    return '';
+  }
+  if (/^\d{1,3}:\d{2}:\d{2}$/.test(text)) {
+    var partsOk = text.split(':');
+    var mmOk = String(parseInt(partsOk[0], 10) || 0);
+    var ssOk = String(parseInt(partsOk[1], 10) || 0);
+    var csOk = String(parseInt(partsOk[2], 10) || 0);
+    while (mmOk.length < 2) mmOk = '0' + mmOk;
+    while (ssOk.length < 2) ssOk = '0' + ssOk;
+    while (csOk.length < 2) csOk = '0' + csOk;
+    return mmOk + ':' + ssOk + ':' + csOk;
+  }
+  // 例: Sat Dec 30 1899 00:10:28 GMT+0900 (...)
+  if (/1899/.test(text)) {
+    var matched = text.match(/\b(\d{1,2}):(\d{2}):(\d{2})\b/);
+    if (matched) {
+      var mmD = String(parseInt(matched[1], 10) || 0);
+      var ssD = String(parseInt(matched[2], 10) || 0);
+      var csD = String(parseInt(matched[3], 10) || 0);
+      while (mmD.length < 2) mmD = '0' + mmD;
+      while (ssD.length < 2) ssD = '0' + ssD;
+      while (csD.length < 2) csD = '0' + csD;
+      return mmD + ':' + ssD + ':' + csD;
+    }
+  }
+  return '';
+}
+
+/**
  * Duration（MM:SS:CS）をミリ秒に変換。不正・空は null
  * @param {string} duration
  * @returns {number|null}
  */
 function parseDurationToMs(duration) {
-  if (duration === '' || duration === null || duration === undefined) {
-    return null;
-  }
-  var text = String(duration).trim();
+  var text = coerceDurationToMmSsCs(duration);
   if (!text) {
     return null;
   }
   var parts = text.split(':');
-  if (parts.length !== 3) {
-    return null;
-  }
   var minutes = parseInt(parts[0], 10);
   var seconds = parseInt(parts[1], 10);
   var centiseconds = parseInt(parts[2], 10);
@@ -3064,25 +3678,16 @@ function parseDurationToMs(duration) {
  * @returns {string}
  */
 function formatDurationForDisplay(duration) {
-  if (duration === '' || duration === null || duration === undefined) {
-    return '-';
-  }
-  var text = String(duration).trim();
+  var text = coerceDurationToMmSsCs(duration);
   if (!text) {
     return '-';
   }
   var parts = text.split(':');
-  if (parts.length === 3) {
-    var minutes = parseInt(parts[0], 10);
-    var seconds = parseInt(parts[1], 10);
-    var centiseconds = parseInt(parts[2], 10);
-    if (isNaN(minutes)) minutes = 0;
-    if (isNaN(seconds)) seconds = 0;
-    if (isNaN(centiseconds)) centiseconds = 0;
-    var totalSec = minutes * 60 + seconds + (centiseconds / 100);
-    return totalSec.toFixed(1) + '秒';
-  }
-  return '-';
+  var minutes = parseInt(parts[0], 10) || 0;
+  var seconds = parseInt(parts[1], 10) || 0;
+  var centiseconds = parseInt(parts[2], 10) || 0;
+  var totalSec = minutes * 60 + seconds + (centiseconds / 100);
+  return totalSec.toFixed(1) + '秒';
 }
 
 /**
@@ -4555,10 +5160,23 @@ function handlePlusButtonClick() {
 }
 
 /**
- * 学習完了時：現在カテゴリを全問で再学習開始する
+ * 学習完了時：現在カテゴリ／学習日優先セッションを再学習開始する
  */
 function restartCurrentCategoryLearning() {
   if (!isLearningCompleted) {
+    return;
+  }
+  if (isLastDateQuestionMethod()) {
+    if (!lastDateModeSessionItems || lastDateModeSessionItems.length === 0) {
+      return;
+    }
+    currentCategoryData = lastDateModeSessionItems.slice();
+    selectedQuestionIndices = [];
+    justCompletedCategoryNo = null;
+    justCompletedLastDatePageIndex = null;
+    isLastDateCompletionSessionView = false;
+    hideCompletionMessage();
+    startLearning();
     return;
   }
   var targetNo = justCompletedCategoryNo != null ? justCompletedCategoryNo : currentCategoryNo;
@@ -4782,13 +5400,23 @@ function updateNavAnswerButton() {
     } else {
       navAnswerText.textContent = 'Next';
       navAnswerText.classList.remove('blinking');
-      var idx = getCurrentCategoryIndex();
-      var blocked = (idx < 0 || findSelectableCategoryIndex(idx, 1) < 0) || isCategoryTransitionInProgress;
+      var blocked;
+      if (isLastDateQuestionMethod()) {
+        if (isLastDateCompletionSessionView) {
+          blocked = isCategoryTransitionInProgress;
+        } else {
+          var pageCount = getLastDateModePageCount();
+          blocked = pageCount <= 0 || lastDateModePageIndex >= pageCount - 1 || isCategoryTransitionInProgress;
+        }
+      } else {
+        var idx = getCurrentCategoryIndex();
+        blocked = (idx < 0 || findSelectableCategoryIndex(idx, 1) < 0) || isCategoryTransitionInProgress;
+      }
       navAnswerButton.disabled = blocked;
       if (isCategoryTransitionInProgress) {
         navAnswerButton.title = 'カテゴリの切り替え中です';
       } else if (blocked) {
-        navAnswerButton.title = '次のカテゴリがありません';
+        navAnswerButton.title = isLastDateQuestionMethod() ? '次のページがありません' : '次のカテゴリがありません';
       } else {
         navAnswerButton.removeAttribute('title');
       }
@@ -4935,10 +5563,49 @@ function updateCompletionCategoryNav() {
   
   setLearningNavIconsCategoryMode();
   
-  var idx = getCurrentCategoryIndex();
   var playButton = document.getElementById('playButton');
   var nextButton = document.getElementById('nextButton');
   var transitionBlocked = isCategoryTransitionInProgress;
+  
+  if (isLastDateQuestionMethod()) {
+    if (isLastDateCompletionSessionView) {
+      if (playButton) {
+        playButton.disabled = true;
+        playButton.title = '完了直後は前ページがありません';
+      }
+      if (nextButton) {
+        nextButton.disabled = transitionBlocked;
+        if (transitionBlocked) {
+          nextButton.title = 'カテゴリの切り替え中です';
+        } else {
+          nextButton.removeAttribute('title');
+        }
+      }
+      updateNavAnswerButton();
+      return;
+    }
+    var pageCount = getLastDateModePageCount();
+    if (playButton) {
+      playButton.disabled = transitionBlocked || lastDateModePageIndex <= 0 || pageCount <= 0;
+      if (transitionBlocked) {
+        playButton.title = 'カテゴリの切り替え中です';
+      } else {
+        playButton.removeAttribute('title');
+      }
+    }
+    if (nextButton) {
+      nextButton.disabled = transitionBlocked || pageCount <= 0 || lastDateModePageIndex >= pageCount - 1;
+      if (transitionBlocked) {
+        nextButton.title = 'カテゴリの切り替え中です';
+      } else {
+        nextButton.removeAttribute('title');
+      }
+    }
+    updateNavAnswerButton();
+    return;
+  }
+  
+  var idx = getCurrentCategoryIndex();
   
   if (playButton) {
     playButton.disabled = transitionBlocked || (idx < 0 || findSelectableCategoryIndex(idx, -1) < 0);
@@ -5005,6 +5672,15 @@ function shouldShowCompletionStartButton() {
   if (!isLearningCompleted || isCategoryTransitionInProgress) {
     return false;
   }
+  if (isLastDateQuestionMethod()) {
+    // 完了直後（今回学習分表示）＋未選択 → Next（再ソートへ）
+    // 選択あり → Start（今回分の選択学習）
+    // 再ソート後（セッション表示終了）→ Start（未選択＝表示中ページ全件）
+    if (isLastDateCompletionSessionView) {
+      return selectedQuestionIndices.length > 0;
+    }
+    return true;
+  }
   if (justCompletedCategoryNo == null || currentCategoryNo == null) {
     return false;
   }
@@ -5020,6 +5696,10 @@ function shouldShowCompletionStartButton() {
  */
 function navigateCompletionCategory(direction) {
   if (!isLearningCompleted || isCategoryTransitionInProgress) {
+    return;
+  }
+  if (isLastDateQuestionMethod()) {
+    navigateLastDateModePage(direction);
     return;
   }
   var select = document.getElementById('learningCategorySelect');
@@ -5194,6 +5874,8 @@ function startLearningFromCompletion() {
   }
   hideCompletionListSection();
   justCompletedCategoryNo = null;
+  justCompletedLastDatePageIndex = null;
+  isLastDateCompletionSessionView = false;
   startLearning();
 }
 
@@ -5300,6 +5982,8 @@ function loadCategoryDataAndStartLearning(categoryNo, forceAllQuestions) {
       }
       hideCompletionListSection();
       justCompletedCategoryNo = null;
+      justCompletedLastDatePageIndex = null;
+      isLastDateCompletionSessionView = false;
       startLearning();
     })
     .catch(function(error) {
@@ -5405,8 +6089,20 @@ function showCompletionMessage() {
     }, 500);
   }
   
-  // 初期画面と同様のCategoryドロップダウン＋Listを表示
+  // 初期画面と同様のCategory／出題方法UI＋Listを表示
   justCompletedCategoryNo = currentCategoryNo;
+  if (isLastDateQuestionMethod()) {
+    selectedQuestionIndices = [];
+    hideLearningCategorySelect();
+    applyQuestionMethodModeUi();
+    showCompletionListSection();
+    // 完了直後は今回学習分を表示（再ソートは Next 押下時）
+    applyLastDateModeSessionToCompletionList();
+    setLearningNavIconsCategoryMode();
+    refreshAdvanceNavControls();
+    scrollLearningContentToCompletionView();
+    return;
+  }
   if (originalCategoryData.length > 0) {
     currentCategoryData = originalCategoryData.slice();
     categoryDataByNo[String(currentCategoryNo)] = currentCategoryData.slice();
@@ -5473,7 +6169,7 @@ function goToHome() {
   if (container) container.classList.remove('learning-mode');
   
   // 学習中に絞り込んだデータを全問に戻し、更新済み回数・日付をListへ反映
-  if (originalCategoryData.length > 0) {
+  if (originalCategoryData.length > 0 && !isLastDateQuestionMethod()) {
     currentCategoryData = originalCategoryData.slice();
   }
   selectedQuestionIndices = [];
@@ -5482,10 +6178,15 @@ function goToHome() {
   // 学習完了メッセージを非表示（初期画面List描画前に完了フラグを戻す）
   hideCompletionMessage();
   justCompletedCategoryNo = null;
+  justCompletedLastDatePageIndex = null;
+  isLastDateCompletionSessionView = false;
   isLearningCompleted = false;
   
-  // Listを再描画（メモリ上の retry_count / total_study_count / duration / last_date を反映）
-  if (currentCategoryData.length > 0) {
+  if (isLastDateQuestionMethod()) {
+    applyQuestionMethodModeUi();
+    loadLastDateModeData({ resetPage: true, resort: true, forceFetch: false });
+  } else if (currentCategoryData.length > 0) {
+    // Listを再描画（メモリ上の retry_count / total_study_count / duration / last_date を反映）
     displayList();
     // Listと同一ルールでカテゴリ最終学習日を即時反映（全問埋まり→最新日、空欄あり→-）
     syncCategoryLastDateFromList();
@@ -5493,12 +6194,14 @@ function goToHome() {
   }
   
   // カテゴリ一覧を再取得し、ドロップダウンの最終学習日をシート集計でも更新
-  if (currentCategoryNo != null && currentCategoryNo !== '') {
+  if (!isLastDateQuestionMethod() && currentCategoryNo != null && currentCategoryNo !== '') {
     loadCategories({
       preserveValue: currentCategoryNo,
       quiet: true
     });
   }
+  
+  updateLearningLockedSideMenuControls();
   
   // 学習時間はリセットしない（継続）
 }

@@ -348,6 +348,54 @@
   border-color: #45a049 !important;
 }
 
+/* 出題方法（ラジオ） */
+.question-method-radios {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.question-method-radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.question-method-radio input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: #4CAF50;
+  cursor: pointer;
+}
+
+/* 学習画面中：出題方法は変更不可 */
+#questionMethodSettingItem.is-locked {
+  opacity: 0.55;
+}
+
+#questionMethodSettingItem.is-locked .question-method-radio {
+  cursor: not-allowed;
+  color: #888;
+}
+
+#questionMethodSettingItem.is-locked .question-method-radio input[type="radio"] {
+  cursor: not-allowed;
+}
+
+.question-method-mode-label {
+  font-size: 16px;
+  font-weight: bold;
+  color: #333;
+  margin: 3px 0;
+  line-height: 1.45;
+}
+
 /* 学習画面（screen2）でもハンバーガーメニューを表示 */
 
 /* ページローディングオーバーレイ */

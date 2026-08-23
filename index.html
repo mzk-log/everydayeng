@@ -98,6 +98,23 @@
             <span class="side-menu-item-arrow">▼</span>
           </button>
           <div class="side-menu-submenu" id="questionSettingsSubmenu">
+            <div class="side-menu-submenu-item side-menu-brightness-item" id="questionMethodSettingItem">
+              <span class="side-menu-brightness-label">出題方法</span>
+              <div class="question-method-radios" role="radiogroup" aria-label="出題方法">
+                <label class="question-method-radio">
+                  <input type="radio" name="questionMethod" value="category" checked>
+                  <span>カテゴリ毎（通常）</span>
+                </label>
+                <label class="question-method-radio">
+                  <input type="radio" name="questionMethod" value="lastDate">
+                  <span>学習日優先</span>
+                </label>
+                <label class="question-method-radio">
+                  <input type="radio" name="questionMethod" value="duration">
+                  <span>解答時間優先</span>
+                </label>
+              </div>
+            </div>
             <div class="side-menu-submenu-item side-menu-brightness-item">
               <span class="side-menu-brightness-label">出題と解答の入替え</span>
               <div class="side-menu-brightness-controls">
@@ -142,14 +159,15 @@
         
         <div class="learning-time" id="learningTimeTop"><学習時間>0時間00分00秒</div>
         
-        <div class="section">
-          <div class="section-label">Category</div>
-          <div class="select-container">
+        <div class="section" id="categorySection">
+          <div class="section-label" id="categorySectionLabel">Category</div>
+          <div class="select-container" id="categorySelectContainer">
             <select id="categorySelect">
               <option value="">Categoryを選択してください</option>
             </select>
             <div id="categoryLoadingSpinner" class="category-loading-spinner" style="display: none;"></div>
           </div>
+          <div id="questionMethodModeLabel" class="question-method-mode-label" style="display: none;">解答時間優先モード</div>
         </div>
         
         <div class="list-nav-container">
@@ -204,7 +222,7 @@
         <div class="learning-time" id="learningTime"><学習時間>0時間00分</div>
         
         <div class="section">
-          <div class="section-label">Category</div>
+          <div class="section-label" id="learningCategorySectionLabel">Category</div>
           <div id="currentCategory"></div>
           <div class="select-container" id="learningCategorySelectContainer" style="display: none;">
             <select id="learningCategorySelect">
