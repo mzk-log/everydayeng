@@ -2086,8 +2086,12 @@ function displayList() {
     studyCountCell.className = 'list-col-study-count';
     studyCountCell.textContent = formatStudyCountForList(item);
     
+    var durationOldCell = document.createElement('td');
+    durationOldCell.className = 'list-col-duration list-col-duration-old';
+    durationOldCell.textContent = formatDurationForDisplay(item.duration_old);
+    
     var durationCell = document.createElement('td');
-    durationCell.className = 'list-col-duration';
+    durationCell.className = 'list-col-duration list-col-duration-latest';
     durationCell.textContent = formatDurationForDisplay(item.duration);
     
     var lastDateCell = document.createElement('td');
@@ -2097,6 +2101,7 @@ function displayList() {
     row.appendChild(noCell);
     row.appendChild(questionCell);
     row.appendChild(studyCountCell);
+    row.appendChild(durationOldCell);
     row.appendChild(durationCell);
     row.appendChild(lastDateCell);
     
@@ -3099,9 +3104,10 @@ function formatStudyCountForList(item) {
 function buildLearningMetaText(item) {
   var m = getRetryCountNumber(item ? item.retry_count : 0);
   var n = getRetryCountNumber(item ? item.total_study_count : 0);
+  var durationOldText = formatDurationForDisplay(item ? item.duration_old : '');
   var durationText = formatDurationForDisplay(item ? item.duration : '');
   var lastDateText = formatYmdForDisplay(item ? item.last_date : '');
-  return '学習回数：' + m + '／' + n + '回　平均解答時間：' + durationText + '　最終学習日時：' + lastDateText;
+  return '学習回数：' + m + '／' + n + '回　平均(前回)：' + durationOldText + '　平均(最新)：' + durationText + '　最終学習日時：' + lastDateText;
 }
 
 /**
@@ -3268,7 +3274,7 @@ function updateItemFieldsAsync(item, fields, onSuccess, onFinalError) {
 }
 
 /**
- * Ans押下時: TotalStudyCount / Duration / LastDate をメモリ更新し、1リクエストで保存
+ * Ans押下時: TotalStudyCount / Duration_old / Duration / LastDate をメモリ更新し、1リクエストで保存
  * @param {Object} item
  * @param {number} elapsedMs
  */
@@ -3278,8 +3284,12 @@ function persistAnsStudyStatsAsync(item, elapsedMs) {
   var nextCount = getRetryCountNumber(item.total_study_count) + 1;
   item.total_study_count = nextCount;
 
+  // 更新前の Duration（移動平均）を Duration_old へコピー（空欄もコピー）
+  var previousDuration = (item.duration === null || item.duration === undefined) ? '' : item.duration;
+  item.duration_old = previousDuration;
+
   var currentMs = Math.max(0, Number(elapsedMs) || 0);
-  var previousMs = parseDurationToMs(item.duration);
+  var previousMs = parseDurationToMs(previousDuration);
   var averagedMs = (previousMs === null) ? currentMs : Math.round((previousMs + currentMs) / 2);
   var duration = formatDurationForSheet(averagedMs);
   item.duration = duration;
@@ -3289,6 +3299,7 @@ function persistAnsStudyStatsAsync(item, elapsedMs) {
 
   updateItemFieldsAsync(item, {
     total_study_count: nextCount,
+    duration_old: previousDuration,
     duration: duration,
     last_date: now
   });
@@ -3308,20 +3319,26 @@ function incrementTotalStudyCountAsync(item) {
 }
 
 /**
- * Duration を平均解答時間で非同期更新（単体更新が必要な場合用）
+ * Duration / Duration_old を平均解答時間で非同期更新（単体更新が必要な場合用）
  * @param {Object} item
  * @param {number} elapsedMs - 今回のストップウォッチ経過ミリ秒
  */
 function updateDurationAsync(item, elapsedMs) {
   if (!item) return;
   
+  var previousDuration = (item.duration === null || item.duration === undefined) ? '' : item.duration;
+  item.duration_old = previousDuration;
+  
   var currentMs = Math.max(0, Number(elapsedMs) || 0);
-  var previousMs = parseDurationToMs(item.duration);
+  var previousMs = parseDurationToMs(previousDuration);
   var averagedMs = (previousMs === null) ? currentMs : Math.round((previousMs + currentMs) / 2);
   var duration = formatDurationForSheet(averagedMs);
   item.duration = duration;
   
-  updateItemFieldAsync(item, 'duration', duration);
+  updateItemFieldsAsync(item, {
+    duration_old: previousDuration,
+    duration: duration
+  });
 }
 
 /**
@@ -3695,7 +3712,7 @@ function updateHomeButton() {
   if (isCategoryTransitionInProgress) {
     blocked = true;
     title = 'カテゴリの切り替え中です';
-  } else if (!isLearningCompleted && isFieldAudioBusy()) {
+  } else if (isFieldAudioBusy()) {
     blocked = true;
     title = '音声の読み上げが終わるまでお待ちください';
   }
@@ -5429,7 +5446,10 @@ function hideCompletionMessage() {
 // ホームに戻る
 function goToHome() {
   if (isCategoryTransitionInProgress) return;
-  if (!isLearningCompleted && isFieldAudioBusy()) return;
+  if (isFieldAudioBusy()) return;
+  
+  // 万一の抜け対策：再生中音声を停止してから遷移する
+  stopCurrentAudioPlayback();
   
   // ストップウォッチを停止
   stopStopwatch();
@@ -5459,11 +5479,12 @@ function goToHome() {
   selectedQuestionIndices = [];
   originalCategoryData = [];
   
-  // 学習完了メッセージを非表示
+  // 学習完了メッセージを非表示（初期画面List描画前に完了フラグを戻す）
   hideCompletionMessage();
   justCompletedCategoryNo = null;
+  isLearningCompleted = false;
   
-  // Listを再描画（メモリ上の retry_count / total_study_count / last_date を反映）
+  // Listを再描画（メモリ上の retry_count / total_study_count / duration / last_date を反映）
   if (currentCategoryData.length > 0) {
     displayList();
     // Listと同一ルールでカテゴリ最終学習日を即時反映（全問埋まり→最新日、空欄あり→-）

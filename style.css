@@ -855,14 +855,14 @@ th {
   white-space: pre-line;
 }
 
-/* 学習回数・学習日：中央寄せ・狭め */
+/* 学習回数・平均(前回/最新)・学習日：中央寄せ・狭め */
 .list-table thead th.list-col-study-count,
 .list-table thead th.list-col-duration,
 .list-table thead th.list-col-lastdate,
 .list-table tbody td.list-col-study-count,
 .list-table tbody td.list-col-duration,
 .list-table tbody td.list-col-lastdate {
-  width: 16%;
+  width: 13%;
   text-align: center;
   white-space: normal;
   word-break: break-word;
@@ -2867,7 +2867,7 @@ body:has(#screen2.active) .login-button {
   .list-table tbody td.list-col-study-count,
   .list-table tbody td.list-col-duration,
   .list-table tbody td.list-col-lastdate {
-    width: 13% !important;
+    width: 11% !important;
     font-size: 11px !important;
     padding-left: 2px !important;
     padding-right: 2px !important;
