@@ -103,11 +103,19 @@
               <div class="question-method-radios" role="radiogroup" aria-label="出題方法">
                 <label class="question-method-radio">
                   <input type="radio" name="questionMethod" value="category" checked>
-                  <span>カテゴリ毎（通常）</span>
+                  <span>カテゴリ毎（ノーマル）</span>
+                </label>
+                <label class="question-method-radio">
+                  <input type="radio" name="questionMethod" value="categoryShuffle">
+                  <span>カテゴリ毎（シャッフル）</span>
+                </label>
+                <label class="question-method-radio">
+                  <input type="radio" name="questionMethod" value="lastDateNormal">
+                  <span>学習日優先（ノーマル）</span>
                 </label>
                 <label class="question-method-radio">
                   <input type="radio" name="questionMethod" value="lastDate">
-                  <span>学習日優先</span>
+                  <span>学習日優先（シャッフル）</span>
                 </label>
                 <label class="question-method-radio">
                   <input type="radio" name="questionMethod" value="duration">
@@ -160,7 +168,7 @@
         <div class="learning-time" id="learningTimeTop"><学習時間>0時間00分00秒</div>
         
         <div class="section" id="categorySection">
-          <div class="section-label" id="categorySectionLabel">Category</div>
+          <div class="section-label" id="categorySectionLabel">Category（ノーマル）</div>
           <div class="select-container" id="categorySelectContainer">
             <select id="categorySelect">
               <option value="">Categoryを選択してください</option>
@@ -222,7 +230,7 @@
         <div class="learning-time" id="learningTime"><学習時間>0時間00分</div>
         
         <div class="section">
-          <div class="section-label" id="learningCategorySectionLabel">Category</div>
+          <div class="section-label" id="learningCategorySectionLabel">Category（ノーマル）</div>
           <div id="currentCategory"></div>
           <div class="select-container" id="learningCategorySelectContainer" style="display: none;">
             <select id="learningCategorySelect">
