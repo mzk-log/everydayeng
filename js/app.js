@@ -20,6 +20,9 @@ var completedQuestionIndices = []; // 完了した問題のインデックスを
 var isLearningCompleted = false; // 学習が完了したかどうか
 var completionMessageIconRevealTimeoutId = null; // 完了メッセージアイコン表示用タイマー
 var isCompletionCongratsCleared = false; // Next等でお祝い文言を空にしたか
+var isCompletionStudyFieldsCollapsed = false; // 完了後カテゴリ切替で出題／解答／note を畳んだか
+var completionStudyFieldsCollapseTimerId = null; // 出題ブロックフェード用タイマー
+var COMPLETION_STUDY_FIELDS_FADE_MS = 250; // 出題ブロックのフェード時間
 var selectedQuestionIndices = []; // 選択された問題のインデックスを保存
 var originalCategoryData = []; // 元の全問題データ（出題数表示用）
 var isQuestionToggleActive = false; // 出題読みトグルボタンの状態（ON/OFF）
@@ -165,6 +168,16 @@ function hidePageLoading() {
         loadingOverlay.parentNode.removeChild(loadingOverlay);
       }
     }, 300); // transition時間（0.3s）に合わせる
+  }
+}
+
+/**
+ * カテゴリ読込の中央スピナーを非表示にする
+ */
+function hideCategoryLoadingSpinner() {
+  var loadingSpinner = document.getElementById('categoryLoadingSpinner');
+  if (loadingSpinner) {
+    loadingSpinner.style.display = 'none';
   }
 }
 
@@ -429,8 +442,18 @@ function loadCategories(options) {
             }
           }
         }
+        reconcileVisibleCategorySetting();
         if (select) {
           var valueToRestore = preserveValue || select.value || '';
+          if (valueToRestore && !isCategoryNoVisible(valueToRestore)) {
+            valueToRestore = '';
+            if (!isDurationQuestionMethod() && !isLastDateQuestionMethod()) {
+              currentCategoryNo = null;
+              currentCategoryData = [];
+              selectedQuestionIndices = [];
+              resetListDisplay();
+            }
+          }
           select.disabled = false;
           populateCategorySelectOptions(select, valueToRestore);
         }
@@ -497,6 +520,396 @@ function isEndCategory(cat) {
 }
 
 /**
+ * 表示カテゴリ設定の localStorage キー（メール単位）
+ * @returns {string}
+ */
+function getVisibleCategoriesStorageKey() {
+  var email = userEmail || '';
+  try {
+    if (!email) {
+      email = localStorage.getItem('userEmail') || '';
+    }
+  } catch (e) {
+    email = '';
+  }
+  return 'visibleCategoryNos:' + String(email);
+}
+
+/**
+ * 保存済みの表示カテゴリ番号配列を取得
+ * @returns {string[]|null} 未設定時は null
+ */
+function getSavedVisibleCategoryNos() {
+  try {
+    var raw = localStorage.getItem(getVisibleCategoriesStorageKey());
+    if (raw == null || raw === '') {
+      return null;
+    }
+    var parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed.map(function(no) {
+      return String(no);
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * 表示カテゴリ設定を保存
+ * @param {string[]} nos
+ */
+function saveVisibleCategoryNos(nos) {
+  try {
+    localStorage.setItem(
+      getVisibleCategoriesStorageKey(),
+      JSON.stringify((nos || []).map(function(no) {
+        return String(no);
+      }))
+    );
+  } catch (e) {
+    console.warn('表示カテゴリ設定の保存に失敗しました。');
+  }
+}
+
+/**
+ * 表示カテゴリ設定を削除（未設定＝全表示）
+ */
+function clearVisibleCategorySetting() {
+  try {
+    localStorage.removeItem(getVisibleCategoriesStorageKey());
+  } catch (e) {
+    // ignore
+  }
+}
+
+/**
+ * Category_No でカテゴリを探す
+ * @param {string|number} no
+ * @returns {Object|null}
+ */
+function findCategoryByNo(no) {
+  if (no == null || no === '' || !categories || !categories.length) {
+    return null;
+  }
+  var key = String(no);
+  for (var i = 0; i < categories.length; i++) {
+    if (String(categories[i].no) === key) {
+      return categories[i];
+    }
+  }
+  return null;
+}
+
+/**
+ * END 以外の設定対象カテゴリ（シート順＝Category_No 昇順）
+ * @returns {Object[]}
+ */
+function getConfigurableCategories() {
+  var list = (categories || []).filter(function(cat) {
+    return cat && !isEndCategory(cat);
+  });
+  list.sort(function(a, b) {
+    return getCategoryNoSortValue(a.no) - getCategoryNoSortValue(b.no);
+  });
+  return list;
+}
+
+/**
+ * カテゴリ番号が表示対象か（END は常に false。未設定時は END 以外すべて true）
+ * @param {string|number} no
+ * @returns {boolean}
+ */
+function isCategoryNoVisible(no) {
+  if (no == null || no === '') {
+    return false;
+  }
+  var cat = findCategoryByNo(no);
+  if (cat && isEndCategory(cat)) {
+    return false;
+  }
+  var saved = getSavedVisibleCategoryNos();
+  if (saved === null) {
+    // 未設定：END 以外は表示。カテゴリ一覧に無い番号は表示扱い（横断データの欠落対策）
+    return !(cat && isEndCategory(cat));
+  }
+  return saved.indexOf(String(no)) >= 0;
+}
+
+/**
+ * ドロップダウン／ナビ用の表示カテゴリ一覧
+ * @returns {Object[]}
+ */
+function getVisibleCategories() {
+  return getConfigurableCategories().filter(function(cat) {
+    return isCategoryNoVisible(cat.no);
+  });
+}
+
+/**
+ * 選択可能なカテゴリか（表示対象かつ END でない）
+ * @param {Object} cat
+ * @returns {boolean}
+ */
+function isCategorySelectable(cat) {
+  return !!(cat && !isEndCategory(cat) && isCategoryNoVisible(cat.no));
+}
+
+/**
+ * 保存済み設定を現行カテゴリ一覧と突合。有効 0 件なら未設定に戻す
+ * @returns {boolean} 未設定へリセットした場合 true
+ */
+function reconcileVisibleCategorySetting() {
+  var saved = getSavedVisibleCategoryNos();
+  if (saved === null) {
+    return false;
+  }
+  var configurable = getConfigurableCategories();
+  var validSet = {};
+  configurable.forEach(function(cat) {
+    validSet[String(cat.no)] = true;
+  });
+  var valid = saved.filter(function(no) {
+    return !!validSet[String(no)];
+  });
+  if (valid.length === 0) {
+    clearVisibleCategorySetting();
+    showError('表示できるカテゴリがありません。設定をリセットしました。');
+    return true;
+  }
+  if (valid.length !== saved.length) {
+    saveVisibleCategoryNos(valid);
+  }
+  return false;
+}
+
+/**
+ * 横断モード用：表示カテゴリに属する問題だけ残す
+ * @param {Array} items
+ * @returns {Array}
+ */
+function filterItemsByVisibleCategories(items) {
+  return (items || []).filter(function(it) {
+    return it && isCategoryNoVisible(it.category_no);
+  });
+}
+
+/**
+ * HOME（初期画面）表示中か
+ * @returns {boolean}
+ */
+function isHomeScreenActive() {
+  var screen1 = document.getElementById('screen1');
+  return !!(screen1 && screen1.classList.contains('active'));
+}
+
+/**
+ * 表示カテゴリ設定パネルを破棄して閉じる
+ */
+function closeVisibleCategoriesSubmenu() {
+  var submenu = document.getElementById('visibleCategoriesSubmenu');
+  var parentButton = document.getElementById('visibleCategoriesButton');
+  if (submenu) {
+    submenu.classList.remove('active');
+  }
+  if (parentButton) {
+    parentButton.classList.remove('active');
+  }
+  hideVisibleCategoriesError();
+}
+
+/**
+ * 表示カテゴリエラー文言を隠す
+ */
+function hideVisibleCategoriesError() {
+  var el = document.getElementById('visibleCategoriesError');
+  if (el) {
+    el.style.display = 'none';
+    el.textContent = '';
+  }
+}
+
+/**
+ * 表示カテゴリエラー文言を表示
+ * @param {string} message
+ */
+function showVisibleCategoriesError(message) {
+  var el = document.getElementById('visibleCategoriesError');
+  if (el) {
+    el.textContent = message || '';
+    el.style.display = message ? 'block' : 'none';
+  }
+}
+
+/**
+ * チェックリストを現在の保存状態（未設定＝全ON）で描画
+ */
+function renderVisibleCategoriesChecklist() {
+  var container = document.getElementById('visibleCategoriesChecklist');
+  if (!container) {
+    return;
+  }
+  hideVisibleCategoriesError();
+  container.innerHTML = '';
+  var list = getConfigurableCategories();
+  if (list.length === 0) {
+    container.innerHTML = '<div class="visible-categories-check-item">カテゴリがありません</div>';
+    updateVisibleCategoriesCount();
+    return;
+  }
+  list.forEach(function(cat) {
+    var label = document.createElement('label');
+    label.className = 'visible-categories-check-item';
+    var input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = String(cat.no);
+    input.checked = isCategoryNoVisible(cat.no);
+    input.addEventListener('change', function() {
+      updateVisibleCategoriesCount();
+    });
+    var text = document.createElement('span');
+    text.textContent = formatCategoryOptionText(cat);
+    label.appendChild(input);
+    label.appendChild(text);
+    container.appendChild(label);
+  });
+  updateVisibleCategoriesCount();
+}
+
+/**
+ * 表示カテゴリの選択件数（選択 / 全件）を更新
+ */
+function updateVisibleCategoriesCount() {
+  var countEl = document.getElementById('visibleCategoriesCount');
+  var container = document.getElementById('visibleCategoriesChecklist');
+  if (!countEl) {
+    return;
+  }
+  if (!container) {
+    countEl.textContent = '0 / 0';
+    return;
+  }
+  var inputs = container.querySelectorAll('input[type="checkbox"]');
+  var total = inputs.length;
+  var selected = 0;
+  for (var i = 0; i < inputs.length; i++) {
+    if (inputs[i].checked) {
+      selected++;
+    }
+  }
+  countEl.textContent = selected + ' / ' + total;
+}
+
+/**
+ * チェックリストから選択中番号を取得
+ * @returns {string[]}
+ */
+function getCheckedVisibleCategoryNosFromUi() {
+  var container = document.getElementById('visibleCategoriesChecklist');
+  if (!container) {
+    return [];
+  }
+  var nos = [];
+  var inputs = container.querySelectorAll('input[type="checkbox"]');
+  for (var i = 0; i < inputs.length; i++) {
+    if (inputs[i].checked) {
+      nos.push(String(inputs[i].value));
+    }
+  }
+  return nos;
+}
+
+/**
+ * チェックリストの全選択／全解除
+ * @param {boolean} checked
+ */
+function setAllVisibleCategoryChecks(checked) {
+  var container = document.getElementById('visibleCategoriesChecklist');
+  if (!container) {
+    return;
+  }
+  hideVisibleCategoriesError();
+  var inputs = container.querySelectorAll('input[type="checkbox"]');
+  for (var i = 0; i < inputs.length; i++) {
+    inputs[i].checked = !!checked;
+  }
+  updateVisibleCategoriesCount();
+}
+
+/**
+ * 表示カテゴリサブメニューをトグル（HOME 時のみ）
+ */
+function toggleVisibleCategoriesSubmenu() {
+  if (!isHomeScreenActive()) {
+    return;
+  }
+  var submenu = document.getElementById('visibleCategoriesSubmenu');
+  var parentButton = document.getElementById('visibleCategoriesButton');
+  if (!submenu || !parentButton) {
+    return;
+  }
+  var isActive = submenu.classList.contains('active');
+  if (isActive) {
+    closeVisibleCategoriesSubmenu();
+  } else {
+    renderVisibleCategoriesChecklist();
+    submenu.classList.add('active');
+    parentButton.classList.add('active');
+  }
+}
+
+/**
+ * 表示カテゴリ設定の保存を反映（TOP UI・横断モード）
+ */
+function applyVisibleCategoriesChange() {
+  reconcileVisibleCategorySetting();
+  
+  var select = document.getElementById('categorySelect');
+  var previousValue = select ? select.value : '';
+  var stillVisible = previousValue && isCategoryNoVisible(previousValue);
+  
+  if (select) {
+    populateCategorySelectOptions(select, stillVisible ? previousValue : '');
+  }
+  
+  if (previousValue && !stillVisible) {
+    currentCategoryNo = null;
+    currentCategoryData = [];
+    selectedQuestionIndices = [];
+    originalCategoryData = [];
+    hideCategoryLoadingSpinner();
+    if (!isDurationQuestionMethod() && !isLastDateQuestionMethod()) {
+      resetListDisplay();
+    }
+  }
+  
+  if (isDurationQuestionMethod()) {
+    loadDurationModeData({ resetPage: true, resort: true, forceFetch: true });
+  } else if (isLastDateQuestionMethod()) {
+    loadLastDateModeData({ regenerate: true, forceFetch: true });
+  } else {
+    updateListNavButtons();
+  }
+}
+
+/**
+ * 表示カテゴリ設定を保存ボタン処理
+ */
+function saveVisibleCategoriesFromUi() {
+  var nos = getCheckedVisibleCategoryNosFromUi();
+  if (nos.length === 0) {
+    showVisibleCategoriesError('一つ以上選択してください。');
+    return;
+  }
+  saveVisibleCategoryNos(nos);
+  hideVisibleCategoriesError();
+  applyVisibleCategoriesChange();
+  closeVisibleCategoriesSubmenu();
+}
+
+/**
  * 指定インデックスから前後方向に、選択可能なカテゴリのインデックスを探す
  * @param {number} fromIndex
  * @param {number} direction -1=前 / 1=次
@@ -508,7 +921,7 @@ function findSelectableCategoryIndex(fromIndex, direction) {
   }
   var i = fromIndex + direction;
   while (i >= 0 && i < categories.length) {
-    if (!isEndCategory(categories[i])) {
+    if (isCategorySelectable(categories[i])) {
       return i;
     }
     i += direction;
@@ -525,30 +938,15 @@ function populateCategorySelectOptions(select, selectedValue) {
   if (!select) return;
   
   select.innerHTML = '<option value="">Categoryを選択してください</option>';
-  categories.forEach(function(cat) {
+  getVisibleCategories().forEach(function(cat) {
     var option = document.createElement('option');
     option.value = cat.no;
     option.textContent = formatCategoryOptionText(cat);
-    if (isEndCategory(cat)) {
-      option.disabled = true;
-      option.style.color = '#999999';
-    }
     select.appendChild(option);
   });
   
-  if (selectedValue != null && selectedValue !== '') {
-    var restoreCat = null;
-    for (var ri = 0; ri < categories.length; ri++) {
-      if (String(categories[ri].no) === String(selectedValue)) {
-        restoreCat = categories[ri];
-        break;
-      }
-    }
-    if (restoreCat && !isEndCategory(restoreCat)) {
-      select.value = String(selectedValue);
-    } else {
-      select.value = '';
-    }
+  if (selectedValue != null && selectedValue !== '' && isCategoryNoVisible(selectedValue)) {
+    select.value = String(selectedValue);
   } else {
     select.value = '';
   }
@@ -1123,6 +1521,23 @@ function setupEventListeners() {
     toggleAudioSettingsSubmenu();
   });
   
+  // 表示カテゴリ（HOMEのみ）
+  document.getElementById('visibleCategoriesButton').addEventListener('click', function() {
+    toggleVisibleCategoriesSubmenu();
+  });
+  document.getElementById('visibleCategoriesSelectAllButton').addEventListener('click', function() {
+    setAllVisibleCategoryChecks(true);
+  });
+  document.getElementById('visibleCategoriesClearAllButton').addEventListener('click', function() {
+    setAllVisibleCategoryChecks(false);
+  });
+  document.getElementById('visibleCategoriesSaveButton').addEventListener('click', function() {
+    saveVisibleCategoriesFromUi();
+  });
+  document.getElementById('visibleCategoriesCancelButton').addEventListener('click', function() {
+    closeVisibleCategoriesSubmenu();
+  });
+  
   // 出題設定のアコーディオンメニュー
   document.getElementById('questionSettingsButton').addEventListener('click', function() {
     toggleQuestionSettingsSubmenu();
@@ -1265,6 +1680,8 @@ function closeSideMenu() {
   if (hamburgerButton) {
     hamburgerButton.classList.remove('active');
   }
+  // 未保存の表示カテゴリ変更は破棄
+  closeVisibleCategoriesSubmenu();
   // メニューが閉じたら背景のスクロールを有効化
   document.body.style.overflow = '';
 }
@@ -1535,6 +1952,36 @@ function updateLearningLockedSideMenuControls() {
       radio.removeAttribute('title');
     }
   });
+  updateVisibleCategoriesMenuLock();
+}
+
+/**
+ * 表示カテゴリ設定は HOME 時のみ操作可能
+ */
+function updateVisibleCategoriesMenuLock() {
+  var locked = !isHomeScreenActive();
+  var container = document.getElementById('visibleCategoriesItemContainer');
+  var button = document.getElementById('visibleCategoriesButton');
+  var lockTitle = '表示カテゴリはHOME画面でのみ変更できます。';
+  
+  if (locked) {
+    closeVisibleCategoriesSubmenu();
+  }
+  if (container) {
+    if (locked) {
+      container.classList.add('is-locked');
+    } else {
+      container.classList.remove('is-locked');
+    }
+  }
+  if (button) {
+    button.disabled = locked;
+    if (locked) {
+      button.title = lockTitle;
+    } else {
+      button.removeAttribute('title');
+    }
+  }
 }
 
 /**
@@ -2091,20 +2538,23 @@ function loadLastDateModeData(options) {
     })
     .then(function(data) {
       if (requestId !== lastDateModeLoadRequestId) return;
-      if (!isLastDateQuestionMethod()) return;
+      if (!isLastDateQuestionMethod()) {
+        hideCategoryLoadingSpinner();
+        return;
+      }
       if (!data.success) {
         throw new Error(data.error || 'データの取得に失敗しました');
       }
       var items = mergeAllStudyItemsWithMemory(data.items || [], lastDateModeAllItems);
-      lastDateModeAllItems = items;
+      lastDateModeAllItems = filterItemsByVisibleCategories(items);
       sortItemsForLastDatePriorityMode(lastDateModeAllItems);
       regenerateLastDateModeList();
-      if (loadingSpinner) loadingSpinner.style.display = 'none';
+      hideCategoryLoadingSpinner();
     })
     .catch(function(error) {
       if (requestId !== lastDateModeLoadRequestId) return;
       showError('アクセスエラー: ' + error.toString());
-      if (loadingSpinner) loadingSpinner.style.display = 'none';
+      hideCategoryLoadingSpinner();
     });
 }
 
@@ -2342,21 +2792,24 @@ function loadDurationModeData(options) {
     })
     .then(function(data) {
       if (requestId !== durationModeLoadRequestId) return;
-      if (!isDurationQuestionMethod()) return;
+      if (!isDurationQuestionMethod()) {
+        hideCategoryLoadingSpinner();
+        return;
+      }
       if (!data.success) {
         throw new Error(data.error || 'データの取得に失敗しました');
       }
       var items = mergeAllStudyItemsWithMemory(data.items || [], durationModeSortedItems);
-      durationModeSortedItems = items;
+      durationModeSortedItems = filterItemsByVisibleCategories(items);
       sortItemsForDurationMode(durationModeSortedItems);
       if (resetPage) durationModePageIndex = 0;
       applyDurationModePageToList();
-      if (loadingSpinner) loadingSpinner.style.display = 'none';
+      hideCategoryLoadingSpinner();
     })
     .catch(function(error) {
       if (requestId !== durationModeLoadRequestId) return;
       showError('アクセスエラー: ' + error.toString());
-      if (loadingSpinner) loadingSpinner.style.display = 'none';
+      hideCategoryLoadingSpinner();
     });
 }
 
@@ -2917,6 +3370,10 @@ function loadCategoryData(categoryNo) {
         // 切替が速いと古い応答が後着するため、現在選択中のカテゴリのみ反映
         var selectEl = document.getElementById('categorySelect');
         if (selectEl && String(selectEl.value) !== categoryKey) {
+          hideCategoryLoadingSpinner();
+          if (startButton) startButton.disabled = false;
+          if (listContainer) listContainer.style.pointerEvents = 'auto';
+          updateListNavButtons();
           return;
         }
         
@@ -2933,16 +3390,12 @@ function loadCategoryData(categoryNo) {
           applyLoadedCategoryData(categoryNo, data.items);
         }
         
-        if (loadingSpinner) {
-          loadingSpinner.style.display = 'none';
-        }
+        hideCategoryLoadingSpinner();
       } catch (e) {
         if (!localCached) {
           showError('データ読み込みエラー: ' + e.toString());
         }
-        if (loadingSpinner) {
-          loadingSpinner.style.display = 'none';
-        }
+        hideCategoryLoadingSpinner();
         updateListNavButtons();
         if (startButton) startButton.disabled = false;
         if (listContainer) listContainer.style.pointerEvents = 'auto';
@@ -2952,9 +3405,7 @@ function loadCategoryData(categoryNo) {
       if (!localCached) {
         showError('アクセスエラー: ' + error.toString());
       }
-      if (loadingSpinner) {
-        loadingSpinner.style.display = 'none';
-      }
+      hideCategoryLoadingSpinner();
       updateListNavButtons();
       if (startButton) startButton.disabled = false;
       if (listContainer) listContainer.style.pointerEvents = 'auto';
@@ -3434,6 +3885,8 @@ function resetListDisplay() {
   var startButton = document.getElementById('startButton');
   var selectionCount = document.getElementById('selectionCount');
   
+  hideCategoryLoadingSpinner();
+  
   if (listMessage) {
     listMessage.style.display = 'block';
     listMessage.style.whiteSpace = '';
@@ -3617,6 +4070,9 @@ function startLearning() {
   
   // 学習完了メッセージを非表示
   hideCompletionMessage();
+  
+  // 出題ブロックを学習表示用に復帰（完了後カテゴリ切替で畳んでいた場合）
+  restoreCompletionStudyFields();
   
   // 出題数表示を更新
   updateQuestionInfoDisplay();
@@ -6340,35 +6796,37 @@ function navigateCompletionCategory(direction) {
   if (!isLearningCompleted || isCategoryTransitionInProgress) {
     return;
   }
-  // Next / << / >> 操作時はお祝いメッセージのみ消す（Listは残す）
+  // Next / << / >> 操作時はお祝いメッセージを透明化し、出題ブロックを畳んで上端へ
   hideCompletionCongratsMessage();
-  if (isDurationQuestionMethod()) {
-    navigateDurationModePage(direction);
-    return;
-  }
-  if (isLastDateQuestionMethod()) {
-    navigateLastDateModePage(direction);
-    return;
-  }
-  var select = document.getElementById('learningCategorySelect');
-  if (!select || !select.value || categories.length === 0) {
-    return;
-  }
-  var currentIndex = -1;
-  for (var i = 0; i < categories.length; i++) {
-    if (String(categories[i].no) === String(select.value)) {
-      currentIndex = i;
-      break;
+  ensureCompletionBrowseLayout(function() {
+    if (isDurationQuestionMethod()) {
+      navigateDurationModePage(direction);
+      return;
     }
-  }
-  var targetIndex = findSelectableCategoryIndex(currentIndex, direction);
-  if (targetIndex < 0) {
-    return;
-  }
-  var targetNo = categories[targetIndex].no;
-  select.value = targetNo;
-  syncCustomCategorySelect(select);
-  loadCategoryDataForCompletionBrowse(targetNo);
+    if (isLastDateQuestionMethod()) {
+      navigateLastDateModePage(direction);
+      return;
+    }
+    var select = document.getElementById('learningCategorySelect');
+    if (!select || !select.value || categories.length === 0) {
+      return;
+    }
+    var currentIndex = -1;
+    for (var i = 0; i < categories.length; i++) {
+      if (String(categories[i].no) === String(select.value)) {
+        currentIndex = i;
+        break;
+      }
+    }
+    var targetIndex = findSelectableCategoryIndex(currentIndex, direction);
+    if (targetIndex < 0) {
+      return;
+    }
+    var targetNo = categories[targetIndex].no;
+    select.value = targetNo;
+    syncCustomCategorySelect(select);
+    loadCategoryDataForCompletionBrowse(targetNo);
+  });
 }
 
 /**
@@ -6379,6 +6837,17 @@ function loadCategoryDataForCompletionBrowse(categoryNo) {
   if (!isLearningCompleted) {
     return;
   }
+  hideCompletionCongratsMessage();
+  ensureCompletionBrowseLayout(function() {
+    loadCategoryDataForCompletionBrowseInner(categoryNo);
+  });
+}
+
+/**
+ * 学習完了画面：カテゴリデータ取得の本体（レイアウト畳み込み後）
+ * @param {string|number} categoryNo
+ */
+function loadCategoryDataForCompletionBrowseInner(categoryNo) {
   var targetCat = null;
   for (var ti = 0; ti < categories.length; ti++) {
     if (String(categories[ti].no) === String(categoryNo)) {
@@ -6694,10 +7163,32 @@ function updatePlusButton() {
 }
 
 /**
- * 学習完了画面：learning-content を最下部に同期固定（List切替時用）
- * 描画・画像読み込みで高さが後から増えても、最下部がずれないよう複数回合わせる
+ * 学習完了画面：learning-content を上端に同期固定（カテゴリ切替後用）
+ */
+function maintainCompletionScrollAtTop() {
+  var learningContent = document.querySelector('#screen2 .learning-content');
+  if (!learningContent || !isLearningCompleted) {
+    return;
+  }
+  function pin() {
+    learningContent.scrollTop = 0;
+  }
+  pin();
+  requestAnimationFrame(function() {
+    pin();
+    requestAnimationFrame(pin);
+  });
+}
+
+/**
+ * 学習完了画面：learning-content を最下部に同期固定（初回完了表示用）
+ * 出題ブロック畳み後は上端固定に切り替える
  */
 function maintainCompletionScrollAtBottom() {
+  if (isCompletionStudyFieldsCollapsed) {
+    maintainCompletionScrollAtTop();
+    return;
+  }
   var learningContent = document.querySelector('#screen2 .learning-content');
   if (!learningContent || !isLearningCompleted) {
     return;
@@ -6713,7 +7204,112 @@ function maintainCompletionScrollAtBottom() {
 }
 
 /**
- * 完了List内の画像読み込み後にも最下部を維持する
+ * 完了画面の出題／解答／note 要素を取得
+ * @returns {HTMLElement[]}
+ */
+function getCompletionStudyFieldElements() {
+  var ids = ['questionSection', 'answerSection', 'noteSection'];
+  var els = [];
+  for (var i = 0; i < ids.length; i++) {
+    var el = document.getElementById(ids[i]);
+    if (el) {
+      els.push(el);
+    }
+  }
+  return els;
+}
+
+/**
+ * 完了後カテゴリ切替レイアウト：出題ブロックをフェードアウトして非表示にし、上端へスクロール
+ * @param {Function} [done]
+ */
+function ensureCompletionBrowseLayout(done) {
+  var after = typeof done === 'function' ? done : function() {};
+
+  if (completionStudyFieldsCollapseTimerId !== null) {
+    clearTimeout(completionStudyFieldsCollapseTimerId);
+    completionStudyFieldsCollapseTimerId = null;
+  }
+
+  if (isCompletionStudyFieldsCollapsed) {
+    maintainCompletionScrollAtTop();
+    after();
+    return;
+  }
+
+  isCategoryTransitionInProgress = true;
+  refreshAdvanceNavControls();
+
+  var els = getCompletionStudyFieldElements();
+  var visibleCount = 0;
+  for (var i = 0; i < els.length; i++) {
+    if (els[i].style.display === 'none') {
+      continue;
+    }
+    visibleCount++;
+    els[i].style.opacity = '0';
+  }
+
+  function finishCollapse() {
+    completionStudyFieldsCollapseTimerId = null;
+    for (var j = 0; j < els.length; j++) {
+      els[j].style.display = 'none';
+      els[j].style.opacity = '';
+    }
+    isCompletionStudyFieldsCollapsed = true;
+    var learningContent = document.querySelector('#screen2 .learning-content');
+    if (learningContent && typeof learningContent.scrollTo === 'function') {
+      try {
+        learningContent.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (e) {
+        learningContent.scrollTop = 0;
+      }
+    } else if (learningContent) {
+      learningContent.scrollTop = 0;
+    }
+    maintainCompletionScrollAtTop();
+    isCategoryTransitionInProgress = false;
+    refreshAdvanceNavControls();
+    after();
+  }
+
+  if (visibleCount === 0) {
+    finishCollapse();
+    return;
+  }
+
+  completionStudyFieldsCollapseTimerId = setTimeout(finishCollapse, COMPLETION_STUDY_FIELDS_FADE_MS);
+}
+
+/**
+ * 出題／解答／note を学習表示用に復帰（Start／Plus／HOME 時）
+ */
+function restoreCompletionStudyFields() {
+  if (completionStudyFieldsCollapseTimerId !== null) {
+    clearTimeout(completionStudyFieldsCollapseTimerId);
+    completionStudyFieldsCollapseTimerId = null;
+  }
+  isCompletionStudyFieldsCollapsed = false;
+  var questionSection = document.getElementById('questionSection');
+  var answerSection = document.getElementById('answerSection');
+  var noteSection = document.getElementById('noteSection');
+  if (questionSection) {
+    questionSection.style.display = '';
+    questionSection.style.opacity = '';
+  }
+  if (answerSection) {
+    answerSection.style.display = '';
+    answerSection.style.opacity = '';
+  }
+  if (noteSection) {
+    noteSection.style.opacity = '';
+    // 表示／非表示は displayQuestion に任せる（畳み込みで none にしたあとでも一旦 none のまま）
+    noteSection.style.display = 'none';
+  }
+}
+
+/**
+ * 完了List内の画像読み込み後にもスクロール位置を維持する
  * @param {HTMLElement|null} listContainerEl
  */
 function bindCompletionListImagesToKeepScroll(listContainerEl) {
@@ -6747,6 +7343,9 @@ function scrollLearningContentToCompletionView() {
 
 // 学習完了メッセージを表示
 function showCompletionMessage() {
+  // 完了直後は出題ブロックを再表示（カテゴリ切替で畳んでいた場合の復帰）
+  restoreCompletionStudyFields();
+
   var completionSection = document.getElementById('completionMessageSection');
   var completionMessageText = document.querySelector('#completionMessage .completion-message-text');
   var completionMessageIcon = document.getElementById('completionMessageIcon');
@@ -6860,6 +7459,7 @@ function hideCompletionMessage() {
     completionMessageIconRevealTimeoutId = null;
   }
   isCompletionCongratsCleared = false;
+  restoreCompletionStudyFields();
 
   var completionSection = document.getElementById('completionMessageSection');
   var completionMessageText = document.querySelector('#completionMessage .completion-message-text');
