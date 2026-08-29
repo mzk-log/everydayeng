@@ -1376,9 +1376,7 @@ function setupEventListeners() {
     if (this.disabled) return;
     if (isLearningCompleted) {
       navigateCompletionCategory(1);
-      return;
     }
-    goToNextQuestion();
   });
   
   document.getElementById('homeButton').addEventListener('click', function() {
@@ -6334,46 +6332,49 @@ function startRetryQuestions() {
 
 // ナビゲーションボタンの状態を更新
 function updateNavigationButtons() {
-  var nextButton = document.getElementById('nextButton');
-  var audioBlocksAdvance = isAdvanceNavBlockedByAudio();
-  
-  // 回答表示中（isAnswerShown === true）の場合は、isLearningCompletedに関係なくボタンを有効化
-  if (isAnswerShown && !isLearningCompleted) {
-    if (isInRetryMode) {
-      // 再チャレンジモードの場合
-      // 最後の再チャレンジ問題でも、回答表示中は次へボタンを有効にする
-      if (nextButton) {
-        nextButton.disabled = audioBlocksAdvance;
-        if (audioBlocksAdvance) {
-          nextButton.title = '音声の読み上げが終わるまでお待ちください';
-        } else {
-          nextButton.removeAttribute('title');
-        }
-      }
-    } else {
-      // 通常モード
-      if (nextButton) {
-        nextButton.disabled = audioBlocksAdvance;
-        if (audioBlocksAdvance) {
-          nextButton.title = '音声の読み上げが終わるまでお待ちください';
-        } else {
-          nextButton.removeAttribute('title');
-        }
-      }
-    }
-  } else if (isLearningCompleted) {
-    // 学習完了：<< / >> と中央 Next でカテゴリ移動
+  if (isLearningCompleted) {
+    // 学習完了：左 <<／右 >> と中央 Next でカテゴリ移動
     updateCompletionCategoryNav();
-  } else if (isInRetryMode) {
-    // 再チャレンジモードの場合（回答表示前）
-    if (nextButton) nextButton.disabled = true;
   } else {
-    // 通常モード（回答表示前）
-    if (nextButton) nextButton.disabled = true;
+    // 学習中：右枠は空きスペーサー（進行は中央 Ans/Next）
+    setNextButtonAsUnusedSpacer();
   }
   
   updateNavAnswerButton();
   updateHomeButton();
+}
+
+/**
+ * 右枠（次へ／>>）を非表示スペーサーにする（学習中の横間隔維持）
+ */
+function setNextButtonAsUnusedSpacer() {
+  var nextSlot = document.getElementById('nextButtonSlot');
+  var nextButton = document.getElementById('nextButton');
+  if (nextSlot) {
+    nextSlot.classList.add('is-spacer');
+    nextSlot.setAttribute('aria-hidden', 'true');
+  }
+  if (nextButton) {
+    nextButton.disabled = true;
+    nextButton.classList.remove('category-nav-mode');
+    nextButton.removeAttribute('title');
+    nextButton.setAttribute('tabindex', '-1');
+  }
+}
+
+/**
+ * 右枠のスペーサーを解除し、操作可能なボタン枠にする
+ */
+function clearNextButtonSpacer() {
+  var nextSlot = document.getElementById('nextButtonSlot');
+  var nextButton = document.getElementById('nextButton');
+  if (nextSlot) {
+    nextSlot.classList.remove('is-spacer');
+    nextSlot.setAttribute('aria-hidden', 'false');
+  }
+  if (nextButton) {
+    nextButton.removeAttribute('tabindex');
+  }
 }
 
 /**
@@ -6516,9 +6517,13 @@ function getCurrentCategoryIndex() {
  * 学習ナビを通常状態に戻す（左枠は透明スペーサー。欄右上の再生を使用）
  */
 function setLearningNavIconsNormal() {
+  var navBar = document.querySelector('.navigation-bar');
   var playButtonContainer = document.getElementById('playButtonContainer');
   var playButton = document.getElementById('playButton');
-  var nextButton = document.getElementById('nextButton');
+  
+  if (navBar) {
+    navBar.classList.remove('completion-browse-order');
+  }
   
   if (playButtonContainer) {
     playButtonContainer.classList.add('is-spacer');
@@ -6531,25 +6536,22 @@ function setLearningNavIconsNormal() {
     playButton.disabled = true;
   }
   
-  if (nextButton) {
-    nextButton.classList.remove('category-nav-mode');
-    var nextImg = nextButton.querySelector('img');
-    if (nextImg) {
-      nextImg.src = 'img/arrow.png';
-      nextImg.alt = '次へ';
-    }
-  }
-  
+  setNextButtonAsUnusedSpacer();
   updateNavAnswerButton();
 }
 
 /**
- * 学習完了時のカテゴリナビアイコン（<< / >>）に切り替える
+ * 学習完了時のカテゴリナビアイコン（左 <<／中央右隣 >>）に切り替える
  */
 function setLearningNavIconsCategoryMode() {
+  var navBar = document.querySelector('.navigation-bar');
   var playButtonContainer = document.getElementById('playButtonContainer');
   var playButton = document.getElementById('playButton');
   var nextButton = document.getElementById('nextButton');
+  
+  if (navBar) {
+    navBar.classList.add('completion-browse-order');
+  }
   
   if (playButtonContainer) {
     playButtonContainer.classList.remove('is-spacer');
@@ -6569,20 +6571,24 @@ function setLearningNavIconsCategoryMode() {
     playImg.alt = '前のカテゴリ';
   }
   
+  clearNextButtonSpacer();
   if (nextButton) {
     nextButton.classList.add('category-nav-mode');
     var nextImg = nextButton.querySelector('img');
-    if (nextImg) {
-      nextImg.src = 'img/angles-right-solid.png';
-      nextImg.alt = '次のカテゴリ';
+    if (!nextImg) {
+      nextButton.innerHTML = '';
+      nextImg = document.createElement('img');
+      nextButton.appendChild(nextImg);
     }
+    nextImg.src = 'img/angles-right-solid.png';
+    nextImg.alt = '次のカテゴリ';
   }
   
   updateFieldPlayButtons();
 }
 
 /**
- * 学習完了時：<< / >> の表示と前後カテゴリ有無に応じた有効／無効を更新
+ * 学習完了時：<< / >> の表示と前後カテゴリ／ページ有無に応じた有効／無効を更新
  */
 function updateCompletionCategoryNav() {
   if (!isLearningCompleted) {
@@ -6625,6 +6631,8 @@ function updateCompletionCategoryNav() {
       nextButton.disabled = transitionBlocked || pageCount <= 0 || durationModePageIndex >= pageCount - 1;
       if (transitionBlocked) {
         nextButton.title = 'カテゴリの切り替え中です';
+      } else if (pageCount <= 0 || durationModePageIndex >= pageCount - 1) {
+        nextButton.title = '次のページがありません';
       } else {
         nextButton.removeAttribute('title');
       }
@@ -6705,6 +6713,8 @@ function updateCompletionCategoryNav() {
     nextButton.disabled = transitionBlocked || (idx < 0 || findSelectableCategoryIndex(idx, 1) < 0);
     if (transitionBlocked) {
       nextButton.title = 'カテゴリの切り替え中です';
+    } else if (idx < 0 || findSelectableCategoryIndex(idx, 1) < 0) {
+      nextButton.title = '次のカテゴリがありません';
     } else {
       nextButton.removeAttribute('title');
     }

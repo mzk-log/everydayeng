@@ -363,13 +363,15 @@
           <div class="nav-answer-text blinking" id="navAnswerText">Ans</div>
           <div class="nav-answer-stopwatch" id="navAnswerStopwatch">00:00:00</div>
         </button>
-        <button class="nav-button" id="nextButton" type="button">
-          <img src="img/arrow.png" alt="次へ">
-        </button>
         <button class="nav-button" id="plusButton" type="button" aria-label="もう一度">
           <img src="img/rotate-right-solid.png" alt="">
           <span class="plus-retry-badge" aria-hidden="true">1</span>
         </button>
+        <div class="nav-button-slot is-spacer" id="nextButtonSlot" aria-hidden="true">
+          <button class="nav-button" id="nextButton" type="button" disabled tabindex="-1">
+            <img src="img/angles-right-solid.png" alt="次のカテゴリ">
+          </button>
+        </div>
         <button class="nav-button" id="homeButton" type="button">
           <img src="img/home.png" alt="ホーム">
         </button>

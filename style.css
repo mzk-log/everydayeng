@@ -1623,18 +1623,11 @@ tr:last-child td {
   justify-content: center;
 }
 
-/* 次へボタン: 絶対配置を解除、順序を3に */
-#nextButton {
-  position: relative;
-  left: auto;
-  order: 3;
-}
-
-/* プラスボタン（もう一度）: 順序を4に。回転アイコン中央に「1」を重ねる */
+/* プラスボタン（もう一度）: 学習中は中央の右隣（順序3）。回転アイコン中央に「1」を重ねる */
 #plusButton {
   position: relative;
   left: auto;
-  order: 4;
+  order: 3;
 }
 
 /* 他ボタンよりアイコンが小さく見えるため画像のみ拡大（「1」は据え置き） */
@@ -1658,6 +1651,38 @@ tr:last-child td {
   user-select: none;
 }
 
+/* >> 枠: 学習中は空きスペーサー（順序4）。完了時は中央右隣へ（下記 completion-browse-order） */
+.nav-button-slot {
+  position: relative;
+  left: auto;
+  order: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+}
+
+.nav-button-slot.is-spacer {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+#nextButton {
+  position: relative;
+  left: auto;
+}
+
+/* 学習完了時：中央の右隣を >>、その右をプラスにする */
+.navigation-bar.completion-browse-order .nav-button-slot {
+  order: 3;
+}
+
+.navigation-bar.completion-browse-order #plusButton {
+  order: 4;
+}
+
 /* ホームボタン: 右余白を削除、順序を5に */
 #homeButton {
   margin-right: 0;
@@ -1677,7 +1702,7 @@ tr:last-child td {
   cursor: not-allowed;
 }
 
-/* 学習完了時のカテゴリ移動（再生→<< / 次へ→>>） */
+/* 学習完了時のカテゴリ移動（左：<<／右：>>） */
 #playButton.category-nav-mode img,
 #nextButton.category-nav-mode img {
   width: 130%;
@@ -2993,18 +3018,32 @@ body:has(#screen2.active) .login-button {
     order: 1 !important;
   }
 
-  /* 次へボタン(480px) - 位置指定を解除、順序を3に */
-  #nextButton {
+  /* プラスボタン(480px) - 学習中は中央右隣（順序3） */
+  #plusButton {
     position: relative !important;
     left: auto !important;
     order: 3 !important;
   }
 
-  /* プラスボタン(480px) - 位置指定を解除、順序を4に */
-  #plusButton {
+  /* >> 枠(480px) - 学習中は空き（順序4） */
+  .nav-button-slot {
     position: relative !important;
     left: auto !important;
     order: 4 !important;
+  }
+
+  /* 学習完了時の並び(480px)：中央右隣=>>、その右=プラス */
+  .navigation-bar.completion-browse-order .nav-button-slot {
+    order: 3 !important;
+  }
+
+  .navigation-bar.completion-browse-order #plusButton {
+    order: 4 !important;
+  }
+
+  #nextButton {
+    position: relative !important;
+    left: auto !important;
   }
 
   /* ホームボタン(480px) - 右余白を調整、順序を5に */
