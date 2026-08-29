@@ -198,6 +198,7 @@
   gap: 10px;
   cursor: default;
   padding: 12px 16px 12px 28px !important;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .visible-categories-panel:hover,
@@ -253,6 +254,7 @@
   border-radius: 4px;
   background: #fff;
   padding: 4px 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .visible-categories-check-item {
@@ -264,15 +266,33 @@
   color: #333;
   line-height: 1.35;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
 }
 
 .visible-categories-check-item:hover {
   background: #f5f5f5;
 }
 
+.visible-categories-check-item:focus,
+.visible-categories-check-item:focus-within {
+  outline: none;
+  background: #f5f5f5;
+}
+
 .visible-categories-check-item input {
   margin-top: 2px;
   flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.visible-categories-check-item input:focus {
+  outline: none;
+}
+
+.visible-categories-check-item input:focus-visible {
+  outline: 2px solid #2f6fed;
+  outline-offset: 2px;
 }
 
 .visible-categories-error {
