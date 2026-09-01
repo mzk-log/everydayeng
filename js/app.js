@@ -6,6 +6,7 @@ var categoryDataByNo = {}; // カテゴリ切替高速化用（セッション�
 var currentQuestionIndex = 0;
 var learningStartTime = null;
 var learningTimeInterval = null;
+var dailyStudyCountDateCheckInterval = null;
 var stopwatchStartTime = null;
 var stopwatchInterval = null;
 var stopwatchElapsed = 0;
@@ -147,13 +148,15 @@ window.onload = function() {
   // トグルボタンの初期状態を設定（リスニングON時は出題読みON固定・解答読みON）
   syncQuestionToggleForListeningMode();
   
-  // トグルボタンの位置を設定（タイトルが表示された後に実行）
+  // ヘッダー高さを同期（コンテンツの padding-top 用）
   requestAnimationFrame(function() {
-    requestAnimationFrame(updateToggleButtonPosition);
+    requestAnimationFrame(syncAppHeaderHeight);
   });
   
-  // ウィンドウリサイズ時にも位置を更新
-  window.addEventListener('resize', updateToggleButtonPosition);
+  window.addEventListener('resize', syncAppHeaderHeight);
+
+  syncDailyStudyStatsDisplay();
+  startDailyStudyCountDateWatcher();
 };
 
 // ページローディングを非表示にする
@@ -162,6 +165,7 @@ function hidePageLoading() {
   if (loadingOverlay) {
     // フェードアウトアニメーション
     loadingOverlay.classList.add('hidden');
+    syncAppHeaderHeight();
     // アニメーション完了後にDOMから削除
     setTimeout(function() {
       if (loadingOverlay.parentNode) {
@@ -211,6 +215,8 @@ function showEmailInputDialog() {
     
     // ログイン成功時はエラーメッセージを自動削除
     clearErrorMessages();
+
+    syncDailyStudyStatsDisplay();
     
     // カテゴリリストを読み込む
     loadCategories();
@@ -470,6 +476,7 @@ function loadCategories(options) {
         }
         // ボタンの状態を更新
         updateListNavButtons();
+        syncDailyStudyStatsDisplay();
         // 解答時間優先モードなら全件Listを読み込み
         if (isDurationQuestionMethod()) {
           applyQuestionMethodModeUi();
@@ -1159,6 +1166,16 @@ function hideLearningCategorySelect() {
   if (learningSelect) {
     learningSelect.value = '';
   }
+  setListNavContainerVisible('screen2ListNavContainer', false);
+  var learningListPrevButton = document.getElementById('learningListPrevButton');
+  var learningListNextButton = document.getElementById('learningListNextButton');
+  if (learningListPrevButton) {
+    learningListPrevButton.disabled = true;
+  }
+  if (learningListNextButton) {
+    learningListNextButton.disabled = true;
+  }
+  updateCategoryNavIndicatorElement(document.getElementById('learningCategoryNavInfo'), null);
 }
 
 /**
@@ -1486,6 +1503,24 @@ function setupEventListeners() {
   document.getElementById('listNextButton').addEventListener('click', function() {
     navigateToNextCategory();
   });
+
+  var learningListPrevButton = document.getElementById('learningListPrevButton');
+  if (learningListPrevButton) {
+    learningListPrevButton.addEventListener('click', function() {
+      if (isLearningCompleted) {
+        navigateCompletionCategory(-1);
+      }
+    });
+  }
+
+  var learningListNextButton = document.getElementById('learningListNextButton');
+  if (learningListNextButton) {
+    learningListNextButton.addEventListener('click', function() {
+      if (isLearningCompleted) {
+        navigateCompletionCategory(1);
+      }
+    });
+  }
   
   // ハンバーガーメニューボタン
   document.getElementById('hamburgerMenuButton').addEventListener('click', function() {
@@ -3661,20 +3696,219 @@ function toggleQuestionSelection(index, row) {
   }
 }
 
+/**
+ * 選択可能カテゴリのうち、指定番号が何番目か（1始まり）と総数を返す
+ * @param {string|number} categoryNo
+ * @returns {{ position: number, total: number }|null}
+ */
+function getSelectableCategoryNavInfo(categoryNo) {
+  if (categoryNo == null || categoryNo === '' || !categories || categories.length === 0) {
+    return null;
+  }
+  var selectable = [];
+  for (var i = 0; i < categories.length; i++) {
+    if (isCategorySelectable(categories[i])) {
+      selectable.push(categories[i]);
+    }
+  }
+  if (selectable.length === 0) {
+    return null;
+  }
+  var position = 0;
+  for (var j = 0; j < selectable.length; j++) {
+    if (String(selectable[j].no) === String(categoryNo)) {
+      position = j + 1;
+      break;
+    }
+  }
+  if (position === 0) {
+    return null;
+  }
+  return { position: position, total: selectable.length };
+}
+
+/**
+ * カテゴリ位置表示を更新（学習日優先・解答時間優先は非表示）
+ * @param {HTMLElement|null} indicatorEl
+ * @param {string|number|null} categoryNo
+ */
+function updateCategoryNavIndicatorElement(indicatorEl, categoryNo) {
+  if (!indicatorEl) {
+    return;
+  }
+  if (isCrossCategoryQuestionMethod() || categoryNo == null || categoryNo === '') {
+    indicatorEl.textContent = '';
+    indicatorEl.style.display = 'none';
+    return;
+  }
+  var info = getSelectableCategoryNavInfo(categoryNo);
+  if (!info) {
+    indicatorEl.textContent = '';
+    indicatorEl.style.display = 'none';
+    return;
+  }
+  indicatorEl.textContent = info.position + ' / ' + info.total;
+  indicatorEl.style.display = '';
+}
+
+/**
+ * Listナビコンテナの表示／非表示
+ * @param {string} containerId
+ * @param {boolean} visible
+ */
+function setListNavContainerVisible(containerId, visible) {
+  var listNavContainer = document.getElementById(containerId);
+  if (!listNavContainer) {
+    return;
+  }
+  listNavContainer.style.visibility = visible ? 'visible' : 'hidden';
+  if (containerId === 'screen2ListNavContainer') {
+    listNavContainer.style.display = visible ? '' : 'none';
+    listNavContainer.style.pointerEvents = visible ? '' : 'none';
+  }
+}
+
 // Listナビゲーションボタンを表示
 function showListNavButtons() {
-  var listNavContainer = document.querySelector('.list-nav-container');
-  if (listNavContainer) {
-    listNavContainer.style.visibility = 'visible';
+  setListNavContainerVisible('screen1ListNavContainer', true);
+  if (isLearningCompleted) {
+    setListNavContainerVisible('screen2ListNavContainer', true);
   }
 }
 
 // Listナビゲーションボタンを非表示
 function hideListNavButtons() {
-  var listNavContainer = document.querySelector('.list-nav-container');
-  if (listNavContainer) {
-    listNavContainer.style.visibility = 'hidden';
+  setListNavContainerVisible('screen1ListNavContainer', false);
+  setListNavContainerVisible('screen2ListNavContainer', false);
+}
+
+/**
+ * 1組の Listナビ（<< >> と位置表示）を更新
+ * @param {{ containerId: string, prevId: string, nextId: string, indicatorId: string, selectId: string, active: boolean }} config
+ */
+function updateListNavPair(config) {
+  var prevButton = document.getElementById(config.prevId);
+  var nextButton = document.getElementById(config.nextId);
+  var indicator = document.getElementById(config.indicatorId);
+  var select = document.getElementById(config.selectId);
+
+  if (!prevButton || !nextButton) {
+    return;
   }
+
+  if (!config.active) {
+    setListNavContainerVisible(config.containerId, false);
+    updateCategoryNavIndicatorElement(indicator, null);
+    prevButton.disabled = true;
+    nextButton.disabled = true;
+    return;
+  }
+
+  // 解答時間優先：7件ページ送り
+  if (isDurationQuestionMethod()) {
+    updateCategoryNavIndicatorElement(indicator, null);
+    if (isLearningCompleted && isDurationCompletionSessionView) {
+      setListNavContainerVisible(config.containerId, true);
+      prevButton.disabled = true;
+      nextButton.disabled = false;
+      return;
+    }
+    var pageCount = getDurationModePageCount();
+    if (pageCount <= 0) {
+      setListNavContainerVisible(config.containerId, false);
+      prevButton.disabled = true;
+      nextButton.disabled = true;
+      return;
+    }
+    setListNavContainerVisible(config.containerId, true);
+    prevButton.disabled = durationModePageIndex <= 0;
+    nextButton.disabled = durationModePageIndex >= pageCount - 1;
+    return;
+  }
+
+  // 学習日優先
+  if (isLastDateQuestionMethod()) {
+    updateCategoryNavIndicatorElement(indicator, null);
+    if (isLastDateNormalQuestionMethod()) {
+      if ((isLearningCompleted && isLastDateCompletionSessionView) || lastDateModeNeedsResortBeforePaging) {
+        setListNavContainerVisible(config.containerId, true);
+        prevButton.disabled = true;
+        nextButton.disabled = false;
+        return;
+      }
+      var lastDatePageCount = getLastDateModePageCount();
+      if (lastDatePageCount <= 0) {
+        setListNavContainerVisible(config.containerId, false);
+        prevButton.disabled = true;
+        nextButton.disabled = true;
+        return;
+      }
+      setListNavContainerVisible(config.containerId, true);
+      prevButton.disabled = lastDateModePageIndex <= 0;
+      nextButton.disabled = lastDateModePageIndex >= lastDatePageCount - 1;
+      return;
+    }
+    // シャッフル：> で再抽選（< は無効）
+    setListNavContainerVisible(config.containerId, true);
+    prevButton.disabled = true;
+    nextButton.disabled = false;
+    return;
+  }
+
+  if (!select || categories.length === 0) {
+    setListNavContainerVisible(config.containerId, false);
+    updateCategoryNavIndicatorElement(indicator, null);
+    prevButton.disabled = true;
+    nextButton.disabled = true;
+    return;
+  }
+
+  if (!select.value) {
+    setListNavContainerVisible(config.containerId, false);
+    updateCategoryNavIndicatorElement(indicator, null);
+    prevButton.disabled = true;
+    nextButton.disabled = true;
+    return;
+  }
+
+  setListNavContainerVisible(config.containerId, true);
+  updateCategoryNavIndicatorElement(indicator, select.value);
+
+  var currentIndex = -1;
+  for (var i = 0; i < categories.length; i++) {
+    if (categories[i].no == select.value) {
+      currentIndex = i;
+      break;
+    }
+  }
+
+  if (currentIndex === -1) {
+    prevButton.disabled = true;
+    nextButton.disabled = true;
+  } else {
+    prevButton.disabled = (findSelectableCategoryIndex(currentIndex, -1) < 0);
+    nextButton.disabled = (findSelectableCategoryIndex(currentIndex, 1) < 0);
+  }
+}
+
+// Listナビゲーションボタンの状態を更新
+function updateListNavButtons() {
+  updateListNavPair({
+    containerId: 'screen1ListNavContainer',
+    prevId: 'listPrevButton',
+    nextId: 'listNextButton',
+    indicatorId: 'categoryNavInfo',
+    selectId: 'categorySelect',
+    active: true
+  });
+  updateListNavPair({
+    containerId: 'screen2ListNavContainer',
+    prevId: 'learningListPrevButton',
+    nextId: 'learningListNextButton',
+    indicatorId: 'learningCategoryNavInfo',
+    selectId: 'learningCategorySelect',
+    active: isLearningCompleted
+  });
 }
 
 // 前のカテゴリに移動（学習日優先時はページ戻し）
@@ -3754,92 +3988,6 @@ function navigateToNextCategory() {
     var event = new Event('change', { bubbles: true });
     select.dispatchEvent(event);
     syncCustomCategorySelect(select);
-  }
-}
-
-// Listナビゲーションボタンの状態を更新
-function updateListNavButtons() {
-  var prevButton = document.getElementById('listPrevButton');
-  var nextButton = document.getElementById('listNextButton');
-  var select = document.getElementById('categorySelect');
-  
-  if (!prevButton || !nextButton) {
-    return;
-  }
-  
-  // 解答時間優先：7件ページ送り
-  if (isDurationQuestionMethod()) {
-    if (isLearningCompleted && isDurationCompletionSessionView) {
-      showListNavButtons();
-      prevButton.disabled = true;
-      nextButton.disabled = false;
-      return;
-    }
-    var pageCount = getDurationModePageCount();
-    if (pageCount <= 0) {
-      hideListNavButtons();
-      return;
-    }
-    showListNavButtons();
-    prevButton.disabled = durationModePageIndex <= 0;
-    nextButton.disabled = durationModePageIndex >= pageCount - 1;
-    return;
-  }
-
-  // 学習日優先
-  if (isLastDateQuestionMethod()) {
-    showListNavButtons();
-    if (isLastDateNormalQuestionMethod()) {
-      if ((isLearningCompleted && isLastDateCompletionSessionView) || lastDateModeNeedsResortBeforePaging) {
-        prevButton.disabled = true;
-        nextButton.disabled = false;
-        return;
-      }
-      var lastDatePageCount = getLastDateModePageCount();
-      if (lastDatePageCount <= 0) {
-        hideListNavButtons();
-        return;
-      }
-      prevButton.disabled = lastDateModePageIndex <= 0;
-      nextButton.disabled = lastDateModePageIndex >= lastDatePageCount - 1;
-      return;
-    }
-    // シャッフル：> で再抽選（< は無効）
-    prevButton.disabled = true;
-    nextButton.disabled = false;
-    return;
-  }
-  
-  if (!select || categories.length === 0) {
-    hideListNavButtons();
-    return;
-  }
-  
-  // カテゴリが選択されていない場合
-  if (!select.value) {
-    hideListNavButtons();
-    return;
-  }
-  
-  // カテゴリが選択されている場合は表示
-  showListNavButtons();
-  
-  // 現在選択されているカテゴリのインデックスを取得
-  var currentIndex = -1;
-  for (var i = 0; i < categories.length; i++) {
-    if (categories[i].no == select.value) {
-      currentIndex = i;
-      break;
-    }
-  }
-  
-  // ボタンの有効/無効を設定（ENDカテゴリはスキップして前後の有無を判定）
-  if (currentIndex === -1) {
-    prevButton.disabled = true;
-    nextButton.disabled = true;
-  } else {
-    prevButton.disabled = (findSelectableCategoryIndex(currentIndex, -1) < 0);
-    nextButton.disabled = (findSelectableCategoryIndex(currentIndex, 1) < 0);
   }
 }
 
@@ -4021,6 +4169,8 @@ function startLearning() {
   // コンテナのパディングを減らす
   var container = document.querySelector('.container');
   if (container) container.classList.add('learning-mode');
+
+  hideLearningCategorySelect();
   
   // カテゴリ情報／出題方法を表示
   var currentCategory = document.getElementById('currentCategory');
@@ -4085,13 +4235,14 @@ function startLearning() {
   
   // トグルボタンの位置を更新（screen2のタイトル位置に合わせる）
   requestAnimationFrame(function() {
-    requestAnimationFrame(updateToggleButtonPosition);
+    requestAnimationFrame(syncAppHeaderHeight);
   });
   
   isCategoryTransitionInProgress = false;
   setLearningCategorySelectDisabled(false);
   refreshAdvanceNavControls();
   updateLearningLockedSideMenuControls();
+  updateListNavButtons();
 }
 
 // 学習時間カウンターを開始（初回の START 相当の学習開始時のみ）
@@ -4114,8 +4265,164 @@ function startLearningTimeCounter() {
   updateLearningTime();
 }
 
+/**
+ * 今日の学習個数（localStorage）のキー（メール単位）
+ * @returns {string}
+ */
+function getDailyStudyItemCountStorageKey() {
+  var email = userEmail || '';
+  try {
+    if (!email) {
+      email = localStorage.getItem('userEmail') || '';
+    }
+  } catch (e) {
+    email = '';
+  }
+  return 'dailyStudyItemCount:' + String(email);
+}
+
+/**
+ * シート全体の問題数（ENDカテゴリ除く。getCategories の count 合計）
+ * @returns {number}
+ */
+function getTotalSheetQuestionCount() {
+  if (!categories || categories.length === 0) {
+    return 0;
+  }
+  var total = 0;
+  for (var i = 0; i < categories.length; i++) {
+    var cat = categories[i];
+    if (isEndCategory(cat)) {
+      continue;
+    }
+    var n = Number(cat.count);
+    if (!isNaN(n) && n > 0) {
+      total += Math.floor(n);
+    }
+  }
+  return total;
+}
+
+/**
+ * 今日の学習統計を localStorage から読み込む（日付が今日でなければ 0）
+ * @returns {{ date: string, itemCount: number, ansPressCount: number }}
+ */
+function loadDailyStudyStatsState() {
+  var today = getTodayYmdLocal();
+  try {
+    var raw = localStorage.getItem(getDailyStudyItemCountStorageKey());
+    if (!raw) {
+      return { date: today, itemCount: 0, ansPressCount: 0 };
+    }
+    var parsed = JSON.parse(raw);
+    if (!parsed || parsed.date !== today) {
+      return { date: today, itemCount: 0, ansPressCount: 0 };
+    }
+    var itemCount = Number(parsed.itemCount != null ? parsed.itemCount : parsed.count);
+    var ansPressCount = Number(parsed.ansPressCount);
+    if (isNaN(itemCount) || itemCount < 0) {
+      itemCount = 0;
+    }
+    if (isNaN(ansPressCount) || ansPressCount < 0) {
+      ansPressCount = 0;
+    }
+    return {
+      date: today,
+      itemCount: Math.floor(itemCount),
+      ansPressCount: Math.floor(ansPressCount)
+    };
+  } catch (e) {
+    return { date: today, itemCount: 0, ansPressCount: 0 };
+  }
+}
+
+/**
+ * 今日の学習統計を localStorage に保存
+ * @param {{ date: string, itemCount: number, ansPressCount: number }} state
+ */
+function saveDailyStudyStatsState(state) {
+  try {
+    localStorage.setItem(getDailyStudyItemCountStorageKey(), JSON.stringify({
+      date: state.date,
+      itemCount: state.itemCount,
+      ansPressCount: state.ansPressCount
+    }));
+  } catch (e) {
+    // localStorage が使えない場合は無視
+  }
+}
+
+/**
+ * 画面上の学習個数表示を更新（例：3（20）／50問）
+ * @param {{ date: string, itemCount: number, ansPressCount: number }|null} state
+ */
+function updateDailyStudyStatsDisplay(state) {
+  var el = document.getElementById('learningItemCount');
+  if (!el) {
+    return;
+  }
+  if (!state) {
+    state = loadDailyStudyStatsState();
+  }
+  var itemCount = Math.max(0, Math.floor(Number(state.itemCount) || 0));
+  var ansPressCount = Math.max(0, Math.floor(Number(state.ansPressCount) || 0));
+  var total = getTotalSheetQuestionCount();
+  el.textContent = itemCount + '（' + ansPressCount + '）／' + total + '問';
+}
+
+/**
+ * 今日の学習個数表示を localStorage と同期（0:00 跨ぎで 0 に戻す）
+ */
+function syncDailyStudyStatsDisplay() {
+  var state = loadDailyStudyStatsState();
+  saveDailyStudyStatsState(state);
+  updateDailyStudyStatsDisplay(state);
+}
+
+/**
+ * 0:00 跨ぎなどで日付変化を検知して学習個数表示を同期
+ */
+function startDailyStudyCountDateWatcher() {
+  if (dailyStudyCountDateCheckInterval) {
+    return;
+  }
+  dailyStudyCountDateCheckInterval = setInterval(function() {
+    syncDailyStudyStatsDisplay();
+  }, 1000);
+}
+
+/**
+ * 問題の LastDate が今日（端末ローカル）かどうか
+ * @param {Object} item
+ * @returns {boolean}
+ */
+function isItemLastDateToday(item) {
+  if (!item) {
+    return false;
+  }
+  var ymd = normalizeToYmd(item.last_date);
+  return ymd !== '' && ymd === getTodayYmdLocal();
+}
+
+/**
+ * Ans 時：今日の学習統計を更新（再 Ans 含む押下数＋今日初めての問題数）
+ * @param {Object} item
+ */
+function recordDailyStudyStatsOnAns(item) {
+  var state = loadDailyStudyStatsState();
+  state.ansPressCount += 1;
+  if (item && !isItemLastDateToday(item)) {
+    state.itemCount += 1;
+  }
+  state.date = getTodayYmdLocal();
+  saveDailyStudyStatsState(state);
+  updateDailyStudyStatsDisplay(state);
+}
+
 // 学習時間を更新
 function updateLearningTime() {
+  syncDailyStudyStatsDisplay();
+
   if (learningStartTime === null) return;
   
   var elapsed = Date.now() - learningStartTime;
@@ -4130,12 +4437,6 @@ function updateLearningTime() {
   var learningTimeElement = document.getElementById('learningTime');
   if (learningTimeElement) {
     learningTimeElement.textContent = timeText;
-  }
-  
-  // TOPページの学習時間を更新
-  var learningTimeTopElement = document.getElementById('learningTimeTop');
-  if (learningTimeTopElement) {
-    learningTimeTopElement.textContent = timeText;
   }
 }
 
@@ -4351,6 +4652,9 @@ function showAnswer() {
   // 出題／解答の再生ボタンを更新（Ans後なので解答再生を有効化）
   updateFieldPlayButtons();
   
+  // 今日の学習統計（LastDate 更新前に判定）
+  recordDailyStudyStatsOnAns(item);
+
   // TotalStudyCount / Duration / LastDate をメモリ即反映 → 画面メタ更新 → GASは1リクエストで非同期
   persistAnsStudyStatsAsync(item, stopwatchElapsed);
   updateLearningMetaDisplay(item, 'learningMeta');
@@ -6318,6 +6622,7 @@ function startRetryQuestions() {
     displayQuestion();
     updateNavigationButtons();
     updatePlusButton();
+    updateListNavButtons();
     // 学習完了メッセージを非表示
     hideCompletionMessage();
   } else {
@@ -6332,6 +6637,8 @@ function startRetryQuestions() {
 
 // ナビゲーションボタンの状態を更新
 function updateNavigationButtons() {
+  syncLearningCompletedScreenClass();
+  
   if (isLearningCompleted) {
     // 学習完了：左 <<／右 >> と中央 Next でカテゴリ移動
     updateCompletionCategoryNav();
@@ -6342,6 +6649,19 @@ function updateNavigationButtons() {
   
   updateNavAnswerButton();
   updateHomeButton();
+}
+
+/**
+ * 学習完了時の screen2 クラスを同期（完了画面のスクロールバー非表示用）
+ */
+function syncLearningCompletedScreenClass() {
+  var screen2 = document.getElementById('screen2');
+  if (!screen2) return;
+  if (isLearningCompleted) {
+    screen2.classList.add('is-learning-completed');
+  } else {
+    screen2.classList.remove('is-learning-completed');
+  }
 }
 
 /**
@@ -6996,6 +7316,7 @@ function finishCompletionCategoryBrowse() {
   setLearningCategorySelectDisabled(false);
   setCompletionListInteractionEnabled(true);
   refreshAdvanceNavControls();
+  updateListNavButtons();
   maintainCompletionScrollAtBottom();
 }
 
@@ -7513,7 +7834,7 @@ function goToHome() {
   
   // トグルボタンの位置を更新（screen1に戻った時）
   requestAnimationFrame(function() {
-    requestAnimationFrame(updateToggleButtonPosition);
+    requestAnimationFrame(syncAppHeaderHeight);
   });
   
   // コンテナのパディングを元に戻す
@@ -7533,6 +7854,7 @@ function goToHome() {
   isDurationCompletionSessionView = false;
   isLastDateCompletionSessionView = false;
   isLearningCompleted = false;
+  syncLearningCompletedScreenClass();
   
   if (isDurationQuestionMethod()) {
     applyQuestionMethodModeUi();
@@ -7767,35 +8089,11 @@ function updateClearButton() {
   clearButton.disabled = selectedQuestionIndices.length === 0;
 }
 
-// トグルコンテナの位置を更新（タイトルより少し下に配置）
-function updateToggleButtonPosition() {
-  var toggleContainer = document.getElementById('toggleContainer');
-  if (!toggleContainer) return;
-  
-  // 現在表示されている画面のタイトルを取得
-  var screen1 = document.getElementById('screen1');
-  var screen2 = document.getElementById('screen2');
-  var title = null;
-  
-  if (screen1 && screen1.classList.contains('active')) {
-    title = screen1.querySelector('.title');
-  } else if (screen2 && screen2.classList.contains('active')) {
-    title = screen2.querySelector('.title');
-  } else {
-    // どちらもactiveでない場合は、表示されているタイトルを取得
-    title = document.querySelector('.title');
-  }
-  
-  if (!title) return;
-  
-  // タイトルの位置を取得
-  var titleRect = title.getBoundingClientRect();
-  
-  // タイトルの中央の高さにコンテナを配置し、少し下に下げる（オフセット-18px）
-  // コンテナの高さを考慮して中央揃え
-  var toggleTop = titleRect.top + (titleRect.height / 2) - 18;
-  
-  toggleContainer.style.top = toggleTop + 'px';
+// 共通ヘッダーの高さを CSS 変数に反映
+function syncAppHeaderHeight() {
+  var header = document.getElementById('appHeader');
+  if (!header) return;
+  document.documentElement.style.setProperty('--app-header-height', header.offsetHeight + 'px');
 }
 
 // ========================================
@@ -7966,7 +8264,7 @@ function applyUpdateModeOverlay(activeSectionId) {
   
   var screen2 = document.getElementById('screen2');
   if (screen2) {
-    var elementsToDisable = screen2.querySelectorAll('.title, .learning-time, .section, .navigation-bar');
+    var elementsToDisable = screen2.querySelectorAll('.section, .navigation-bar');
     elementsToDisable.forEach(function(element) {
       if (activeSectionId && element.id === activeSectionId) {
         return;

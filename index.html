@@ -20,10 +20,6 @@
   <div class="background-image" id="backgroundImage">
     <div class="background-overlay"></div>
   </div>
-  <!-- ハンバーガーメニューボタン -->
-  <button id="hamburgerMenuButton" class="hamburger-menu-button" type="button" aria-label="メニュー">
-    <img src="img/menu.png" alt="メニュー" class="hamburger-icon">
-  </button>
   <!-- サイドメニュー -->
   <div id="sideMenu" class="side-menu">
     <div class="side-menu-overlay"></div>
@@ -163,31 +159,44 @@
       </div>
     </div>
   </div>
-  <div id="toggleContainer" class="toggle-container">
-    <div class="toggle-group">
-      <div class="toggle-item">
-        <span class="toggle-label">出題読み</span>
-        <button id="questionToggleButton" class="toggle-button" type="button">
-          <span class="toggle-slider"></span>
+  <header id="appHeader" class="app-header">
+    <div class="app-header-row">
+      <div class="app-header-leading">
+        <button id="hamburgerMenuButton" class="hamburger-menu-button" type="button" aria-label="メニュー">
+          <img src="img/menu.png" alt="メニュー" class="hamburger-icon">
         </button>
+        <h1 class="app-header-title">Everyday English</h1>
       </div>
-      <div class="toggle-item">
-        <span class="toggle-label">解答読み</span>
-        <button id="answerToggleButton" class="toggle-button" type="button">
-          <span class="toggle-slider"></span>
-        </button>
+      <div class="app-header-tools">
+        <div id="toggleContainer" class="toggle-container">
+          <div class="toggle-group">
+            <div class="toggle-item">
+              <span class="toggle-label">出題読み</span>
+              <button id="questionToggleButton" class="toggle-button" type="button">
+                <span class="toggle-slider"></span>
+              </button>
+            </div>
+            <div class="toggle-item">
+              <span class="toggle-label">解答読み</span>
+              <button id="answerToggleButton" class="toggle-button" type="button">
+                <span class="toggle-slider"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <button id="loginButton" class="login-button" type="button">ログイン</button>
       </div>
     </div>
-  </div>
-  <button id="loginButton" class="login-button" type="button">ログイン</button>
+    <div class="learning-stats">
+      <div class="learning-time" id="learningTime"><学習時間>0時間00分00秒</div>
+      <div class="learning-item-count" id="learningItemCount">0（0）／0問</div>
+    </div>
+  </header>
   <div class="container">
     <!-- 初期画面 -->
     <div id="screen1" class="screen active">
       <div class="top-content">
-        <h1 class="title">Everyday English</h1>
-        
-        <div class="learning-time" id="learningTimeTop"><学習時間>0時間00分00秒</div>
-        
+        <div class="screen1-scroll">
         <div class="section" id="categorySection">
           <div class="section-label" id="categorySectionLabel">Category（ノーマル）</div>
           <div class="select-container" id="categorySelectContainer">
@@ -199,11 +208,12 @@
           <div id="questionMethodModeLabel" class="question-method-mode-label" style="display: none;">解答時間優先モード</div>
         </div>
         
-        <div class="list-nav-container">
+        <div class="list-nav-container" id="screen1ListNavContainer">
           <div class="list-nav-buttons">
             <button class="list-nav-button arrow-left" id="listPrevButton" type="button" disabled>
               <img src="img/arrow.png" alt="前へ">
             </button>
+            <div class="category-nav-info" id="categoryNavInfo"></div>
             <button class="list-nav-button" id="listNextButton" type="button" disabled>
               <img src="img/arrow.png" alt="次へ">
             </button>
@@ -238,6 +248,7 @@
             </table>
           </div>
         </div>
+        </div>
       </div>
       
       <button id="startButton" class="start-button" style="display: none;">START</button>
@@ -246,10 +257,6 @@
     <!-- 学習画面 -->
     <div id="screen2" class="screen">
       <div class="learning-content">
-        <h1 class="title">Everyday English</h1>
-        
-        <div class="learning-time" id="learningTime"><学習時間>0時間00分</div>
-        
         <div class="section">
           <div class="section-label" id="learningCategorySectionLabel">Category（ノーマル）</div>
           <div id="currentCategory"></div>
@@ -257,6 +264,17 @@
             <select id="learningCategorySelect">
               <option value="">Categoryを選択してください</option>
             </select>
+          </div>
+          <div class="list-nav-container" id="screen2ListNavContainer">
+            <div class="list-nav-buttons">
+              <button class="list-nav-button arrow-left" id="learningListPrevButton" type="button" disabled>
+                <img src="img/arrow.png" alt="前へ">
+              </button>
+              <div class="category-nav-info" id="learningCategoryNavInfo"></div>
+              <button class="list-nav-button" id="learningListNextButton" type="button" disabled>
+                <img src="img/arrow.png" alt="次へ">
+              </button>
+            </div>
           </div>
         </div>
         

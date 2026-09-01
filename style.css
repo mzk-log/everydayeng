@@ -5,11 +5,11 @@
   box-sizing: border-box;
 }
 
-/* ハンバーガーメニューボタン */
+/* ハンバーガーメニューボタン（ヘッダー内） */
 .hamburger-menu-button {
-  position: fixed;
-  top: 10px;
-  left: 10px;
+  position: relative;
+  top: auto;
+  left: auto;
   width: 20px;
   height: 20px;
   background-color: #FFFFFF;
@@ -19,7 +19,8 @@
   justify-content: center;
   align-items: center;
   padding: 0;
-  z-index: 250;
+  flex-shrink: 0;
+  z-index: auto;
   transition: opacity 0.3s ease;
 }
 
@@ -568,6 +569,8 @@ html {
   height: 100%;
   margin: 0;
   padding: 0;
+  --app-header-height: 54px;
+  overflow: hidden;
 }
 
 /* ボディ要素 */
@@ -575,7 +578,7 @@ body {
   font-family: 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
   background-color: #000;
   color: #000;
-  overflow: auto;
+  overflow: hidden;
   position: relative;
   width: 100%;
   height: 100dvh;
@@ -613,24 +616,119 @@ body {
   width: 100%;
   height: 100dvh;
   padding: 10px 20px;
+  padding-top: calc(var(--app-header-height) + 10px);
   position: relative;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 /* 学習画面のコンテナパディングを減らす */
 .container.learning-mode {
   padding: 10px;
+  padding-top: calc(var(--app-header-height) + 10px);
 }
 
-/* タイトル */
+/* 共通ヘッダー（TOP／学習画面） */
+.app-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  padding: 10px 10px 4px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.38);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+  background-color: rgba(0, 0, 0, 0.1);
+  box-sizing: border-box;
+}
+
+.app-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 20px;
+}
+
+.app-header-leading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 20px;
+}
+
+.app-header-title {
+  font-size: 16px;
+  font-weight: bold;
+  line-height: 20px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.app-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.app-header .toggle-container {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-header .toggle-group {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-header .toggle-item {
+  flex-direction: column;
+  align-items: center;
+}
+
+.app-header .learning-stats {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 6px;
+  margin: 2px 0 3px;
+  flex-shrink: 0;
+}
+
+.app-header .learning-time {
+  font-size: 12px;
+  margin: 0;
+  padding: 0;
+  line-height: 1.3;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.app-header .learning-item-count {
+  font-size: 12px;
+  margin: 0;
+  padding: 0;
+  line-height: 1.3;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* タイトル（レガシー。現行は .app-header-title） */
 .title {
   text-align: center;
   font-size: 24px;
   font-weight: bold;
   margin: 10px 0;
   padding: 10px 0;
-  border-top: 1px solid #000;
-  border-bottom: 1px solid #000;
   flex-shrink: 0;
 }
 
@@ -639,23 +737,47 @@ body {
   margin: 10px 0;
 }
 
-/* 初期画面のListセクション */
-#screen1 .section:last-of-type {
+/* 初期画面のスクロール領域（Category以降） */
+#screen1 .top-content {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  margin-bottom: 20px;
+  padding-bottom: 0;
+}
+
+#screen1 .screen1-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 8px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+#screen1 .screen1-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* 初期画面のListセクション */
+#screen1 .section:last-of-type {
+  flex: 0 0 auto;
+  display: block;
+  min-height: 0;
+  margin-bottom: 12px;
 }
 
 /* 初期画面のListセクションのテーブルコンテナ */
 #screen1 .section:last-of-type .table-container {
   flex: 0 0 auto;
-  max-height: 100%;
+  max-height: none;
   min-height: 0;
-  display: flex;
-  align-items: flex-start;
-  overflow-y: auto;
+  display: block;
+  overflow: visible;
 }
 
 /* セクションラベルコンテナ */
@@ -738,6 +860,16 @@ body {
 /* List前へボタンの画像（180度回転） */
 .list-nav-button.arrow-left img {
   transform: rotate(180deg);
+}
+
+/* カテゴリナビの現在位置（例：3 / 11） */
+.category-nav-info {
+  font-size: 14px;
+  font-weight: bold;
+  color: #000;
+  min-width: 48px;
+  text-align: center;
+  white-space: nowrap;
 }
 
 /* セレクトボックスコンテナ */
@@ -1773,16 +1905,14 @@ tr:last-child td {
   color: #666;
 }
 
-/* トグルコンテナ */
+/* トグルコンテナ（ヘッダー内） */
 .toggle-container {
-  position: fixed;
-  right: 5px; /* 右マージン5px */
+  position: relative;
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 15px;
-  z-index: 200;
-  /* topはJavaScriptで動的に設定 */
+  gap: 8px;
+  z-index: auto;
 }
 
 /* トグルグループ */
@@ -1852,16 +1982,13 @@ tr:last-child td {
 
 /* 学習画面（screen2）でもトグルボタンを表示 */
 
-/* ログインボタン */
+/* ログインボタン（ヘッダー内） */
 .login-button {
-  position: fixed;
-  top: 0;
-  right: 0;
-  margin-top: 0;
-  margin-right: 0;
+  position: relative;
+  margin: 0;
   font-size: 12px;
-  z-index: 200;
-  /* デフォルトのボタンスタイルを使用（装飾なし） */
+  flex-shrink: 0;
+  z-index: auto;
 }
 
 /* 学習画面（screen2）がactiveの時はログインボタンを非表示 */
@@ -2204,22 +2331,6 @@ body:has(#screen2.active) .login-button {
   display: flex;
 }
 
-/* 初期画面のコンテンツエリア */
-#screen1 .top-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding-bottom: 20px;
-}
-
-/* 学習画面のタイトル */
-#screen2 .title {
-  margin: 3px 0;
-  font-size: 18px;
-  padding: 5px 0;
-}
-
 /* 学習画面のセクション間隔を調整 */
 #screen2 .section {
   margin: 5px 0;
@@ -2244,12 +2355,6 @@ body:has(#screen2.active) .login-button {
 
 #screen2 .answer-section > .section-label {
   padding-right: 30px;
-}
-
-/* 学習画面の学習時間 */
-#screen2 .learning-time {
-  font-size: 14px;
-  margin: 3px 0;
 }
 
 /* 学習画面の質問情報 */
@@ -2379,8 +2484,20 @@ body:has(#screen2.active) .login-button {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  max-height: calc(100dvh - 0px);
+  max-height: none;
   -webkit-overflow-scrolling: touch;
+}
+
+/* 学習完了時：learning-content はスクロール可だがバーは非表示（Listのバーは別途表示） */
+#screen2.is-learning-completed .learning-content {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+#screen2.is-learning-completed .learning-content::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 /* 学習完了時のList（note下） */
@@ -2838,8 +2955,32 @@ body:has(#screen2.active) .login-button {
   }
 
   /* 学習画面のタイトル(480px) */
-  #screen2 .title {
-    font-size: 18px !important;
+  .app-header-title {
+    font-size: 13px !important;
+    line-height: 20px !important;
+  }
+
+  .app-header {
+    padding: 8px 8px 4px !important;
+  }
+
+  .app-header .learning-time,
+  .app-header .learning-item-count {
+    font-size: 11px !important;
+  }
+
+  .app-header .toggle-group {
+    flex-direction: row !important;
+    gap: 8px !important;
+  }
+
+  .app-header .toggle-container {
+    flex-direction: row !important;
+    gap: 4px !important;
+  }
+
+  .app-header .toggle-label {
+    font-size: 11px !important;
   }
 
   /* 学習画面のセクションラベル(480px) */
@@ -2869,16 +3010,6 @@ body:has(#screen2.active) .login-button {
 
   /* 学習時間(480px) */
   .learning-time {
-    font-size: 14px !important;
-  }
-
-  /* TOPページの学習時間(480px) */
-  #screen1 .learning-time {
-    font-size: 14px !important;
-  }
-
-  /* 学習画面の学習時間(480px) */
-  #screen2 .learning-time {
     font-size: 14px !important;
   }
 
@@ -3178,25 +3309,10 @@ body:has(#screen2.active) .login-button {
     border-width: 4px !important;
   }
 
-  /* トグルコンテナ(480px) - 狭い画面では下に配置 */
-  .toggle-container {
-    flex-direction: column !important;
-    gap: 10px !important;
-  }
-
-  /* トグルグループ(480px) */
-  .toggle-group {
-    flex-direction: column !important;
-    gap: 10px !important;
-  }
-
   /* ハンバーガーメニューボタン(480px) */
   .hamburger-menu-button {
     width: 20px !important;
     height: 20px !important;
-    top: 8px !important;
-    left: 8px !important;
-    z-index: 250 !important;
   }
 
   /* サイドメニュー(480px) */
