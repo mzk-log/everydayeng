@@ -67,6 +67,8 @@ var audioCache = {};
 // キャッシュの設定
 var CACHE_PREFIX = 'tts_audio_'; // localStorageのキープレフィックス
 var MAX_CACHE_SIZE = 10 * 1024 * 1024; // 最大キャッシュサイズ（10MB）
+// TTSプリロード全体のマスタ。true のとき出題読み／解答読みがONの側のみ先取り取得
+var ENABLE_TTS_PRELOAD = false;
 var FIELD_PLAY_LONG_PRESS_MS = 700; // 再生ボタン長押しで音声再作成
 var GAS_UPDATE_MAX_ATTEMPTS = 5; // シート更新の最大試行回数（初回含む）
 var GAS_UPDATE_BASE_DELAY_MS = 700; // リトライの基本待機（指数バックオフ）
@@ -6183,11 +6185,38 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType) {
 }
 
 /**
+ * TTSプリロード全体が有効か（定数マスタ）
+ * @returns {boolean}
+ */
+function isTtsPreloadEnabled() {
+  return ENABLE_TTS_PRELOAD === true;
+}
+
+/**
+ * 出題音声をプリロードしてよいか（定数ONかつ出題読みON）
+ * @returns {boolean}
+ */
+function shouldPreloadQuestionAudio() {
+  return isTtsPreloadEnabled() && isQuestionToggleActive;
+}
+
+/**
+ * 解答音声をプリロードしてよいか（定数ONかつ解答読みON）
+ * @returns {boolean}
+ */
+function shouldPreloadAnswerAudio() {
+  return isTtsPreloadEnabled() && isAnswerToggleActive;
+}
+
+/**
  * 現在の問題と次の問題の音声をプリロード
  */
 function preloadAudioForCurrentAndNext() {
   if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
     return; // WebアプリURLが設定されていない場合はスキップ
+  }
+  if (!isTtsPreloadEnabled()) {
+    return;
   }
   
   // 現在の問題（最初の問題）をプリロード
@@ -6197,13 +6226,13 @@ function preloadAudioForCurrentAndNext() {
       var effectiveQuestion = getEffectiveQuestion(currentItem);
       var effectiveAnswer = getEffectiveAnswer(currentItem);
       // 出題文をプリロード（出題用設定）
-      if (effectiveQuestion && !isImageUrl(effectiveQuestion)) {
+      if (shouldPreloadQuestionAudio() && effectiveQuestion && !isImageUrl(effectiveQuestion)) {
         var questionVoice = getAudioVoice('question');
         var questionSpeed = getAudioSpeed('question');
         preloadAudio(effectiveQuestion, questionVoice, questionSpeed);
       }
       // 解答文をプリロード（解答用設定）
-      if (effectiveAnswer && !isImageUrl(effectiveAnswer)) {
+      if (shouldPreloadAnswerAudio() && effectiveAnswer && !isImageUrl(effectiveAnswer)) {
         var answerVoice = getAudioVoice('answer');
         var answerSpeed = getAudioSpeed('answer');
         preloadAudio(effectiveAnswer, answerVoice, answerSpeed);
@@ -6222,6 +6251,12 @@ function preloadNextQuestions() {
   if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
     return; // WebアプリURLが設定されていない場合はスキップ
   }
+  if (!isTtsPreloadEnabled()) {
+    return;
+  }
+  if (!shouldPreloadQuestionAudio() && !shouldPreloadAnswerAudio()) {
+    return;
+  }
   
   var preloadCount = 2; // 次の2問をプリロード
   
@@ -6233,13 +6268,13 @@ function preloadNextQuestions() {
         var effectiveQuestion = getEffectiveQuestion(nextItem);
         var effectiveAnswer = getEffectiveAnswer(nextItem);
         // 出題文をプリロード（出題用設定）
-        if (effectiveQuestion && !isImageUrl(effectiveQuestion)) {
+        if (shouldPreloadQuestionAudio() && effectiveQuestion && !isImageUrl(effectiveQuestion)) {
           var questionVoice = getAudioVoice('question');
           var questionSpeed = getAudioSpeed('question');
           preloadAudio(effectiveQuestion, questionVoice, questionSpeed);
         }
         // 解答文をプリロード（解答用設定）
-        if (effectiveAnswer && !isImageUrl(effectiveAnswer)) {
+        if (shouldPreloadAnswerAudio() && effectiveAnswer && !isImageUrl(effectiveAnswer)) {
           var answerVoice = getAudioVoice('answer');
           var answerSpeed = getAudioSpeed('answer');
           preloadAudio(effectiveAnswer, answerVoice, answerSpeed);
