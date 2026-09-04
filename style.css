@@ -666,7 +666,7 @@ body {
   margin: 0;
   padding: 0;
   border: none;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   white-space: nowrap;
 }
@@ -720,6 +720,21 @@ body {
   line-height: 1.3;
   flex-shrink: 0;
   white-space: nowrap;
+}
+
+.app-header .audio-source-debug {
+  display: none;
+  font-size: 11px;
+  font-weight: bold;
+  line-height: 1.3;
+  margin: 0;
+  padding: 0 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  color: #b71c1c;
+  background-color: rgba(255, 235, 238, 0.9);
+  border-radius: 2px;
 }
 
 /* タイトル（レガシー。現行は .app-header-title） */
@@ -1745,14 +1760,26 @@ tr:last-child td {
   justify-content: center;
 }
 
-/* 再生ボタンコンテナ（ナビゲーションバー内）: 絶対配置を解除、順序を1に */
-.navigation-bar .play-button-container {
+/* セッション回答件数（ナビゲーションバー左枠） */
+.navigation-bar .session-ans-count-slot {
   position: relative;
   left: auto;
   order: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+}
+
+.navigation-bar .session-ans-count {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  color: #333;
+  white-space: nowrap;
+  user-select: none;
 }
 
 /* プラスボタン（もう一度）: 学習中は中央の右隣（順序3）。回転アイコン中央に「1」を重ねる */
@@ -1775,15 +1802,15 @@ tr:last-child td {
   top: 52%;
   transform: translate(-50%, -50%);
   z-index: 1;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1;
-  color: #203354;
+  color: #e53935;
   pointer-events: none;
   user-select: none;
 }
 
-/* >> 枠: 学習中は空きスペーサー（順序4）。完了時は中央右隣へ（下記 completion-browse-order） */
+/* 右枠: 常に空きスペーサー（順序4。中央位置維持用） */
 .nav-button-slot {
   position: relative;
   left: auto;
@@ -1806,15 +1833,6 @@ tr:last-child td {
   left: auto;
 }
 
-/* 学習完了時：中央の右隣を >>、その右をプラスにする */
-.navigation-bar.completion-browse-order .nav-button-slot {
-  order: 3;
-}
-
-.navigation-bar.completion-browse-order #plusButton {
-  order: 4;
-}
-
 /* ホームボタン: 右余白を削除、順序を5に */
 #homeButton {
   margin-right: 0;
@@ -1833,19 +1851,6 @@ tr:last-child td {
   opacity: 0.3;
   cursor: not-allowed;
 }
-
-/* 学習完了時のカテゴリ移動（左：<<／右：>>） */
-#playButton.category-nav-mode img,
-#nextButton.category-nav-mode img {
-  width: 130%;
-  height: 130%;
-  max-width: none;
-}
-
-#playButton.category-nav-mode img {
-  transform: scaleX(-1);
-}
-
 
 /* ナビゲーションバー中央のAnswerボタン */
 .nav-answer-button {
@@ -3142,33 +3147,24 @@ body:has(#screen2.active) .login-button {
     order: 2 !important;
   }
 
-  /* 再生ボタンコンテナ(480px) - 位置指定を解除、順序を1に */
-  .navigation-bar .play-button-container {
+  /* セッション回答件数(480px) - 順序を1に */
+  .navigation-bar .session-ans-count-slot {
     position: relative !important;
     left: auto !important;
     order: 1 !important;
   }
 
-  /* プラスボタン(480px) - 学習中は中央右隣（順序3） */
+  /* プラスボタン(480px) - 中央右隣（順序3） */
   #plusButton {
     position: relative !important;
     left: auto !important;
     order: 3 !important;
   }
 
-  /* >> 枠(480px) - 学習中は空き（順序4） */
+  /* 右枠空きスペーサー(480px)（順序4） */
   .nav-button-slot {
     position: relative !important;
     left: auto !important;
-    order: 4 !important;
-  }
-
-  /* 学習完了時の並び(480px)：中央右隣=>>、その右=プラス */
-  .navigation-bar.completion-browse-order .nav-button-slot {
-    order: 3 !important;
-  }
-
-  .navigation-bar.completion-browse-order #plusButton {
     order: 4 !important;
   }
 

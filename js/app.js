@@ -7,6 +7,8 @@ var currentQuestionIndex = 0;
 var learningStartTime = null;
 var learningTimeInterval = null;
 var dailyStudyCountDateCheckInterval = null;
+var todayStudiedItemCount = 0; // LastDate が今日の問題数（シート集計＋Ans時の楽観更新）
+var todayStudiedCountDate = ''; // todayStudiedItemCount が対応する yyyy-mm-dd
 var stopwatchStartTime = null;
 var stopwatchInterval = null;
 var stopwatchElapsed = 0;
@@ -19,6 +21,8 @@ var isInRetryMode = false; // 再チャレンジモードかどうか
 var retryQuestionIndex = 0; // 現在の再チャレンジ問題のインデックス
 var completedQuestionIndices = []; // 完了した問題のインデックスを保存（灰色表示）
 var isLearningCompleted = false; // 学習が完了したかどうか
+var sessionAnsweredCount = 0; // START〜HOME のセッション回答件数（一意問題）
+var sessionAnsweredItemIds = {}; // セッション内で件数に含めた問題ID
 var completionMessageIconRevealTimeoutId = null; // 完了メッセージアイコン表示用タイマー
 var isCompletionCongratsCleared = false; // Next等でお祝い文言を空にしたか
 var isCompletionStudyFieldsCollapsed = false; // 完了後カテゴリ切替で出題／解答／note を畳んだか
@@ -69,6 +73,8 @@ var CACHE_PREFIX = 'tts_audio_'; // localStorageのキープレフィックス
 var MAX_CACHE_SIZE = 10 * 1024 * 1024; // 最大キャッシュサイズ（10MB）
 // TTSプリロード全体のマスタ。true のとき出題読み／解答読みがONの側のみ先取り取得
 var ENABLE_TTS_PRELOAD = false;
+// true のとき再生音声の取得元（メモリ／localStorage／Drive／TTS）を画面表示する（本番は false）
+var ENABLE_AUDIO_SOURCE_DEBUG = true;
 var FIELD_PLAY_LONG_PRESS_MS = 700; // 再生ボタン長押しで音声再作成
 var GAS_UPDATE_MAX_ATTEMPTS = 5; // シート更新の最大試行回数（初回含む）
 var GAS_UPDATE_BASE_DELAY_MS = 700; // リトライの基本待機（指数バックオフ）
@@ -413,6 +419,7 @@ function loadCategories(options) {
   params.append('action', 'getCategories');
   params.append('email', userEmail);
   params.append('referer', window.location.origin);
+  params.append('today', getTodayYmdLocal());
   
   // GETリクエストで送信
   var requestUrl = WEB_APP_URL + '?' + params.toString();
@@ -435,6 +442,7 @@ function loadCategories(options) {
         }
         
         categories = data.categories;
+        applyTodayStudiedItemCount(data.today_item_count, data.today_ymd || getTodayYmdLocal());
         // HOME直後など、表示中Listの学習日が新しい場合はそちらを優先して上書き
         if (quiet && currentCategoryNo != null && currentCategoryNo !== '' &&
             currentCategoryData && currentCategoryData.length > 0) {
@@ -901,6 +909,7 @@ function applyVisibleCategoriesChange() {
   } else {
     updateListNavButtons();
   }
+  syncDailyStudyStatsDisplay();
 }
 
 /**
@@ -1381,22 +1390,8 @@ function setupEventListeners() {
     handleNavAnswerButtonClick();
   });
   
-  document.getElementById('playButton').addEventListener('click', function() {
-    if (this.disabled) return;
-    if (isLearningCompleted) {
-      navigateCompletionCategory(-1);
-    }
-  });
-  
   bindFieldPlayButton(document.getElementById('questionPlayButton'), 'question');
   bindFieldPlayButton(document.getElementById('answerPlayButton'), 'answer');
-  
-  document.getElementById('nextButton').addEventListener('click', function() {
-    if (this.disabled) return;
-    if (isLearningCompleted) {
-      navigateCompletionCategory(1);
-    }
-  });
   
   document.getElementById('homeButton').addEventListener('click', function() {
     if (this.disabled) return;
@@ -4133,8 +4128,9 @@ function startLearning() {
 
   ensureLearningTimeCounterStarted();
   
-  // 完了時カテゴリナビ用アイコンを通常（再生／次へ）に戻す
+  // 完了時カテゴリナビ用アイコンを通常（件数表示＋右スペーサー）に戻す
   setLearningNavIconsNormal();
+  updateSessionAnsweredCountDisplay();
   
   // 元のデータを保存（学習日優先の Plus 用セッションも保持）
   originalCategoryData = currentCategoryData.slice();
@@ -4268,19 +4264,46 @@ function startLearningTimeCounter() {
 }
 
 /**
- * 今日の学習個数（localStorage）のキー（メール単位）
- * @returns {string}
+ * 今日学習件数（LastDateが今日の問題数）を反映
+ * @param {*} count
+ * @param {string} [dateYmd]
  */
-function getDailyStudyItemCountStorageKey() {
-  var email = userEmail || '';
-  try {
-    if (!email) {
-      email = localStorage.getItem('userEmail') || '';
-    }
-  } catch (e) {
-    email = '';
+function applyTodayStudiedItemCount(count, dateYmd) {
+  todayStudiedCountDate = dateYmd || getTodayYmdLocal();
+  var n = Math.floor(Number(count));
+  if (isNaN(n) || n < 0) {
+    n = 0;
   }
-  return 'dailyStudyItemCount:' + String(email);
+  todayStudiedItemCount = n;
+  updateDailyStudyStatsDisplay();
+}
+
+/**
+ * 表示用の今日学習件数（日付跨ぎなら 0）
+ * @returns {number}
+ */
+function getTodayStudiedItemCountForDisplay() {
+  if (todayStudiedCountDate !== getTodayYmdLocal()) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(Number(todayStudiedItemCount) || 0));
+}
+
+/**
+ * シート全体のカテゴリ数（END除く）
+ * @returns {number}
+ */
+function getTotalSheetCategoryCount() {
+  if (!categories || categories.length === 0) {
+    return 0;
+  }
+  var total = 0;
+  for (var i = 0; i < categories.length; i++) {
+    if (!isEndCategory(categories[i])) {
+      total += 1;
+    }
+  }
+  return total;
 }
 
 /**
@@ -4306,79 +4329,57 @@ function getTotalSheetQuestionCount() {
 }
 
 /**
- * 今日の学習統計を localStorage から読み込む（日付が今日でなければ 0）
- * @returns {{ date: string, itemCount: number, ansPressCount: number }}
+ * 表示カテゴリの件数と問題数合計
+ * @returns {{ categoryCount: number, questionCount: number }}
  */
-function loadDailyStudyStatsState() {
-  var today = getTodayYmdLocal();
-  try {
-    var raw = localStorage.getItem(getDailyStudyItemCountStorageKey());
-    if (!raw) {
-      return { date: today, itemCount: 0, ansPressCount: 0 };
+function getVisibleCategoriesStats() {
+  var visible = getVisibleCategories();
+  var categoryCount = visible.length;
+  var questionCount = 0;
+  for (var i = 0; i < visible.length; i++) {
+    var n = Number(visible[i].count);
+    if (!isNaN(n) && n > 0) {
+      questionCount += Math.floor(n);
     }
-    var parsed = JSON.parse(raw);
-    if (!parsed || parsed.date !== today) {
-      return { date: today, itemCount: 0, ansPressCount: 0 };
-    }
-    var itemCount = Number(parsed.itemCount != null ? parsed.itemCount : parsed.count);
-    var ansPressCount = Number(parsed.ansPressCount);
-    if (isNaN(itemCount) || itemCount < 0) {
-      itemCount = 0;
-    }
-    if (isNaN(ansPressCount) || ansPressCount < 0) {
-      ansPressCount = 0;
-    }
-    return {
-      date: today,
-      itemCount: Math.floor(itemCount),
-      ansPressCount: Math.floor(ansPressCount)
-    };
-  } catch (e) {
-    return { date: today, itemCount: 0, ansPressCount: 0 };
   }
+  return { categoryCount: categoryCount, questionCount: questionCount };
 }
 
 /**
- * 今日の学習統計を localStorage に保存
- * @param {{ date: string, itemCount: number, ansPressCount: number }} state
+ * 画面上の学習統計表示を更新（例：14問　選択：8/12カテゴリ・50/320問）
  */
-function saveDailyStudyStatsState(state) {
-  try {
-    localStorage.setItem(getDailyStudyItemCountStorageKey(), JSON.stringify({
-      date: state.date,
-      itemCount: state.itemCount,
-      ansPressCount: state.ansPressCount
-    }));
-  } catch (e) {
-    // localStorage が使えない場合は無視
-  }
-}
-
-/**
- * 画面上の学習個数表示を更新（例：3（20）／50問）
- * @param {{ date: string, itemCount: number, ansPressCount: number }|null} state
- */
-function updateDailyStudyStatsDisplay(state) {
+function updateDailyStudyStatsDisplay() {
   var el = document.getElementById('learningItemCount');
   if (!el) {
     return;
   }
-  if (!state) {
-    state = loadDailyStudyStatsState();
-  }
-  var itemCount = Math.max(0, Math.floor(Number(state.itemCount) || 0));
-  var ansPressCount = Math.max(0, Math.floor(Number(state.ansPressCount) || 0));
-  var total = getTotalSheetQuestionCount();
-  el.textContent = itemCount + '（' + ansPressCount + '）／' + total + '問';
+  var itemCount = getTodayStudiedItemCountForDisplay();
+  var totalCategories = getTotalSheetCategoryCount();
+  var totalQuestions = getTotalSheetQuestionCount();
+  var visibleStats = getVisibleCategoriesStats();
+  el.textContent = itemCount + '問　選択：' +
+    visibleStats.categoryCount + '/' + totalCategories + 'カテゴリ・' +
+    visibleStats.questionCount + '/' + totalQuestions + '問';
 }
 
 /**
- * 今日の学習個数表示を localStorage と同期（0:00 跨ぎで 0 に戻す）
+ * 今日の学習件数表示を同期（0:00 跨ぎで 0 にし、必要ならカテゴリ再取得）
  */
 function syncDailyStudyStatsDisplay() {
-  var state = loadDailyStudyStatsState();
-  saveDailyStudyStatsState(state);
-  updateDailyStudyStatsDisplay(state);
+  var today = getTodayYmdLocal();
+  if (todayStudiedCountDate && todayStudiedCountDate !== today) {
+    todayStudiedItemCount = 0;
+    todayStudiedCountDate = today;
+    updateDailyStudyStatsDisplay();
+    if (userEmail) {
+      loadCategories({
+        quiet: true,
+        preserveValue: currentCategoryNo
+      });
+    }
+    return;
+  }
+  updateDailyStudyStatsDisplay();
 }
 
 /**
@@ -4407,18 +4408,59 @@ function isItemLastDateToday(item) {
 }
 
 /**
- * Ans 時：今日の学習統計を更新（再 Ans 含む押下数＋今日初めての問題数）
+ * Ans 時：LastDate が今日でなかった問題なら今日学習件数を +1（楽観更新）
  * @param {Object} item
  */
 function recordDailyStudyStatsOnAns(item) {
-  var state = loadDailyStudyStatsState();
-  state.ansPressCount += 1;
-  if (item && !isItemLastDateToday(item)) {
-    state.itemCount += 1;
+  if (!item || isItemLastDateToday(item)) {
+    return;
   }
-  state.date = getTodayYmdLocal();
-  saveDailyStudyStatsState(state);
-  updateDailyStudyStatsDisplay(state);
+  var today = getTodayYmdLocal();
+  if (todayStudiedCountDate !== today) {
+    todayStudiedCountDate = today;
+    todayStudiedItemCount = 0;
+  }
+  todayStudiedItemCount += 1;
+  updateDailyStudyStatsDisplay();
+}
+
+/**
+ * セッション回答件数表示を更新（○件）
+ */
+function updateSessionAnsweredCountDisplay() {
+  var el = document.getElementById('sessionAnsCount');
+  if (el) {
+    el.textContent = String(sessionAnsweredCount) + '件';
+  }
+}
+
+/**
+ * セッション回答件数を 0 に戻す（HOME 時）
+ */
+function resetSessionAnsweredCount() {
+  sessionAnsweredCount = 0;
+  sessionAnsweredItemIds = {};
+  updateSessionAnsweredCountDisplay();
+}
+
+/**
+ * Ans 時：セッション回答件数を更新（問題IDごとに1回のみ。完了・閲覧中は加算しない）
+ * @param {Object} item
+ */
+function recordSessionAnsweredOnAns(item) {
+  if (isLearningCompleted) {
+    return;
+  }
+  if (!item || item.id == null || String(item.id) === '') {
+    return;
+  }
+  var key = String(item.id);
+  if (sessionAnsweredItemIds[key]) {
+    return;
+  }
+  sessionAnsweredItemIds[key] = true;
+  sessionAnsweredCount += 1;
+  updateSessionAnsweredCountDisplay();
 }
 
 // 学習時間を更新
@@ -4428,12 +4470,15 @@ function updateLearningTime() {
   if (learningStartTime === null) return;
   
   var elapsed = Date.now() - learningStartTime;
-  var totalMinutes = Math.floor(elapsed / 60000);
-  var hours = Math.floor(totalMinutes / 60);
-  var minutes = totalMinutes % 60;
-  var seconds = Math.floor((elapsed / 1000) % 60);
-  
-  var timeText = '<学習時間>' + hours + '時間' + String(minutes).padStart(2, '0') + '分' + String(seconds).padStart(2, '0') + '秒';
+  var totalSeconds = Math.floor(elapsed / 1000);
+  var hours = Math.floor(totalSeconds / 3600);
+  var minutes = Math.floor((totalSeconds % 3600) / 60);
+  var seconds = totalSeconds % 60;
+  // 100時間未満は2桁、以上は桁を伸ばす
+  var hoursText = hours < 100 ? String(hours).padStart(2, '0') : String(hours);
+  var timeText = '<学習>' + hoursText + ':' +
+    String(minutes).padStart(2, '0') + ':' +
+    String(seconds).padStart(2, '0');
   
   // 学習画面の学習時間を更新
   var learningTimeElement = document.getElementById('learningTime');
@@ -4656,6 +4701,8 @@ function showAnswer() {
   
   // 今日の学習統計（LastDate 更新前に判定）
   recordDailyStudyStatsOnAns(item);
+  // セッション回答件数（同一問題は1回のみ。完了画面では加算しない）
+  recordSessionAnsweredOnAns(item);
 
   // TotalStudyCount / Duration / LastDate をメモリ即反映 → 画面メタ更新 → GASは1リクエストで非同期
   persistAnsStudyStatsAsync(item, stopwatchElapsed);
@@ -5570,7 +5617,7 @@ function updateFieldPlayButtons() {
   if (!item || isLearningCompleted) {
     if (qBtn && !isLoading(qBtn)) qBtn.disabled = true;
     if (aBtn && !isLoading(aBtn)) aBtn.disabled = true;
-    // 学習完了時は updateCompletionCategoryNav 経由でナビ更新済み。再入ループを避ける
+    // 学習完了時はナビの再入更新ループを避ける
     if (!isLearningCompleted) {
       refreshAdvanceNavControls();
     }
@@ -5684,9 +5731,143 @@ function stopCurrentAudioPlayback() {
 }
 
 /**
+ * 表示上の出題／解答をシート列（question／answer）に変換
+ * @param {string} displayFieldType - 'question' | 'answer'
+ * @returns {string}
+ */
+function getSheetAudioFieldType(displayFieldType) {
+  if (isSwapQAEnabled()) {
+    return displayFieldType === 'question' ? 'answer' : 'question';
+  }
+  return displayFieldType === 'answer' ? 'answer' : 'question';
+}
+
+/**
+ * 問題の Category_No を解決
+ * @param {Object} item
+ * @returns {string|number|null}
+ */
+function resolveItemCategoryNo(item) {
+  if (item && item.category_no != null && String(item.category_no) !== '') {
+    return item.category_no;
+  }
+  if (currentCategoryNo != null && currentCategoryNo !== '') {
+    return currentCategoryNo;
+  }
+  return null;
+}
+
+/**
+ * Drive 音声メタとして使えるか
+ * @param {Object} item
+ * @returns {boolean}
+ */
+function canUseDriveAudioMeta(item) {
+  if (!item || item.id == null || String(item.id) === '') {
+    return false;
+  }
+  if (item.no == null || String(item.no) === '') {
+    return false;
+  }
+  var catNo = resolveItemCategoryNo(item);
+  return catNo != null && String(catNo) !== '';
+}
+
+/**
+ * 指定テキストのローカル音声キャッシュを声・速さ違い含めて削除
+ * @param {string} text
+ */
+function clearLocalAudioCachesForText(text) {
+  if (!text) {
+    return;
+  }
+  var genders = ['female', 'male'];
+  var speeds = ['fast', 'medium', 'slow'];
+  for (var i = 0; i < genders.length; i++) {
+    for (var j = 0; j < speeds.length; j++) {
+      removeCachedAudio(text, genders[i], speeds[j]);
+    }
+  }
+}
+
+/**
+ * Drive へ音声を保存（失敗は無視）
+ * @param {Object} item
+ * @param {string} sheetField
+ * @param {string} voiceGender
+ * @param {string} speed
+ * @param {string} audioContent
+ */
+function saveDriveAudioAsync(item, sheetField, voiceGender, speed, audioContent) {
+  if (!canUseDriveAudioMeta(item) || !audioContent || !userEmail) {
+    return;
+  }
+  if (sheetField !== 'question' && sheetField !== 'answer') {
+    return;
+  }
+  try {
+    var params = new URLSearchParams();
+    params.append('action', 'saveDriveAudio');
+    params.append('id', String(item.id));
+    params.append('categoryNo', String(resolveItemCategoryNo(item)));
+    params.append('no', String(item.no));
+    params.append('field', sheetField);
+    params.append('voiceGender', voiceGender || 'female');
+    params.append('speed', speed || 'fast');
+    params.append('audioContent', audioContent);
+    params.append('email', userEmail);
+    params.append('referer', window.location.origin);
+
+    fetch(buildGasPostUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params
+    }).catch(function() {
+      // Drive失敗は学習を止めない
+    });
+  } catch (e) {
+    // ignore
+  }
+}
+
+/**
+ * Drive 上の当該フィールド音声を削除（失敗は無視）
+ * @param {Object} item
+ * @param {string} sheetField
+ */
+function deleteDriveAudioAsync(item, sheetField) {
+  if (!canUseDriveAudioMeta(item) || !userEmail) {
+    return;
+  }
+  if (sheetField !== 'question' && sheetField !== 'answer') {
+    return;
+  }
+  try {
+    var params = new URLSearchParams();
+    params.append('action', 'deleteDriveAudio');
+    params.append('id', String(item.id));
+    params.append('categoryNo', String(resolveItemCategoryNo(item)));
+    params.append('no', String(item.no));
+    params.append('field', sheetField);
+    params.append('email', userEmail);
+    params.append('referer', window.location.origin);
+
+    fetch(buildGasPostUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params
+    }).catch(function() {
+      // ignore
+    });
+  } catch (e) {
+    // ignore
+  }
+}
+
+/**
  * 指定欄のテキストを読み上げる
  * @param {string} fieldType - 'question' | 'answer'
- * @param {boolean} [forceRefresh=false] - true のときキャッシュを使わず再生成
+ * @param {boolean} [forceRefresh=false] - true のときキャッシュ／Driveを使わず再生成
  */
 function playFieldAudio(fieldType, forceRefresh) {
   var item = currentCategoryData[currentQuestionIndex];
@@ -5713,16 +5894,21 @@ function playFieldAudio(fieldType, forceRefresh) {
   
   var voiceGender = fieldType === 'question' ? getAudioVoice('question') : getAudioVoice('answer');
   var speed = fieldType === 'question' ? getAudioSpeed('question') : getAudioSpeed('answer');
+  var sheetField = getSheetAudioFieldType(fieldType);
   
   if (!forceRefresh) {
-    var cachedAudio = getCachedAudio(text, voiceGender, speed);
-    if (cachedAudio) {
-      playAudioFromCache(cachedAudio, fieldType);
+    var cachedResult = getCachedAudio(text, voiceGender, speed);
+    if (cachedResult && cachedResult.audioData) {
+      playAudioFromCache(cachedResult.audioData, fieldType, cachedResult.source);
+      return;
+    }
+    if (canUseDriveAudioMeta(item)) {
+      fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetField, item);
       return;
     }
   }
   
-  fetchAudioFromAPI(text, voiceGender, speed, fieldType);
+  fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField);
 }
 
 /**
@@ -5766,11 +5952,37 @@ function removeCachedAudio(text, voiceGender, speed) {
 }
 
 /**
+ * デバッグ用：再生音声の取得元を表示（ENABLE_AUDIO_SOURCE_DEBUG が true のときのみ）
+ * @param {string} source - 'memory' | 'localStorage' | 'Drive' | 'TTS'
+ */
+function showAudioSourceDebug(source) {
+  var el = document.getElementById('audioSourceDebug');
+  if (!el) {
+    return;
+  }
+  if (ENABLE_AUDIO_SOURCE_DEBUG !== true) {
+    el.style.display = 'none';
+    el.textContent = '';
+    return;
+  }
+  var labelMap = {
+    memory: 'メモリ',
+    localStorage: 'localStorage',
+    Drive: 'Drive',
+    TTS: 'TTS'
+  };
+  var label = labelMap[source] || String(source || '');
+  el.textContent = '音声:' + label;
+  el.style.display = 'inline-block';
+}
+
+/**
  * キャッシュから音声データを取得
  * メモリキャッシュ → localStorage の順で確認
  * @param {string} text - 読み上げるテキスト
  * @param {string} voiceGender - 音声の性別（'male' または 'female'）
  * @param {string} speed - 読み上げの速さ（'fast', 'medium', 'slow'）
+ * @returns {{ audioData: Object, source: string }|null}
  */
 function getCachedAudio(text, voiceGender, speed) {
   // テキストを正規化（キャッシュキーは正規化後のテキストで生成）
@@ -5781,7 +5993,7 @@ function getCachedAudio(text, voiceGender, speed) {
   
   // メモリキャッシュを確認
   if (audioCache[cacheKey]) {
-    return audioCache[cacheKey];
+    return { audioData: audioCache[cacheKey], source: 'memory' };
   }
   
   // localStorageを確認
@@ -5792,7 +6004,7 @@ function getCachedAudio(text, voiceGender, speed) {
       var audioData = JSON.parse(cachedData);
       // メモリキャッシュにも保存
       audioCache[cacheKey] = audioData;
-      return audioData;
+      return { audioData: audioData, source: 'localStorage' };
     }
   } catch (e) {
     // localStorageが使用できない場合やエラーが発生した場合は無視
@@ -5994,11 +6206,16 @@ function clearOldCacheEntries() {
  * キャッシュから音声を再生
  * @param {Object} audioData - キャッシュ音声データ
  * @param {string} fieldType - 'question' | 'answer'
+ * @param {string} [source]
  */
-function playAudioFromCache(audioData, fieldType) {
+function playAudioFromCache(audioData, fieldType, source) {
   if (!audioData || !audioData.audioContent) {
     if (fieldType === 'question') releaseListeningAnsGate();
     return;
+  }
+
+  if (source) {
+    showAudioSourceDebug(source);
   }
   
   try {
@@ -6083,13 +6300,65 @@ function hidePlayButtonLoading(fieldType) {
 }
 
 /**
+ * Drive から音声を取得し、無ければ TTS
+ * @param {string} text
+ * @param {string} voiceGender
+ * @param {string} speed
+ * @param {string} fieldType
+ * @param {string} sheetField
+ * @param {Object} item
+ */
+function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetField, item) {
+  activePlayField = fieldType || null;
+  showPlayButtonLoading(fieldType);
+  refreshAdvanceNavControls();
+
+  var params = new URLSearchParams();
+  params.append('action', 'getDriveAudio');
+  params.append('id', String(item.id));
+  params.append('categoryNo', String(resolveItemCategoryNo(item)));
+  params.append('no', String(item.no));
+  params.append('field', sheetField);
+  params.append('voiceGender', voiceGender || 'female');
+  params.append('speed', speed || 'fast');
+  params.append('email', userEmail);
+  params.append('referer', window.location.origin);
+
+  fetch(buildGasPostUrl(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params
+  })
+  .then(function(response) {
+    if (!response.ok) {
+      throw new Error('drive fetch failed');
+    }
+    return response.json();
+  })
+  .then(function(data) {
+    if (data && data.success && data.found && data.audioContent) {
+      hidePlayButtonLoading(fieldType);
+      saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+      playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'Drive');
+      return;
+    }
+    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField);
+  })
+  .catch(function() {
+    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField);
+  });
+}
+
+/**
  * APIから音声データを取得
  * @param {string} text - 読み上げるテキスト
  * @param {string} voiceGender - 音声の性別（'male' または 'female'）
  * @param {string} speed - 読み上げの速さ（'fast', 'medium', 'slow'）
  * @param {string} fieldType - 'question' | 'answer'
+ * @param {Object} [item]
+ * @param {string} [sheetField]
  */
-function fetchAudioFromAPI(text, voiceGender, speed, fieldType) {
+function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField) {
   activePlayField = fieldType || null;
   showPlayButtonLoading(fieldType);
   refreshAdvanceNavControls();
@@ -6119,6 +6388,10 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType) {
     
     if (data.success && data.audioContent) {
       saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+      if (item && sheetField) {
+        saveDriveAudioAsync(item, sheetField, voiceGender || 'female', speed || 'fast', data.audioContent);
+      }
+      showAudioSourceDebug('TTS');
       
       try {
         if (currentAudio) {
@@ -6229,13 +6502,13 @@ function preloadAudioForCurrentAndNext() {
       if (shouldPreloadQuestionAudio() && effectiveQuestion && !isImageUrl(effectiveQuestion)) {
         var questionVoice = getAudioVoice('question');
         var questionSpeed = getAudioSpeed('question');
-        preloadAudio(effectiveQuestion, questionVoice, questionSpeed);
+        preloadAudio(effectiveQuestion, questionVoice, questionSpeed, currentItem, getSheetAudioFieldType('question'));
       }
       // 解答文をプリロード（解答用設定）
       if (shouldPreloadAnswerAudio() && effectiveAnswer && !isImageUrl(effectiveAnswer)) {
         var answerVoice = getAudioVoice('answer');
         var answerSpeed = getAudioSpeed('answer');
-        preloadAudio(effectiveAnswer, answerVoice, answerSpeed);
+        preloadAudio(effectiveAnswer, answerVoice, answerSpeed, currentItem, getSheetAudioFieldType('answer'));
       }
     }
   }
@@ -6271,13 +6544,13 @@ function preloadNextQuestions() {
         if (shouldPreloadQuestionAudio() && effectiveQuestion && !isImageUrl(effectiveQuestion)) {
           var questionVoice = getAudioVoice('question');
           var questionSpeed = getAudioSpeed('question');
-          preloadAudio(effectiveQuestion, questionVoice, questionSpeed);
+          preloadAudio(effectiveQuestion, questionVoice, questionSpeed, nextItem, getSheetAudioFieldType('question'));
         }
         // 解答文をプリロード（解答用設定）
         if (shouldPreloadAnswerAudio() && effectiveAnswer && !isImageUrl(effectiveAnswer)) {
           var answerVoice = getAudioVoice('answer');
           var answerSpeed = getAudioSpeed('answer');
-          preloadAudio(effectiveAnswer, answerVoice, answerSpeed);
+          preloadAudio(effectiveAnswer, answerVoice, answerSpeed, nextItem, getSheetAudioFieldType('answer'));
         }
       }
     }
@@ -6289,55 +6562,96 @@ function preloadNextQuestions() {
  * @param {string} text - 読み上げるテキスト
  * @param {string} voiceGender - 音声の性別（'male' または 'female'）
  * @param {string} speed - 読み上げの速さ（'fast', 'medium', 'slow'）
+ * @param {Object} [item]
+ * @param {string} [sheetField]
  */
-function preloadAudio(text, voiceGender, speed) {
+function preloadAudio(text, voiceGender, speed, item, sheetField) {
   if (!text || !text.trim()) {
     return;
   }
   
-  // キャッシュに既に存在する場合はスキップ（設定情報を含む）
-  var cachedAudio = getCachedAudio(text, voiceGender || 'female', speed || 'fast');
-  if (cachedAudio) {
-    return; // 既にキャッシュされている
+  var cachedResult = getCachedAudio(text, voiceGender || 'female', speed || 'fast');
+  if (cachedResult && cachedResult.audioData) {
+    return;
   }
   
-  // バックグラウンドで非同期にプリロード（エラーは無視）
   setTimeout(function() {
-    // userEmailが設定されていない場合はスキップ
     if (!userEmail) {
       return;
     }
-    
-    var params = new URLSearchParams();
-    params.append('text', text);
-    params.append('voiceGender', voiceGender || 'female'); // デフォルト値：女性
-    params.append('speed', speed || 'fast'); // デフォルト値：fast
-    params.append('email', userEmail); // TTS処理にもメール認証を追加
-    params.append('referer', window.location.origin);
-    
-    fetch(buildGasPostUrl(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: params
-    })
-    .then(function(response) {
-      if (!response.ok) {
-        return; // エラーは無視
-      }
-      return response.json();
-    })
-    .then(function(data) {
-      if (data && data.success && data.audioContent) {
-        // キャッシュに保存（再生はしない、設定情報を含む）
-        saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
-      }
-    })
-    .catch(function(error) {
-      // プリロードのエラーは無視（ユーザーに影響を与えない）
-    });
-  }, 100); // 少し遅延させて、メイン処理を優先
+
+    function runTtsPreload() {
+      var params = new URLSearchParams();
+      params.append('text', text);
+      params.append('voiceGender', voiceGender || 'female');
+      params.append('speed', speed || 'fast');
+      params.append('email', userEmail);
+      params.append('referer', window.location.origin);
+
+      fetch(buildGasPostUrl(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: params
+      })
+      .then(function(response) {
+        if (!response.ok) {
+          return;
+        }
+        return response.json();
+      })
+      .then(function(data) {
+        if (data && data.success && data.audioContent) {
+          saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+          if (item && sheetField) {
+            saveDriveAudioAsync(item, sheetField, voiceGender || 'female', speed || 'fast', data.audioContent);
+          }
+        }
+      })
+      .catch(function() {
+        // プリロード失敗は無視
+      });
+    }
+
+    if (canUseDriveAudioMeta(item) && sheetField) {
+      var driveParams = new URLSearchParams();
+      driveParams.append('action', 'getDriveAudio');
+      driveParams.append('id', String(item.id));
+      driveParams.append('categoryNo', String(resolveItemCategoryNo(item)));
+      driveParams.append('no', String(item.no));
+      driveParams.append('field', sheetField);
+      driveParams.append('voiceGender', voiceGender || 'female');
+      driveParams.append('speed', speed || 'fast');
+      driveParams.append('email', userEmail);
+      driveParams.append('referer', window.location.origin);
+
+      fetch(buildGasPostUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: driveParams
+      })
+      .then(function(response) {
+        if (!response.ok) {
+          throw new Error('drive miss');
+        }
+        return response.json();
+      })
+      .then(function(data) {
+        if (data && data.success && data.found && data.audioContent) {
+          saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+          return;
+        }
+        runTtsPreload();
+      })
+      .catch(function() {
+        runTtsPreload();
+      });
+      return;
+    }
+
+    runTtsPreload();
+  }, 100);
 }
 
 // 前の問題に戻る
@@ -6674,14 +6988,9 @@ function startRetryQuestions() {
 function updateNavigationButtons() {
   syncLearningCompletedScreenClass();
   
-  if (isLearningCompleted) {
-    // 学習完了：左 <<／右 >> と中央 Next でカテゴリ移動
-    updateCompletionCategoryNav();
-  } else {
-    // 学習中：右枠は空きスペーサー（進行は中央 Ans/Next）
-    setNextButtonAsUnusedSpacer();
-  }
-  
+  // 学習中・完了とも：[○件] [中央] [プラス] [空き] [HOME]
+  setLearningNavIconsNormal();
+  updateSessionAnsweredCountDisplay();
   updateNavAnswerButton();
   updateHomeButton();
 }
@@ -6700,7 +7009,7 @@ function syncLearningCompletedScreenClass() {
 }
 
 /**
- * 右枠（次へ／>>）を非表示スペーサーにする（学習中の横間隔維持）
+ * 右枠（旧 >>）を非表示スペーサーにする（横間隔・中央位置の維持）
  */
 function setNextButtonAsUnusedSpacer() {
   var nextSlot = document.getElementById('nextButtonSlot');
@@ -6714,21 +7023,7 @@ function setNextButtonAsUnusedSpacer() {
     nextButton.classList.remove('category-nav-mode');
     nextButton.removeAttribute('title');
     nextButton.setAttribute('tabindex', '-1');
-  }
-}
-
-/**
- * 右枠のスペーサーを解除し、操作可能なボタン枠にする
- */
-function clearNextButtonSpacer() {
-  var nextSlot = document.getElementById('nextButtonSlot');
-  var nextButton = document.getElementById('nextButton');
-  if (nextSlot) {
-    nextSlot.classList.remove('is-spacer');
-    nextSlot.setAttribute('aria-hidden', 'false');
-  }
-  if (nextButton) {
-    nextButton.removeAttribute('tabindex');
+    nextButton.setAttribute('aria-hidden', 'true');
   }
 }
 
@@ -6869,212 +7164,34 @@ function getCurrentCategoryIndex() {
 }
 
 /**
- * 学習ナビを通常状態に戻す（左枠は透明スペーサー。欄右上の再生を使用）
+ * 学習ナビを通常状態にする（左＝セッション件数、右＝空きスペーサー）
  */
 function setLearningNavIconsNormal() {
   var navBar = document.querySelector('.navigation-bar');
-  var playButtonContainer = document.getElementById('playButtonContainer');
-  var playButton = document.getElementById('playButton');
-  
   if (navBar) {
     navBar.classList.remove('completion-browse-order');
   }
-  
-  if (playButtonContainer) {
-    playButtonContainer.classList.add('is-spacer');
-    playButtonContainer.classList.remove('is-hidden');
-    playButtonContainer.setAttribute('aria-hidden', 'true');
-  }
-  
-  if (playButton) {
-    playButton.classList.remove('category-nav-mode');
-    playButton.disabled = true;
-  }
-  
   setNextButtonAsUnusedSpacer();
+  updateSessionAnsweredCountDisplay();
   updateNavAnswerButton();
 }
 
 /**
- * 学習完了時のカテゴリナビアイコン（左 <<／中央右隣 >>）に切り替える
+ * 学習完了時の下ナビ前後は廃止。通常レイアウトのまま中央 Next／Category 下ナビで閲覧する
  */
 function setLearningNavIconsCategoryMode() {
-  var navBar = document.querySelector('.navigation-bar');
-  var playButtonContainer = document.getElementById('playButtonContainer');
-  var playButton = document.getElementById('playButton');
-  var nextButton = document.getElementById('nextButton');
-  
-  if (navBar) {
-    navBar.classList.add('completion-browse-order');
-  }
-  
-  if (playButtonContainer) {
-    playButtonContainer.classList.remove('is-spacer');
-    playButtonContainer.classList.remove('is-hidden');
-    playButtonContainer.setAttribute('aria-hidden', 'false');
-  }
-  
-  if (playButton) {
-    playButton.classList.add('category-nav-mode');
-    var playImg = playButton.querySelector('img');
-    if (!playImg) {
-      playButton.innerHTML = '';
-      playImg = document.createElement('img');
-      playButton.appendChild(playImg);
-    }
-    playImg.src = 'img/angles-right-solid.png';
-    playImg.alt = '前のカテゴリ';
-  }
-  
-  clearNextButtonSpacer();
-  if (nextButton) {
-    nextButton.classList.add('category-nav-mode');
-    var nextImg = nextButton.querySelector('img');
-    if (!nextImg) {
-      nextButton.innerHTML = '';
-      nextImg = document.createElement('img');
-      nextButton.appendChild(nextImg);
-    }
-    nextImg.src = 'img/angles-right-solid.png';
-    nextImg.alt = '次のカテゴリ';
-  }
-  
+  setLearningNavIconsNormal();
   updateFieldPlayButtons();
 }
 
 /**
- * 学習完了時：<< / >> の表示と前後カテゴリ／ページ有無に応じた有効／無効を更新
+ * 学習完了時：下ナビ前後は使わない。中央 Next の有効状態のみ更新
  */
 function updateCompletionCategoryNav() {
   if (!isLearningCompleted) {
     return;
   }
-  
-  setLearningNavIconsCategoryMode();
-  
-  var playButton = document.getElementById('playButton');
-  var nextButton = document.getElementById('nextButton');
-  var transitionBlocked = isCategoryTransitionInProgress;
-  
-  if (isDurationQuestionMethod()) {
-    if (isDurationCompletionSessionView) {
-      if (playButton) {
-        playButton.disabled = true;
-        playButton.title = '完了直後は前ページがありません';
-      }
-      if (nextButton) {
-        nextButton.disabled = transitionBlocked;
-        if (transitionBlocked) {
-          nextButton.title = 'カテゴリの切り替え中です';
-        } else {
-          nextButton.removeAttribute('title');
-        }
-      }
-      updateNavAnswerButton();
-      return;
-    }
-    var pageCount = getDurationModePageCount();
-    if (playButton) {
-      playButton.disabled = transitionBlocked || durationModePageIndex <= 0 || pageCount <= 0;
-      if (transitionBlocked) {
-        playButton.title = 'カテゴリの切り替え中です';
-      } else {
-        playButton.removeAttribute('title');
-      }
-    }
-    if (nextButton) {
-      nextButton.disabled = transitionBlocked || pageCount <= 0 || durationModePageIndex >= pageCount - 1;
-      if (transitionBlocked) {
-        nextButton.title = 'カテゴリの切り替え中です';
-      } else if (pageCount <= 0 || durationModePageIndex >= pageCount - 1) {
-        nextButton.title = '次のページがありません';
-      } else {
-        nextButton.removeAttribute('title');
-      }
-    }
-    updateNavAnswerButton();
-    return;
-  }
-
-  if (isLastDateQuestionMethod()) {
-    if (isLastDateNormalQuestionMethod()) {
-      if (isLastDateCompletionSessionView || lastDateModeNeedsResortBeforePaging) {
-        if (playButton) {
-          playButton.disabled = true;
-          playButton.title = '完了直後は前ページがありません';
-        }
-        if (nextButton) {
-          nextButton.disabled = transitionBlocked;
-          if (transitionBlocked) {
-            nextButton.title = 'カテゴリの切り替え中です';
-          } else {
-            nextButton.removeAttribute('title');
-          }
-        }
-        updateNavAnswerButton();
-        return;
-      }
-      var lastDatePageCount = getLastDateModePageCount();
-      if (playButton) {
-        playButton.disabled = transitionBlocked || lastDateModePageIndex <= 0 || lastDatePageCount <= 0;
-        if (transitionBlocked) {
-          playButton.title = 'カテゴリの切り替え中です';
-        } else if (lastDateModePageIndex <= 0) {
-          playButton.title = '先頭ページです';
-        } else {
-          playButton.removeAttribute('title');
-        }
-      }
-      if (nextButton) {
-        nextButton.disabled = transitionBlocked || lastDatePageCount <= 0 || lastDateModePageIndex >= lastDatePageCount - 1;
-        if (transitionBlocked) {
-          nextButton.title = 'カテゴリの切り替え中です';
-        } else if (lastDatePageCount <= 0 || lastDateModePageIndex >= lastDatePageCount - 1) {
-          nextButton.title = '次のページがありません';
-        } else {
-          nextButton.removeAttribute('title');
-        }
-      }
-      updateNavAnswerButton();
-      return;
-    }
-    if (playButton) {
-      playButton.disabled = true;
-      playButton.title = '学習日優先（シャッフル）では前へは使えません';
-    }
-    if (nextButton) {
-      nextButton.disabled = transitionBlocked;
-      if (transitionBlocked) {
-        nextButton.title = 'カテゴリの切り替え中です';
-      } else {
-        nextButton.removeAttribute('title');
-      }
-    }
-    updateNavAnswerButton();
-    return;
-  }
-  
-  var idx = getCurrentCategoryIndex();
-  
-  if (playButton) {
-    playButton.disabled = transitionBlocked || (idx < 0 || findSelectableCategoryIndex(idx, -1) < 0);
-    if (transitionBlocked) {
-      playButton.title = 'カテゴリの切り替え中です';
-    } else {
-      playButton.removeAttribute('title');
-    }
-  }
-  if (nextButton) {
-    nextButton.disabled = transitionBlocked || (idx < 0 || findSelectableCategoryIndex(idx, 1) < 0);
-    if (transitionBlocked) {
-      nextButton.title = 'カテゴリの切り替え中です';
-    } else if (idx < 0 || findSelectableCategoryIndex(idx, 1) < 0) {
-      nextButton.title = '次のカテゴリがありません';
-    } else {
-      nextButton.removeAttribute('title');
-    }
-  }
-  
+  setLearningNavIconsNormal();
   updateNavAnswerButton();
 }
 
@@ -7861,6 +7978,9 @@ function goToHome() {
   // 完了時カテゴリナビ用アイコンを通常に戻す
   setLearningNavIconsNormal();
   
+  // セッション回答件数をリセット（学習時間は継続）
+  resetSessionAnsweredCount();
+  
   // 画面遷移
   var screen2 = document.getElementById('screen2');
   var screen1 = document.getElementById('screen1');
@@ -8424,6 +8544,8 @@ function saveItemField() {
   }
   
   var newValue = editEl.value || '';
+  var oldValue = (item[updateStorageField] != null) ? String(item[updateStorageField]) : String(originalEditText || '');
+  var storageFieldForAudio = updateStorageField;
   
   var okButton = document.getElementById('answerUpdateConfirmOkButton');
   if (okButton) {
@@ -8440,7 +8562,12 @@ function saveItemField() {
         okButton.disabled = false;
         okButton.textContent = '確定';
       }
-      item[updateStorageField] = newValue;
+      item[storageFieldForAudio] = newValue;
+      if (storageFieldForAudio === 'question' || storageFieldForAudio === 'answer') {
+        clearLocalAudioCachesForText(oldValue);
+        clearLocalAudioCachesForText(newValue);
+        deleteDriveAudioAsync(item, storageFieldForAudio);
+      }
       closeUpdateConfirmModal();
       endUpdateMode(false);
     },

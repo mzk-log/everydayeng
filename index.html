@@ -166,6 +166,7 @@
           <img src="img/menu.png" alt="メニュー" class="hamburger-icon">
         </button>
         <h1 class="app-header-title">Everyday English</h1>
+        <div class="audio-source-debug" id="audioSourceDebug" aria-live="polite"></div>
       </div>
       <div class="app-header-tools">
         <div id="toggleContainer" class="toggle-container">
@@ -188,8 +189,8 @@
       </div>
     </div>
     <div class="learning-stats">
-      <div class="learning-time" id="learningTime"><学習時間>0時間00分00秒</div>
-      <div class="learning-item-count" id="learningItemCount">0（0）／0問</div>
+      <div class="learning-time" id="learningTime"><学習>00:00:00</div>
+      <div class="learning-item-count" id="learningItemCount">0問　選択：0/0カテゴリ・0/0問</div>
     </div>
   </header>
   <div class="container">
@@ -372,10 +373,8 @@
       </div>
       
       <div class="navigation-bar">
-        <div class="play-button-container is-spacer" id="playButtonContainer" aria-hidden="true">
-          <button class="nav-button" id="playButton" type="button" disabled>
-            <img src="img/angles-right-solid.png" alt="前のカテゴリ">
-          </button>
+        <div class="session-ans-count-slot" id="sessionAnsCountSlot" aria-live="polite">
+          <span class="session-ans-count" id="sessionAnsCount">0件</span>
         </div>
         <button class="nav-answer-button" id="navAnswerButton" type="button">
           <div class="nav-answer-text blinking" id="navAnswerText">Ans</div>
@@ -386,8 +385,8 @@
           <span class="plus-retry-badge" aria-hidden="true">1</span>
         </button>
         <div class="nav-button-slot is-spacer" id="nextButtonSlot" aria-hidden="true">
-          <button class="nav-button" id="nextButton" type="button" disabled tabindex="-1">
-            <img src="img/angles-right-solid.png" alt="次のカテゴリ">
+          <button class="nav-button" id="nextButton" type="button" disabled tabindex="-1" aria-hidden="true">
+            <img src="img/angles-right-solid.png" alt="">
           </button>
         </div>
         <button class="nav-button" id="homeButton" type="button">
