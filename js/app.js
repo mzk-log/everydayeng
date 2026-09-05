@@ -1699,6 +1699,7 @@ function openSideMenu() {
     hamburgerButton.classList.add('active');
   }
   // メニューが開いている間は背景のスクロールを無効化
+  document.documentElement.style.overflow = 'hidden';
   document.body.style.overflow = 'hidden';
   updateLearningLockedSideMenuControls();
 }
@@ -1716,6 +1717,7 @@ function closeSideMenu() {
   // 未保存の表示カテゴリ変更は破棄
   closeVisibleCategoriesSubmenu();
   // メニューが閉じたら背景のスクロールを有効化
+  document.documentElement.style.overflow = '';
   document.body.style.overflow = '';
 }
 
@@ -2179,13 +2181,12 @@ function restoreCategoryModeListFromSelection() {
     selectedQuestionIndices = [];
     var listMessage = document.getElementById('listMessage');
     var listContainer = document.getElementById('listContainer');
-    var startButton = document.getElementById('startButton');
     if (listMessage) {
       listMessage.style.display = 'block';
       listMessage.textContent = 'Categoryを選択してください。';
     }
     if (listContainer) listContainer.style.display = 'none';
-    if (startButton) startButton.style.display = 'none';
+    setStartButtonVisible(false);
     updateListNavButtons();
   }
 }
@@ -2729,13 +2730,12 @@ function applyDurationModePageToList() {
     selectedQuestionIndices = [];
     var listMessage = document.getElementById(isLearningCompleted ? 'completionListMessage' : 'listMessage');
     var listContainer = document.getElementById(isLearningCompleted ? 'completionListContainer' : 'listContainer');
-    var startButton = document.getElementById('startButton');
     if (listMessage) {
       listMessage.style.display = 'block';
       listMessage.textContent = '表示できる問題がありません。';
     }
     if (listContainer) listContainer.style.display = 'none';
-    if (!isLearningCompleted && startButton) startButton.style.display = 'none';
+    if (!isLearningCompleted) setStartButtonVisible(false);
     updateListNavButtons();
     if (isLearningCompleted) {
       refreshAdvanceNavControls();
@@ -2754,8 +2754,8 @@ function applyDurationModePageToList() {
   
   if (!isLearningCompleted) {
     var startButton = document.getElementById('startButton');
+    setStartButtonVisible(true);
     if (startButton) {
-      startButton.style.display = 'block';
       startButton.disabled = false;
     }
     showListNavButtons();
@@ -3709,12 +3709,11 @@ function displayList() {
   
   var listMessage = document.getElementById(ui.messageId);
   var listContainer = document.getElementById(ui.containerId);
-  var startButton = document.getElementById('startButton');
   
   if (listMessage) listMessage.style.display = 'none';
   if (listContainer) listContainer.style.display = 'block';
-  if (ui.showStartButton && startButton) {
-    startButton.style.display = 'block';
+  if (ui.showStartButton) {
+    setStartButtonVisible(true);
   }
   
   if (isLearningCompleted) {
@@ -4081,11 +4080,27 @@ function updateSelectionCount() {
   updateClearButton();
 }
 
+/**
+ * TOP の START ドック（ぼかし帯＋ボタン）の表示切替
+ * @param {boolean} visible
+ */
+function setStartButtonVisible(visible) {
+  var dock = document.getElementById('startButtonDock');
+  var startButton = document.getElementById('startButton');
+  var display = visible ? 'block' : 'none';
+  if (dock) {
+    dock.style.display = display;
+    dock.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  }
+  if (startButton && !visible) {
+    startButton.disabled = false;
+  }
+}
+
 // リスト表示をリセット
 function resetListDisplay() {
   var listMessage = document.getElementById('listMessage');
   var listContainer = document.getElementById('listContainer');
-  var startButton = document.getElementById('startButton');
   var selectionCount = document.getElementById('selectionCount');
   
   hideCategoryLoadingSpinner();
@@ -4096,7 +4111,7 @@ function resetListDisplay() {
     listMessage.textContent = 'Categoryを選択してください。';
   }
   if (listContainer) listContainer.style.display = 'none';
-  if (startButton) startButton.style.display = 'none';
+  setStartButtonVisible(false);
   if (selectionCount) selectionCount.style.display = 'none';
   
   // ボタンを非表示
@@ -7706,15 +7721,61 @@ function updatePlusButton() {
 }
 
 /**
- * 学習完了画面：learning-content を上端に同期固定（カテゴリ切替後用）
+ * ページ（window）を上端へスクロール
+ * @param {boolean} [smooth]
+ */
+function scrollPageToTop(smooth) {
+  var useSmooth = smooth === true;
+  try {
+    if (typeof window.scrollTo === 'function') {
+      window.scrollTo({ top: 0, behavior: useSmooth ? 'smooth' : 'auto' });
+      return;
+    }
+  } catch (e) {
+    // fall through
+  }
+  window.scrollTo(0, 0);
+  if (document.documentElement) {
+    document.documentElement.scrollTop = 0;
+  }
+  if (document.body) {
+    document.body.scrollTop = 0;
+  }
+}
+
+/**
+ * ページ（window）を最下部へスクロール
+ */
+function scrollPageToBottom() {
+  var top = Math.max(
+    document.documentElement ? document.documentElement.scrollHeight : 0,
+    document.body ? document.body.scrollHeight : 0
+  );
+  try {
+    if (typeof window.scrollTo === 'function') {
+      window.scrollTo(0, top);
+      return;
+    }
+  } catch (e) {
+    // fall through
+  }
+  if (document.documentElement) {
+    document.documentElement.scrollTop = top;
+  }
+  if (document.body) {
+    document.body.scrollTop = top;
+  }
+}
+
+/**
+ * 学習完了画面：ページを上端に同期固定（カテゴリ切替後用）
  */
 function maintainCompletionScrollAtTop() {
-  var learningContent = document.querySelector('#screen2 .learning-content');
-  if (!learningContent || !isLearningCompleted) {
+  if (!isLearningCompleted) {
     return;
   }
   function pin() {
-    learningContent.scrollTop = 0;
+    scrollPageToTop(false);
   }
   pin();
   requestAnimationFrame(function() {
@@ -7724,7 +7785,7 @@ function maintainCompletionScrollAtTop() {
 }
 
 /**
- * 学習完了画面：learning-content を最下部に同期固定（初回完了表示用）
+ * 学習完了画面：ページを最下部に同期固定（初回完了表示用）
  * 出題ブロック畳み後は上端固定に切り替える
  */
 function maintainCompletionScrollAtBottom() {
@@ -7732,12 +7793,11 @@ function maintainCompletionScrollAtBottom() {
     maintainCompletionScrollAtTop();
     return;
   }
-  var learningContent = document.querySelector('#screen2 .learning-content');
-  if (!learningContent || !isLearningCompleted) {
+  if (!isLearningCompleted) {
     return;
   }
   function pin() {
-    learningContent.scrollTop = learningContent.scrollHeight;
+    scrollPageToBottom();
   }
   pin();
   requestAnimationFrame(function() {
@@ -7800,16 +7860,7 @@ function ensureCompletionBrowseLayout(done) {
       els[j].style.opacity = '';
     }
     isCompletionStudyFieldsCollapsed = true;
-    var learningContent = document.querySelector('#screen2 .learning-content');
-    if (learningContent && typeof learningContent.scrollTo === 'function') {
-      try {
-        learningContent.scrollTo({ top: 0, behavior: 'smooth' });
-      } catch (e) {
-        learningContent.scrollTop = 0;
-      }
-    } else if (learningContent) {
-      learningContent.scrollTop = 0;
-    }
+    scrollPageToTop(true);
     maintainCompletionScrollAtTop();
     isCategoryTransitionInProgress = false;
     refreshAdvanceNavControls();
@@ -7871,11 +7922,10 @@ function bindCompletionListImagesToKeepScroll(listContainerEl) {
 }
 
 /**
- * 学習完了時：List が見えるよう learning-content を最下部までスクロール（初回表示用）
+ * 学習完了時：List が見えるようページを最下部までスクロール（初回表示用）
  */
 function scrollLearningContentToCompletionView() {
-  var learningContent = document.querySelector('#screen2 .learning-content');
-  if (!learningContent || !isLearningCompleted) {
+  if (!isLearningCompleted) {
     return;
   }
   maintainCompletionScrollAtBottom();

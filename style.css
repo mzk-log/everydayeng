@@ -566,24 +566,46 @@
 /* HTML要素 */
 html {
   width: 100%;
-  height: 100%;
+  height: auto;
+  min-height: 100%;
   margin: 0;
   padding: 0;
   --app-header-height: 54px;
-  overflow: hidden;
+  --app-nav-height: 56px;
+  --app-start-height: 58px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
-/* ボディ要素 */
+html::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* ボディ要素（ページ全体が縦スクロールの主体。バーは非表示） */
 body {
   font-family: 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
   background-color: #000;
   color: #000;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: visible;
   position: relative;
   width: 100%;
-  height: 100dvh;
+  min-height: 100dvh;
+  height: auto;
   margin: 0;
   padding: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 /* 背景画像用の要素 */
@@ -614,11 +636,12 @@ body {
 /* コンテナ */
 .container {
   width: 100%;
-  height: 100dvh;
+  min-height: 100dvh;
+  height: auto;
   padding: 10px 20px;
   padding-top: calc(var(--app-header-height) + 10px);
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   box-sizing: border-box;
 }
 
@@ -626,6 +649,7 @@ body {
 .container.learning-mode {
   padding: 10px;
   padding-top: calc(var(--app-header-height) + 10px);
+  padding-bottom: calc(var(--app-nav-height) + 12px);
 }
 
 /* 共通ヘッダー（TOP／学習画面） */
@@ -638,7 +662,9 @@ body {
   padding: 10px 10px 4px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.38);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
-  background-color: rgba(0, 0, 0, 0.1);
+  background-color: rgba(255, 255, 255, 0.25);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   box-sizing: border-box;
 }
 
@@ -752,30 +778,17 @@ body {
   margin: 10px 0;
 }
 
-/* 初期画面のスクロール領域（Category以降） */
+/* 初期画面のスクロール領域（Category以降）。ページ（body）スクロールに任せる */
 #screen1 .top-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+  display: block;
   min-height: 0;
   padding-bottom: 0;
 }
 
 #screen1 .screen1-scroll {
-  flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
+  overflow: visible;
   padding-bottom: 8px;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-#screen1 .screen1-scroll::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
 }
 
 /* 初期画面のListセクション */
@@ -1264,24 +1277,42 @@ tr:last-child td {
   background-color: #a5d6a7;
 }
 
-/* スタートボタン */
+/* START下端ドック（半透明白＋ぼかし。ボタンの後ろに回す） */
+.start-button-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 150;
+  padding: 10px 20px;
+  box-sizing: border-box;
+  background-color: rgba(255, 255, 255, 0.25);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+/* スタートボタン（ドック内） */
 .start-button {
+  display: block;
   width: 100%;
   padding: 15px;
   font-size: 18px;
   font-weight: bold;
-  background-color: #4CAF50;
   color: #fff;
   border: none;
   border-radius: 8px;
   cursor: pointer;
-  margin-top: 10px;
-  margin-bottom: 10px;
-  flex-shrink: 0;
-  position: sticky;
-  bottom: 0;
-  z-index: 100;
+  margin: 0;
+  position: relative;
+  z-index: 1;
   background-color: #4CAF50;
+  box-sizing: border-box;
+}
+
+/* START表示中はTOP本文がドックに隠れないよう下余白 */
+#screen1:has(#startButtonDock[style*="display: block"]) {
+  padding-bottom: calc(var(--app-start-height) + 28px);
 }
 
 /* スタートボタン押下時 */
@@ -1718,7 +1749,7 @@ tr:last-child td {
   min-height: 1.5em;
 }
 
-/* ナビゲーションバー（480pxより大きい画面） */
+/* ナビゲーションバー（画面下端固定） */
 .navigation-bar {
   display: flex;
   justify-content: space-around;  /* 等間隔配置 */
@@ -1726,11 +1757,14 @@ tr:last-child td {
   padding: 10px 20px;  /* 上下10px、左右20px */
   width: 480px;  /* 中央480px幅 */
   max-width: 480px;
-  margin: 0 auto;  /* 中央配置 */
+  margin: 0;
   flex-shrink: 0;
-  position: sticky;
+  position: fixed;
+  left: 50%;
   bottom: 0;
-  z-index: 100;
+  transform: translateX(-50%);
+  z-index: 150;
+  box-sizing: border-box;
 }
 
 /* ナビゲーションバーの白背景（横一杯） */
@@ -2326,14 +2360,14 @@ body:has(#screen2.active) .login-button {
 /* 初期画面 */
 #screen1 {
   display: none;
-  height: 100%;
-  overflow: hidden;
+  height: auto;
+  overflow: visible;
   flex-direction: column;
 }
 
 /* 初期画面表示時 */
 #screen1.active {
-  display: flex;
+  display: block;
 }
 
 /* 学習画面のセクション間隔を調整 */
@@ -2468,8 +2502,8 @@ body:has(#screen2.active) .login-button {
 /* 学習画面 */
 #screen2 {
   display: none;
-  height: 100%;
-  overflow: hidden;
+  height: auto;
+  overflow: visible;
   flex-direction: column;
   min-width: 0;
   width: 100%;
@@ -2477,35 +2511,19 @@ body:has(#screen2.active) .login-button {
 
 /* 学習画面表示時 */
 #screen2.active {
-  display: flex;
+  display: block;
 }
 
-/* 学習画面のコンテンツエリア */
+/* 学習画面のコンテンツエリア（縦スクロールはページ＝body に任せる） */
 #screen2 .learning-content {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  display: flex;
-  flex-direction: column;
+  display: block;
   min-width: 0;
   min-height: 0;
   max-height: none;
-  -webkit-overflow-scrolling: touch;
+  overflow: visible;
 }
 
-/* 学習完了時：learning-content はスクロール可だがバーは非表示（Listのバーは別途表示） */
-#screen2.is-learning-completed .learning-content {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-#screen2.is-learning-completed .learning-content::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
-}
-
-/* 学習完了時のList（note下） */
+/* 学習完了時のList（note下）※内側スクロールのみ残す */
 #screen2 .completion-list-section {
   margin-top: 8px;
   margin-bottom: 12px;
@@ -2959,6 +2977,10 @@ body:has(#screen2.active) .login-button {
     font-size: 16px !important;
   }
 
+  .start-button-dock {
+    padding: 10px !important;
+  }
+
   /* 学習画面のタイトル(480px) */
   .app-header-title {
     font-size: 13px !important;
@@ -3122,7 +3144,10 @@ body:has(#screen2.active) .login-button {
     padding: 10px 20px !important;
     width: 100% !important;  /* 横一杯に */
     max-width: none !important;  /* 最大幅の制限を解除 */
-    margin: 0 !important;  /* 中央配置を解除 */
+    margin: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    transform: none !important;
   }
 
   /* ナビゲーションバーの白背景を横一杯に（480px以下） */
