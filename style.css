@@ -1747,6 +1747,20 @@ tr:last-child td {
 #screen2 .note-text.note-empty {
   background-color: rgba(255, 255, 255, 0.35);
   min-height: 1.5em;
+  cursor: default;
+}
+
+/* 学習画面：note情報あり（閉じ） */
+#screen2 .note-text.note-collapsed {
+  cursor: pointer;
+  color: #555;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 学習画面：note情報あり（開き） */
+#screen2 .note-text.note-expanded {
+  cursor: pointer;
 }
 
 /* ナビゲーションバー（画面下端固定） */

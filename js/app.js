@@ -15,6 +15,9 @@ var stopwatchInterval = null;
 var stopwatchElapsed = 0;
 var isStopwatchRunning = false;
 var isAnswerShown = false;
+var isNoteExpanded = false; // note 本文を開いているか（情報あり時のみ意味を持つ）
+var noteClickTimer = null; // note シングル／ダブルクリック判別用
+var NOTE_COLLAPSED_HINT = 'メモあり（タップで表示）';
 var userEmail = null; // ユーザーのメールアドレス
 var modalCurrentIndex = 0; // モーダル内の現在のインデックス
 var retryQuestionIndices = []; // 再チャレンジする問題のインデックスを保存
@@ -4644,6 +4647,8 @@ function displayQuestion() {
   var noteSection = document.getElementById('noteSection');
   if (answerTextDisplay) answerTextDisplay.style.display = 'none';
   if (noteSection) noteSection.style.display = 'none';
+  isNoteExpanded = false;
+  clearNoteClickTimer();
   isAnswerShown = false;
   
   // ストップウォッチ：通常は即開始。リスニング（テキスト出題）は出題音声終了後
@@ -4786,19 +4791,10 @@ function showAnswer() {
     answerTextDisplay.style.display = 'block';
   }
   
-  // noteを常に表示（空欄時は背景をより透明にして空欄を示す）
-  var noteText = document.getElementById('noteText');
+  // noteを常に表示（空欄／閉じ／開き。問題切替・Ans直後は閉じ）
+  isNoteExpanded = false;
+  applyLearningNoteDisplay(item);
   var noteSection = document.getElementById('noteSection');
-  var noteValue = item.note || '';
-  var isNoteEmpty = !String(noteValue).trim();
-  if (noteText) {
-    noteText.textContent = noteValue;
-    if (isNoteEmpty) {
-      noteText.classList.add('note-empty');
-    } else {
-      noteText.classList.remove('note-empty');
-    }
-  }
   if (noteSection) noteSection.style.display = 'block';
   
   isAnswerShown = true;
@@ -4829,8 +4825,73 @@ function showAnswer() {
     playFieldAudio('answer');
   }
   
-  // 出題／解答／note のダブルクリック編集を有効化
+  // 出題／解答／note の編集・note開閉を有効化
   setupFieldEditDoubleClick();
+}
+
+/**
+ * note シングルクリック判別タイマーをクリア
+ */
+function clearNoteClickTimer() {
+  if (noteClickTimer) {
+    clearTimeout(noteClickTimer);
+    noteClickTimer = null;
+  }
+}
+
+/**
+ * 学習画面の note 表示を反映（空欄／閉じ／開き）
+ * @param {Object} item
+ */
+function applyLearningNoteDisplay(item) {
+  var noteText = document.getElementById('noteText');
+  if (!noteText) {
+    return;
+  }
+  var noteValue = item && item.note != null ? String(item.note) : '';
+  var isNoteEmpty = !noteValue.trim();
+  
+  noteText.classList.remove('note-empty', 'note-collapsed', 'note-expanded');
+  
+  if (isNoteEmpty) {
+    isNoteExpanded = false;
+    noteText.textContent = '';
+    noteText.classList.add('note-empty');
+    noteText.setAttribute('aria-expanded', 'false');
+    noteText.removeAttribute('role');
+    noteText.tabIndex = -1;
+    return;
+  }
+  
+  noteText.setAttribute('role', 'button');
+  noteText.tabIndex = 0;
+  if (isNoteExpanded) {
+    noteText.textContent = noteValue;
+    noteText.classList.add('note-expanded');
+    noteText.setAttribute('aria-expanded', 'true');
+  } else {
+    noteText.textContent = NOTE_COLLAPSED_HINT;
+    noteText.classList.add('note-collapsed');
+    noteText.setAttribute('aria-expanded', 'false');
+  }
+}
+
+/**
+ * note の開閉をトグル（情報あり時のみ）
+ */
+function toggleLearningNoteExpanded() {
+  if (isUpdateMode) {
+    return;
+  }
+  if (!isAnswerShown) {
+    return;
+  }
+  var item = currentCategoryData[currentQuestionIndex];
+  if (!item || !String(item.note || '').trim()) {
+    return;
+  }
+  isNoteExpanded = !isNoteExpanded;
+  applyLearningNoteDisplay(item);
 }
 
 // 学習画面の項目編集用ダブルクリックを設定
@@ -4851,8 +4912,12 @@ function setupFieldEditDoubleClick() {
   
   var noteText = document.getElementById('noteText');
   if (noteText) {
+    noteText.removeEventListener('click', handleNoteClick);
     noteText.removeEventListener('dblclick', handleNoteDoubleClick);
+    noteText.removeEventListener('keydown', handleNoteKeydown);
+    noteText.addEventListener('click', handleNoteClick);
     noteText.addEventListener('dblclick', handleNoteDoubleClick);
+    noteText.addEventListener('keydown', handleNoteKeydown);
   }
 }
 
@@ -4868,10 +4933,46 @@ function handleAnswerDoubleClick(e) {
   startUpdateMode('answer');
 }
 
+function handleNoteClick(e) {
+  if (isUpdateMode || !isAnswerShown) {
+    return;
+  }
+  var item = currentCategoryData[currentQuestionIndex];
+  if (!item || !String(item.note || '').trim()) {
+    return;
+  }
+  // ダブルクリック判別のため遅延トグル（開き中の編集と競合しない）
+  clearNoteClickTimer();
+  noteClickTimer = setTimeout(function() {
+    noteClickTimer = null;
+    toggleLearningNoteExpanded();
+  }, 280);
+}
+
 function handleNoteDoubleClick(e) {
   e.preventDefault();
   e.stopPropagation();
+  clearNoteClickTimer();
+  if (!isNoteExpanded) {
+    return;
+  }
+  var item = currentCategoryData[currentQuestionIndex];
+  if (!item || !String(item.note || '').trim()) {
+    return;
+  }
   startUpdateMode('note');
+}
+
+function handleNoteKeydown(e) {
+  if (e.key !== 'Enter' && e.key !== ' ') {
+    return;
+  }
+  var item = currentCategoryData[currentQuestionIndex];
+  if (!item || !String(item.note || '').trim()) {
+    return;
+  }
+  e.preventDefault();
+  toggleLearningNoteExpanded();
 }
 
 /**
@@ -8484,16 +8585,9 @@ function refreshEditedFieldDisplay(item, text) {
   }
   
   if (updateDisplayTarget === 'note') {
+    applyLearningNoteDisplay(item);
     var noteText = document.getElementById('noteText');
-    var noteValue = item.note || '';
-    var isNoteEmpty = !String(noteValue).trim();
     if (noteText) {
-      noteText.textContent = noteValue;
-      if (isNoteEmpty) {
-        noteText.classList.add('note-empty');
-      } else {
-        noteText.classList.remove('note-empty');
-      }
       noteText.style.display = '';
     }
   }
