@@ -8,7 +8,8 @@ var learningStartTime = null;
 var learningTimeInterval = null;
 var dailyStudyCountDateCheckInterval = null;
 var todayStudiedItemCount = 0; // LastDate が今日の問題数（シート集計＋Ans時の楽観更新）
-var todayStudiedCountDate = ''; // todayStudiedItemCount が対応する yyyy-mm-dd
+var todayStudiedAnsCount = 0; // 今日の Ans 押下回数（DailyStudyCount 合計＋楽観更新）
+var todayStudiedCountDate = ''; // todayStudied* が対応する yyyy-mm-dd
 var stopwatchStartTime = null;
 var stopwatchInterval = null;
 var stopwatchElapsed = 0;
@@ -449,6 +450,7 @@ function loadCategories(options) {
         
         categories = data.categories;
         applyTodayStudiedItemCount(data.today_item_count, data.today_ymd || getTodayYmdLocal());
+        applyTodayStudiedAnsCount(data.today_ans_count, data.today_ymd || getTodayYmdLocal());
         // HOME直後など、表示中Listの学習日が新しい場合はそちらを優先して上書き
         if (quiet && currentCategoryNo != null && currentCategoryNo !== '' &&
             currentCategoryData && currentCategoryData.length > 0) {
@@ -2380,6 +2382,7 @@ function mergeAllStudyItemsWithMemory(items, extraItems) {
       note: mem.note != null ? mem.note : it.note,
       retry_count: mem.retry_count != null ? mem.retry_count : it.retry_count,
       total_study_count: mem.total_study_count != null ? mem.total_study_count : it.total_study_count,
+      daily_study_count: mem.daily_study_count != null ? mem.daily_study_count : it.daily_study_count,
       duration_old: mem.duration_old != null ? mem.duration_old : it.duration_old,
       duration: mem.duration != null ? mem.duration : it.duration,
       last_date: mem.last_date != null ? mem.last_date : it.last_date
@@ -4354,6 +4357,21 @@ function applyTodayStudiedItemCount(count, dateYmd) {
 }
 
 /**
+ * 今日の Ans 押下回数を反映
+ * @param {*} count
+ * @param {string} [dateYmd]
+ */
+function applyTodayStudiedAnsCount(count, dateYmd) {
+  todayStudiedCountDate = dateYmd || getTodayYmdLocal();
+  var n = Math.floor(Number(count));
+  if (isNaN(n) || n < 0) {
+    n = 0;
+  }
+  todayStudiedAnsCount = n;
+  updateDailyStudyStatsDisplay();
+}
+
+/**
  * 表示用の今日学習件数（日付跨ぎなら 0）
  * @returns {number}
  */
@@ -4362,6 +4380,17 @@ function getTodayStudiedItemCountForDisplay() {
     return 0;
   }
   return Math.max(0, Math.floor(Number(todayStudiedItemCount) || 0));
+}
+
+/**
+ * 表示用の今日 Ans 回数（日付跨ぎなら 0）
+ * @returns {number}
+ */
+function getTodayStudiedAnsCountForDisplay() {
+  if (todayStudiedCountDate !== getTodayYmdLocal()) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(Number(todayStudiedAnsCount) || 0));
 }
 
 /**
@@ -4421,7 +4450,7 @@ function getVisibleCategoriesStats() {
 }
 
 /**
- * 画面上の学習統計表示を更新（例：14問　選択：8/12カテゴリ・50/320問）
+ * 画面上の学習統計表示を更新（例：14問｜18問　選択：8/12カテゴリ・50/320問）
  */
 function updateDailyStudyStatsDisplay() {
   var el = document.getElementById('learningItemCount');
@@ -4429,10 +4458,11 @@ function updateDailyStudyStatsDisplay() {
     return;
   }
   var itemCount = getTodayStudiedItemCountForDisplay();
+  var ansCount = getTodayStudiedAnsCountForDisplay();
   var totalCategories = getTotalSheetCategoryCount();
   var totalQuestions = getTotalSheetQuestionCount();
   var visibleStats = getVisibleCategoriesStats();
-  el.textContent = itemCount + '問　選択：' +
+  el.textContent = itemCount + '問｜' + ansCount + '問　選択：' +
     visibleStats.categoryCount + '/' + totalCategories + 'カテゴリ・' +
     visibleStats.questionCount + '/' + totalQuestions + '問';
 }
@@ -4444,6 +4474,7 @@ function syncDailyStudyStatsDisplay() {
   var today = getTodayYmdLocal();
   if (todayStudiedCountDate && todayStudiedCountDate !== today) {
     todayStudiedItemCount = 0;
+    todayStudiedAnsCount = 0;
     todayStudiedCountDate = today;
     updateDailyStudyStatsDisplay();
     if (userEmail) {
@@ -4483,19 +4514,23 @@ function isItemLastDateToday(item) {
 }
 
 /**
- * Ans 時：LastDate が今日でなかった問題なら今日学習件数を +1（楽観更新）
+ * Ans 時：今日の学習統計を楽観更新（A=初回のみ+1、B=常に+1。LastDate 更新前に呼ぶ）
  * @param {Object} item
  */
 function recordDailyStudyStatsOnAns(item) {
-  if (!item || isItemLastDateToday(item)) {
+  if (!item) {
     return;
   }
   var today = getTodayYmdLocal();
   if (todayStudiedCountDate !== today) {
     todayStudiedCountDate = today;
     todayStudiedItemCount = 0;
+    todayStudiedAnsCount = 0;
   }
-  todayStudiedItemCount += 1;
+  todayStudiedAnsCount += 1;
+  if (!isItemLastDateToday(item)) {
+    todayStudiedItemCount += 1;
+  }
   updateDailyStudyStatsDisplay();
 }
 
@@ -4779,7 +4814,7 @@ function showAnswer() {
   // セッション回答件数（同一問題は1回のみ。完了画面では加算しない）
   recordSessionAnsweredOnAns(item);
 
-  // TotalStudyCount / Duration / LastDate をメモリ即反映 → 画面メタ更新 → GASは1リクエストで非同期
+  // TotalStudyCount / DailyStudyCount / Duration / LastDate をメモリ即反映 → 画面メタ更新 → GASは1リクエストで非同期
   persistAnsStudyStatsAsync(item, stopwatchElapsed);
   updateLearningMetaDisplay(item, 'learningMeta');
   
@@ -5314,7 +5349,7 @@ function updateItemFieldsAsync(item, fields, onSuccess, onFinalError) {
 }
 
 /**
- * Ans押下時: TotalStudyCount / Duration_old / Duration / LastDate をメモリ更新し、1リクエストで保存
+ * Ans押下時: TotalStudyCount / DailyStudyCount / Duration_old / Duration / LastDate をメモリ更新し、1リクエストで保存
  * @param {Object} item
  * @param {number} elapsedMs
  */
@@ -5323,6 +5358,11 @@ function persistAnsStudyStatsAsync(item, elapsedMs) {
 
   var nextCount = getRetryCountNumber(item.total_study_count) + 1;
   item.total_study_count = nextCount;
+
+  var nextDaily = isItemLastDateToday(item)
+    ? (getRetryCountNumber(item.daily_study_count) + 1)
+    : 1;
+  item.daily_study_count = nextDaily;
 
   // 更新前の Duration（移動平均）を Duration_old へコピー（空欄もコピー）
   var previousDuration = (item.duration === null || item.duration === undefined) ? '' : item.duration;
@@ -5339,6 +5379,7 @@ function persistAnsStudyStatsAsync(item, elapsedMs) {
 
   updateItemFieldsAsync(item, {
     total_study_count: nextCount,
+    daily_study_count: nextDaily,
     duration_old: previousDuration,
     duration: duration,
     last_date: now
@@ -5781,19 +5822,81 @@ function refreshAdvanceNavControls() {
 }
 
 /**
+ * Audio に紐づく Object URL を解放する
+ * @param {HTMLAudioElement|null} audio
+ */
+function revokeAudioObjectUrl(audio) {
+  if (!audio || !audio._objectUrl) {
+    return;
+  }
+  try {
+    URL.revokeObjectURL(audio._objectUrl);
+  } catch (e) {
+    // ignore
+  }
+  audio._objectUrl = null;
+}
+
+/**
+ * 現在の Audio 要素を停止し、Object URL／src を解放する
+ */
+function releaseCurrentAudioElement() {
+  if (!currentAudio) {
+    return;
+  }
+  var audio = currentAudio;
+  currentAudio = null;
+  try {
+    audio.pause();
+    audio.currentTime = 0;
+  } catch (e) {
+    // ignore
+  }
+  revokeAudioObjectUrl(audio);
+  try {
+    audio.removeAttribute('src');
+    audio.load();
+  } catch (e) {
+    // ignore
+  }
+}
+
+/**
+ * base64 文字列を Uint8Array に変換する
+ * @param {string} base64
+ * @returns {Uint8Array}
+ */
+function decodeBase64ToUint8Array(base64) {
+  var raw = String(base64 || '').replace(/\s/g, '');
+  var binary = atob(raw);
+  var len = binary.length;
+  var bytes = new Uint8Array(len);
+  for (var i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * base64 mp3 から Blob URL 付き Audio を生成する（モバイルの data URI ノイズ回避）
+ * @param {string} audioContent - base64
+ * @returns {HTMLAudioElement}
+ */
+function createMp3AudioFromBase64(audioContent) {
+  var bytes = decodeBase64ToUint8Array(audioContent);
+  var blob = new Blob([bytes], { type: 'audio/mpeg' });
+  var objectUrl = URL.createObjectURL(blob);
+  var audio = new Audio(objectUrl);
+  audio._objectUrl = objectUrl;
+  return audio;
+}
+
+/**
  * 再生中の音声を停止し、欄の再生ボタン状態を戻す
  */
 function stopCurrentAudioPlayback() {
   var prevField = activePlayField;
-  if (currentAudio) {
-    try {
-      currentAudio.pause();
-      currentAudio.currentTime = 0;
-    } catch (e) {
-      // ignore
-    }
-    currentAudio = null;
-  }
+  releaseCurrentAudioElement();
   activePlayField = null;
   if (prevField) {
     var prevBtn = getFieldPlayButton(prevField);
@@ -6294,17 +6397,9 @@ function playAudioFromCache(audioData, fieldType, source) {
   }
   
   try {
-    if (currentAudio) {
-      try {
-        currentAudio.pause();
-        currentAudio.currentTime = 0;
-      } catch (e) {
-        // ignore
-      }
-      currentAudio = null;
-    }
+    releaseCurrentAudioElement();
     
-    var audio = new Audio('data:audio/mp3;base64,' + audioData.audioContent);
+    var audio = createMp3AudioFromBase64(audioData.audioContent);
     currentAudio = audio;
     activePlayField = fieldType || null;
     updateFieldPlayButtons();
@@ -6312,7 +6407,7 @@ function playAudioFromCache(audioData, fieldType, source) {
     audio.addEventListener('ended', function() {
       if (currentAudio !== audio) return;
       activePlayField = null;
-      currentAudio = null;
+      releaseCurrentAudioElement();
       updateFieldPlayButtons();
       if (fieldType === 'question') releaseListeningAnsGate();
     });
@@ -6320,7 +6415,7 @@ function playAudioFromCache(audioData, fieldType, source) {
     audio.addEventListener('error', function() {
       if (currentAudio !== audio) return;
       activePlayField = null;
-      currentAudio = null;
+      releaseCurrentAudioElement();
       updateFieldPlayButtons();
       if (fieldType === 'question') releaseListeningAnsGate();
     });
@@ -6329,7 +6424,7 @@ function playAudioFromCache(audioData, fieldType, source) {
       showError('音声の再生に失敗しました: ' + error.toString());
       if (currentAudio === audio) {
         activePlayField = null;
-        currentAudio = null;
+        releaseCurrentAudioElement();
         updateFieldPlayButtons();
       }
       if (fieldType === 'question') releaseListeningAnsGate();
@@ -6337,7 +6432,7 @@ function playAudioFromCache(audioData, fieldType, source) {
   } catch (error) {
     showError('音声の再生に失敗しました: ' + error.toString());
     activePlayField = null;
-    currentAudio = null;
+    releaseCurrentAudioElement();
     updateFieldPlayButtons();
     if (fieldType === 'question') releaseListeningAnsGate();
   }
@@ -6466,56 +6561,7 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
       if (item && sheetField) {
         saveDriveAudioAsync(item, sheetField, voiceGender || 'female', speed || 'fast', data.audioContent);
       }
-      showAudioSourceDebug('TTS');
-      
-      try {
-        if (currentAudio) {
-          try {
-            currentAudio.pause();
-            currentAudio.currentTime = 0;
-          } catch (e) {
-            // ignore
-          }
-          currentAudio = null;
-        }
-        
-        var audio = new Audio('data:audio/mp3;base64,' + data.audioContent);
-        currentAudio = audio;
-        activePlayField = fieldType || null;
-        updateFieldPlayButtons();
-        
-        audio.addEventListener('ended', function() {
-          if (currentAudio !== audio) return;
-          activePlayField = null;
-          currentAudio = null;
-          updateFieldPlayButtons();
-          if (fieldType === 'question') releaseListeningAnsGate();
-        });
-        
-        audio.addEventListener('error', function() {
-          if (currentAudio !== audio) return;
-          activePlayField = null;
-          currentAudio = null;
-          updateFieldPlayButtons();
-          if (fieldType === 'question') releaseListeningAnsGate();
-        });
-        
-        audio.play().catch(function(error) {
-          showError('音声の再生に失敗しました: ' + error.toString());
-          if (currentAudio === audio) {
-            activePlayField = null;
-            currentAudio = null;
-            updateFieldPlayButtons();
-          }
-          if (fieldType === 'question') releaseListeningAnsGate();
-        });
-      } catch (error) {
-        showError('音声の再生に失敗しました: ' + error.toString());
-        activePlayField = null;
-        currentAudio = null;
-        updateFieldPlayButtons();
-        if (fieldType === 'question') releaseListeningAnsGate();
-      }
+      playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'TTS');
     } else {
       activePlayField = null;
       updateFieldPlayButtons();
@@ -7616,14 +7662,7 @@ function loadCategoryDataAndStartLearning(categoryNo, forceAllQuestions) {
     return;
   }
   
-  if (currentAudio) {
-    try {
-      currentAudio.pause();
-    } catch (e) {
-      // ignore
-    }
-    currentAudio = null;
-  }
+  releaseCurrentAudioElement();
   activePlayField = null;
   
   isCategoryTransitionInProgress = true;
