@@ -153,6 +153,12 @@ window.onload = function() {
   // 出題設定（入替え・リスニング）を読み込み
   loadPracticeSettings();
   
+  // 音声設定（声・速さ）を読み込み、メニュー表示に反映
+  loadAudioSettings();
+  
+  // 出題読み／解答読みトグルを読み込み
+  loadReadToggles();
+  
   // トグルボタンの初期状態を設定（リスニングON時は出題読みON固定・解答読みON）
   syncQuestionToggleForListeningMode();
   
@@ -1408,20 +1414,17 @@ function setupEventListeners() {
       return; // リスニング練習中はON固定
     }
     isQuestionToggleActive = !isQuestionToggleActive;
-    if (isQuestionToggleActive) {
-      this.classList.add('active');
-    } else {
-      this.classList.remove('active');
-    }
+    applyReadToggleButtonUi();
+    saveReadToggle('question', isQuestionToggleActive);
   });
   
   // 解答読みトグルボタン
   document.getElementById('answerToggleButton').addEventListener('click', function() {
     isAnswerToggleActive = !isAnswerToggleActive;
-    if (isAnswerToggleActive) {
-      this.classList.add('active');
-    } else {
-      this.classList.remove('active');
+    applyReadToggleButtonUi();
+    // リスニング中の切替は一時的（OFF復帰でON前に戻す）のため保存しない
+    if (!isListeningModeEnabled()) {
+      saveReadToggle('answer', isAnswerToggleActive);
     }
   });
   
@@ -2958,9 +2961,75 @@ function setPracticeSetting(setting, isOn) {
 }
 
 /**
+ * 出題読み／解答読みトグルの localStorage キー
+ * @param {'question'|'answer'} type
+ * @returns {string}
+ */
+function getReadToggleStorageKey(type) {
+  return type === 'answer' ? 'readToggle_answer' : 'readToggle_question';
+}
+
+/**
+ * 出題読み／解答読みトグルを保存
+ * @param {'question'|'answer'} type
+ * @param {boolean} isOn
+ */
+function saveReadToggle(type, isOn) {
+  try {
+    localStorage.setItem(getReadToggleStorageKey(type), isOn ? 'on' : 'off');
+  } catch (e) {
+    // localStorage が使えない場合は無視
+  }
+}
+
+/**
+ * 出題読み／解答読みトグルを取得（未設定は off）
+ * @param {'question'|'answer'} type
+ * @returns {boolean}
+ */
+function getReadToggle(type) {
+  try {
+    return localStorage.getItem(getReadToggleStorageKey(type)) === 'on';
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * 出題読み／解答読みトグルの見た目を現在値に合わせる（ロック状態は触らない）
+ */
+function applyReadToggleButtonUi() {
+  var questionToggleButton = document.getElementById('questionToggleButton');
+  var answerToggleButton = document.getElementById('answerToggleButton');
+  if (questionToggleButton) {
+    if (isQuestionToggleActive) {
+      questionToggleButton.classList.add('active');
+    } else {
+      questionToggleButton.classList.remove('active');
+    }
+  }
+  if (answerToggleButton) {
+    if (isAnswerToggleActive) {
+      answerToggleButton.classList.add('active');
+    } else {
+      answerToggleButton.classList.remove('active');
+    }
+  }
+}
+
+/**
+ * 出題読み／解答読みトグルを localStorage から読み込み
+ */
+function loadReadToggles() {
+  isQuestionToggleActive = getReadToggle('question');
+  isAnswerToggleActive = getReadToggle('answer');
+  applyReadToggleButtonUi();
+}
+
+/**
  * リスニング練習モードに応じて出題／解答読みトグルを同期する
  * ON時：出題読みはON固定、解答読みは切替時にON（以降は切り替え可能）
- * OFF時：固定解除し、それぞれON前の状態へ戻す
+ * OFF時：固定解除し、それぞれON前の状態へ戻す（localStorage の保存値は上書きしない）
  */
 function syncQuestionToggleForListeningMode() {
   var questionToggleButton = document.getElementById('questionToggleButton');
@@ -3011,22 +3080,13 @@ function syncQuestionToggleForListeningMode() {
     questionToggleButton.classList.remove('is-locked');
     questionToggleButton.removeAttribute('aria-disabled');
     questionToggleButton.title = '';
-    if (isQuestionToggleActive) {
-      questionToggleButton.classList.add('active');
-    } else {
-      questionToggleButton.classList.remove('active');
-    }
   }
   if (answerToggleButton) {
     answerToggleButton.classList.remove('is-locked');
     answerToggleButton.removeAttribute('aria-disabled');
     answerToggleButton.title = '';
-    if (isAnswerToggleActive) {
-      answerToggleButton.classList.add('active');
-    } else {
-      answerToggleButton.classList.remove('active');
-    }
   }
+  applyReadToggleButtonUi();
 }
 
 function refreshHomeListForPracticeSettings() {
