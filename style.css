@@ -2537,20 +2537,17 @@ body:has(#screen2.active) .login-button {
   overflow: visible;
 }
 
-/* 学習完了時のList（note下）※内側スクロールのみ残す */
+/* 学習完了時のList（note下）※TOPと同様、内側スクロールせずページ全体で見る */
 #screen2 .completion-list-section {
   margin-top: 8px;
   margin-bottom: 12px;
 }
 
 #screen2 .completion-list-container {
-  max-height: 40vh;
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
-  /* タブレット等：内側スクロールをページへ伝播させない */
-  overscroll-behavior: contain;
-  touch-action: pan-y;
+  max-height: none;
+  min-height: 0;
+  overflow: visible;
+  -webkit-overflow-scrolling: auto;
 }
 
 /* 学習画面のカテゴリ表示（全文折り返し） */

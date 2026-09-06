@@ -3994,26 +3994,18 @@ function getListUiConfig() {
 }
 
 /**
- * 完了Listの minHeight 上限（CSS max-height: 40vh と整合。これを超えると内側スクロールが無効化される）
- * @returns {number}
- */
-function getCompletionListMaxHeightPx() {
-  var vh = (typeof window !== 'undefined' && window.innerHeight) ? window.innerHeight : 0;
-  return Math.max(0, Math.floor(vh * 0.4));
-}
-
-/**
- * 完了List用 minHeight を 40vh 以下に丸める
+ * 完了Listの高さ維持用 minHeight を適用（ページスクロール方式のため上限は設けない）
+ * @param {HTMLElement} listContainerEl
  * @param {number} heightPx
- * @returns {number}
  */
-function clampCompletionListMinHeightPx(heightPx) {
-  var n = Math.max(0, Math.floor(Number(heightPx) || 0));
-  var maxPx = getCompletionListMaxHeightPx();
-  if (maxPx <= 0) {
-    return n;
+function applyCompletionListMinHeight(listContainerEl, heightPx) {
+  if (!listContainerEl) {
+    return;
   }
-  return Math.min(n, maxPx);
+  var n = Math.max(0, Math.floor(Number(heightPx) || 0));
+  if (n > 0) {
+    listContainerEl.style.minHeight = n + 'px';
+  }
 }
 
 // リストを表示
@@ -4025,10 +4017,8 @@ function displayList() {
   var listContainerEl = ui.containerId ? document.getElementById(ui.containerId) : null;
   var pinnedMinHeight = 0;
   if (isLearningCompleted && listContainerEl) {
-    pinnedMinHeight = clampCompletionListMinHeightPx(listContainerEl.offsetHeight);
-    if (pinnedMinHeight > 0) {
-      listContainerEl.style.minHeight = pinnedMinHeight + 'px';
-    }
+    pinnedMinHeight = Math.max(0, Math.floor(listContainerEl.offsetHeight || 0));
+    applyCompletionListMinHeight(listContainerEl, pinnedMinHeight);
   }
   
   tableBody.innerHTML = '';
@@ -4148,13 +4138,9 @@ function displayList() {
   
   if (isLearningCompleted) {
     // 完了画面では List 高さを下げない（解除すると List〜ナビ間が一度潰れてから戻る）
-    // ただし minHeight が max-height(40vh) を超えると内側スクロールが無効になるため上限で抑える
     if (listContainerEl) {
       var afterHeight = listContainerEl.offsetHeight;
-      var keepHeight = clampCompletionListMinHeightPx(Math.max(pinnedMinHeight || 0, afterHeight || 0));
-      if (keepHeight > 0) {
-        listContainerEl.style.minHeight = keepHeight + 'px';
-      }
+      applyCompletionListMinHeight(listContainerEl, Math.max(pinnedMinHeight || 0, afterHeight || 0));
       bindCompletionListImagesToKeepScroll(listContainerEl);
     }
     updateNavAnswerButton();
