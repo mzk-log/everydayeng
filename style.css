@@ -2548,6 +2548,9 @@ body:has(#screen2.active) .login-button {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  /* タブレット等：内側スクロールをページへ伝播させない */
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 /* 学習画面のカテゴリ表示（全文折り返し） */
