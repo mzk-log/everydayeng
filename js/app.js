@@ -102,6 +102,384 @@ function buildGasPostUrl() {
   return WEB_APP_URL + '?' + params.toString();
 }
 
+// ========================================
+// ユーザー設定の端末間同期（Settings / Drive）
+// ========================================
+var userSettingsSyncTimer = null;
+var userSettingsSyncInFlight = false;
+var userSettingsSyncQueued = false;
+var userSettingsBgUploadPending = false;
+var userSettingsInitialSyncDone = false;
+var userSettingsApplyingFromServer = false;
+
+/**
+ * 背景 Drive ファイルIDの localStorage キー
+ * @returns {string}
+ */
+function getSettingsBgDriveFileIdKey() {
+  var email = userEmail || localStorage.getItem('userEmail') || '';
+  return 'settingsBgDriveFileId:' + String(email);
+}
+
+function getStoredSettingsBgDriveFileId() {
+  try {
+    return localStorage.getItem(getSettingsBgDriveFileIdKey()) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function setStoredSettingsBgDriveFileId(fileId) {
+  try {
+    var key = getSettingsBgDriveFileIdKey();
+    if (fileId) {
+      localStorage.setItem(key, String(fileId));
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+/**
+ * 現在の localStorage から同期用 settings オブジェクトを組み立てる
+ * @returns {Object}
+ */
+function buildUserSettingsPayloadFromLocal() {
+  var customBg = '';
+  try {
+    customBg = localStorage.getItem('customBackgroundImage') || '';
+  } catch (e) {
+    customBg = '';
+  }
+  var brightness = 'bright';
+  try {
+    var b = localStorage.getItem('backgroundBrightness');
+    if (b === 'dark' || b === 'bright') {
+      brightness = b;
+    }
+  } catch (e2) {
+    // ignore
+  }
+
+  var background = {
+    type: 'default',
+    presetPath: '',
+    driveFileId: getStoredSettingsBgDriveFileId(),
+    brightness: brightness
+  };
+  if (customBg && customBg.indexOf('img/bg/') >= 0) {
+    background.type = 'preset';
+    background.presetPath = customBg.indexOf('img/bg/') === 0
+      ? customBg
+      : (customBg.match(/img\/bg\/[^"']+/) ? customBg.match(/img\/bg\/[^"']+/)[0] : customBg);
+  } else if (customBg && customBg.indexOf('data:') === 0) {
+    background.type = 'upload';
+  } else if (background.driveFileId) {
+    background.type = 'upload';
+  }
+
+  var visibleNos = getSavedVisibleCategoryNos();
+
+  return {
+    background: background,
+    audio: {
+      voice_question: getAudioVoice('question'),
+      voice_answer: getAudioVoice('answer'),
+      speed_question: getAudioSpeed('question'),
+      speed_answer: getAudioSpeed('answer')
+    },
+    visibleCategoryNos: visibleNos,
+    practice: {
+      questionMethod: getQuestionMethod(),
+      swapQA: isSwapQAEnabled() ? 'on' : 'off',
+      listeningMode: isListeningModeEnabled() ? 'on' : 'off'
+    },
+    readToggle: {
+      question: getReadToggle('question') ? 'on' : 'off',
+      answer: getReadToggle('answer') ? 'on' : 'off'
+    }
+  };
+}
+
+/**
+ * サーバ settings を localStorage / UI に適用
+ * @param {Object} settings
+ * @param {string} [imageContent]
+ * @param {string} [mimeType]
+ */
+function applyUserSettingsFromServer(settings, imageContent, mimeType) {
+  if (!settings || typeof settings !== 'object') {
+    return;
+  }
+  userSettingsApplyingFromServer = true;
+  try {
+    applyUserSettingsFromServerBody_(settings, imageContent, mimeType);
+  } finally {
+    userSettingsApplyingFromServer = false;
+  }
+}
+
+/**
+ * @param {Object} settings
+ * @param {string} [imageContent]
+ * @param {string} [mimeType]
+ */
+function applyUserSettingsFromServerBody_(settings, imageContent, mimeType) {
+  var bg = settings.background || {};
+  var brightness = (bg.brightness === 'dark') ? 'dark' : 'bright';
+  try {
+    localStorage.setItem('backgroundBrightness', brightness);
+  } catch (e) {
+    // ignore
+  }
+
+  if (bg.type === 'preset' && bg.presetPath) {
+    try {
+      localStorage.setItem('customBackgroundImage', String(bg.presetPath));
+    } catch (e2) {
+      // ignore
+    }
+    setStoredSettingsBgDriveFileId('');
+    userSettingsBgUploadPending = false;
+  } else if (bg.type === 'upload') {
+    if (imageContent) {
+      var mime = mimeType || 'image/jpeg';
+      var dataUrl = 'data:' + mime + ';base64,' + String(imageContent).replace(/\s/g, '');
+      try {
+        localStorage.setItem('customBackgroundImage', dataUrl);
+      } catch (e3) {
+        console.warn('背景画像の localStorage 保存に失敗しました。');
+      }
+    }
+    setStoredSettingsBgDriveFileId(bg.driveFileId || '');
+    userSettingsBgUploadPending = false;
+  } else {
+    try {
+      localStorage.removeItem('customBackgroundImage');
+    } catch (e4) {
+      // ignore
+    }
+    setStoredSettingsBgDriveFileId('');
+    userSettingsBgUploadPending = false;
+  }
+  setBackgroundImage();
+
+  if (settings.audio) {
+    try {
+      if (settings.audio.voice_question) localStorage.setItem('audioVoice_question', settings.audio.voice_question);
+      if (settings.audio.voice_answer) localStorage.setItem('audioVoice_answer', settings.audio.voice_answer);
+      if (settings.audio.speed_question) localStorage.setItem('audioSpeed_question', settings.audio.speed_question);
+      if (settings.audio.speed_answer) localStorage.setItem('audioSpeed_answer', settings.audio.speed_answer);
+    } catch (e5) {
+      // ignore
+    }
+    loadAudioSettings();
+  }
+
+  if (Object.prototype.hasOwnProperty.call(settings, 'visibleCategoryNos')) {
+    if (settings.visibleCategoryNos == null) {
+      clearVisibleCategorySetting();
+    } else if (Array.isArray(settings.visibleCategoryNos)) {
+      saveVisibleCategoryNos(settings.visibleCategoryNos);
+    }
+  }
+
+  if (settings.practice) {
+    try {
+      if (settings.practice.questionMethod && QUESTION_METHOD_VALUES[settings.practice.questionMethod]) {
+        localStorage.setItem('practiceQuestionMethod', settings.practice.questionMethod);
+      }
+      if (settings.practice.swapQA === 'on' || settings.practice.swapQA === 'off') {
+        localStorage.setItem('practiceSwapQA', settings.practice.swapQA);
+      }
+      if (settings.practice.listeningMode === 'on' || settings.practice.listeningMode === 'off') {
+        localStorage.setItem('practiceListeningMode', settings.practice.listeningMode);
+      }
+    } catch (e6) {
+      // ignore
+    }
+    loadPracticeSettings();
+  }
+
+  if (settings.readToggle) {
+    try {
+      if (settings.readToggle.question === 'on' || settings.readToggle.question === 'off') {
+        localStorage.setItem('readToggle_question', settings.readToggle.question);
+      }
+      if (settings.readToggle.answer === 'on' || settings.readToggle.answer === 'off') {
+        localStorage.setItem('readToggle_answer', settings.readToggle.answer);
+      }
+    } catch (e7) {
+      // ignore
+    }
+    loadReadToggles();
+    syncQuestionToggleForListeningMode();
+  }
+}
+
+/**
+ * サーバへ設定を保存
+ * @param {Function} [onDone]
+ */
+function pushUserSettingsToServer(onDone) {
+  if (!userEmail) {
+    if (typeof onDone === 'function') onDone();
+    return;
+  }
+  if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
+    if (typeof onDone === 'function') onDone();
+    return;
+  }
+
+  var settings = buildUserSettingsPayloadFromLocal();
+  var params = new URLSearchParams();
+  params.append('action', 'saveUserSettings');
+  params.append('email', userEmail);
+  params.append('referer', window.location.origin || '');
+  params.append('settings', JSON.stringify(settings));
+
+  if (userSettingsBgUploadPending && settings.background && settings.background.type === 'upload') {
+    var customBg = '';
+    try {
+      customBg = localStorage.getItem('customBackgroundImage') || '';
+    } catch (e) {
+      customBg = '';
+    }
+    if (customBg.indexOf('data:') === 0) {
+      var comma = customBg.indexOf(',');
+      var meta = customBg.substring(5, comma > 0 ? comma : customBg.length);
+      var mime = meta.split(';')[0] || 'image/jpeg';
+      var b64 = comma > 0 ? customBg.substring(comma + 1) : '';
+      if (b64) {
+        params.append('backgroundImageContent', b64);
+        params.append('backgroundMimeType', mime);
+      }
+    }
+  }
+
+  fetch(buildGasPostUrl(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params
+  })
+  .then(function(response) {
+    if (!response.ok) {
+      throw new Error('ネットワークエラー: ' + response.status);
+    }
+    return response.json();
+  })
+  .then(function(data) {
+    if (!data || !data.success) {
+      throw new Error((data && data.error) || '設定の同期に失敗しました');
+    }
+    userSettingsBgUploadPending = false;
+    if (data.settings && data.settings.background) {
+      setStoredSettingsBgDriveFileId(data.settings.background.driveFileId || '');
+    }
+    if (typeof onDone === 'function') onDone(null, data);
+  })
+  .catch(function(error) {
+    console.warn('設定同期（保存）エラー:', error);
+    showError('設定の同期に失敗しました: ' + error.toString());
+    if (typeof onDone === 'function') onDone(error);
+  });
+}
+
+/**
+ * 設定変更後の同期をデバウンス予約
+ */
+function scheduleUserSettingsSync() {
+  if (!userEmail || !userSettingsInitialSyncDone || userSettingsApplyingFromServer) {
+    return;
+  }
+  if (userSettingsSyncTimer) {
+    clearTimeout(userSettingsSyncTimer);
+  }
+  userSettingsSyncTimer = setTimeout(function() {
+    userSettingsSyncTimer = null;
+    if (userSettingsSyncInFlight) {
+      userSettingsSyncQueued = true;
+      return;
+    }
+    userSettingsSyncInFlight = true;
+    pushUserSettingsToServer(function() {
+      userSettingsSyncInFlight = false;
+      if (userSettingsSyncQueued) {
+        userSettingsSyncQueued = false;
+        scheduleUserSettingsSync();
+      }
+    });
+  }, 600);
+}
+
+/**
+ * 起動時：サーバ設定を取得し適用。無ければ端末設定をアップロード
+ * @param {Function} [onDone]
+ */
+function syncUserSettingsWithServer(onDone) {
+  if (!userEmail) {
+    userSettingsInitialSyncDone = true;
+    if (typeof onDone === 'function') onDone();
+    return;
+  }
+  if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
+    userSettingsInitialSyncDone = true;
+    if (typeof onDone === 'function') onDone();
+    return;
+  }
+
+  var params = new URLSearchParams();
+  params.append('action', 'getUserSettings');
+  params.append('email', userEmail);
+  params.append('referer', window.location.origin || '');
+  params.append('knownDriveFileId', getStoredSettingsBgDriveFileId());
+
+  fetch(WEB_APP_URL + '?' + params.toString())
+  .then(function(response) {
+    if (!response.ok) {
+      throw new Error('ネットワークエラー: ' + response.status);
+    }
+    return response.json();
+  })
+  .then(function(data) {
+    if (!data || !data.success) {
+      throw new Error((data && data.error) || '設定の取得に失敗しました');
+    }
+    if (data.found && data.settings) {
+      applyUserSettingsFromServer(
+        data.settings,
+        data.backgroundImageContent || '',
+        data.backgroundMimeType || ''
+      );
+      userSettingsInitialSyncDone = true;
+      if (typeof onDone === 'function') onDone();
+      return;
+    }
+    // サーバ未登録：端末設定をブートストラップ
+    var localBg = '';
+    try {
+      localBg = localStorage.getItem('customBackgroundImage') || '';
+    } catch (e) {
+      localBg = '';
+    }
+    if (localBg.indexOf('data:') === 0) {
+      userSettingsBgUploadPending = true;
+    }
+    pushUserSettingsToServer(function() {
+      userSettingsInitialSyncDone = true;
+      if (typeof onDone === 'function') onDone();
+    });
+  })
+  .catch(function(error) {
+    console.warn('設定同期（取得）エラー:', error);
+    showError('設定の同期に失敗しました（端末の設定で続行）: ' + error.toString());
+    userSettingsInitialSyncDone = true;
+    if (typeof onDone === 'function') onDone(error);
+  });
+}
+
 
 // img/bgフォルダ内の背景画像ファイル一覧
 var BACKGROUND_IMAGE_FILES = [
@@ -212,8 +590,10 @@ function checkUserEmail() {
     // メールアドレスが保存されていない場合は入力画面を表示
     showEmailInputDialog();
   } else {
-    // メールアドレスが保存されている場合はカテゴリリストを読み込む
-    loadCategories();
+    // 設定同期後にカテゴリ一覧を読み込む
+    syncUserSettingsWithServer(function() {
+      loadCategories();
+    });
   }
 }
 
@@ -230,14 +610,17 @@ function showEmailInputDialog() {
     userEmail = email.trim();
     // localStorageに保存
     localStorage.setItem('userEmail', userEmail);
+    userSettingsInitialSyncDone = false;
     
     // ログイン成功時はエラーメッセージを自動削除
     clearErrorMessages();
 
     syncDailyStudyStatsDisplay();
     
-    // カテゴリリストを読み込む
-    loadCategories();
+    // 設定同期後にカテゴリリストを読み込む
+    syncUserSettingsWithServer(function() {
+      loadCategories();
+    });
   } else {
     // メールアドレスが入力されなかった場合は再度表示
     alert('メールアドレスは必須です。');
@@ -371,6 +754,7 @@ function setBackgroundBrightness(level, saveToStorage) {
   if (saveToStorage !== false) {
     try {
       localStorage.setItem('backgroundBrightness', level);
+      scheduleUserSettingsSync();
     } catch (e) {
       console.warn('明るさ設定の保存に失敗しました。');
     }
@@ -597,6 +981,7 @@ function saveVisibleCategoryNos(nos) {
         return String(no);
       }))
     );
+    scheduleUserSettingsSync();
   } catch (e) {
     console.warn('表示カテゴリ設定の保存に失敗しました。');
   }
@@ -608,6 +993,7 @@ function saveVisibleCategoryNos(nos) {
 function clearVisibleCategorySetting() {
   try {
     localStorage.removeItem(getVisibleCategoriesStorageKey());
+    scheduleUserSettingsSync();
   } catch (e) {
     // ignore
   }
@@ -1820,6 +2206,7 @@ function setAudioVoice(voiceType, gender) {
     localStorage.setItem(key, gender);
     // 設定変更時にキャッシュをクリア
     clearAudioCache();
+    scheduleUserSettingsSync();
   } catch (e) {
     console.warn('音声設定の保存に失敗しました。');
   }
@@ -1832,6 +2219,7 @@ function setAudioSpeed(speedType, speed) {
     localStorage.setItem(key, speed);
     // 設定変更時にキャッシュをクリア
     clearAudioCache();
+    scheduleUserSettingsSync();
   } catch (e) {
     console.warn('速さ設定の保存に失敗しました。');
   }
@@ -1946,6 +2334,7 @@ function setQuestionMethod(method) {
   }
   updateQuestionMethodRadios(next);
   applyQuestionMethodModeUi();
+  scheduleUserSettingsSync();
   
   if (next === 'duration') {
     loadDurationModeData({ resetPage: true, resort: true, forceFetch: true });
@@ -2948,6 +3337,7 @@ function setPracticeSetting(setting, isOn) {
   var key = setting === 'swapQA' ? 'practiceSwapQA' : 'practiceListeningMode';
   try {
     localStorage.setItem(key, isOn ? 'on' : 'off');
+    scheduleUserSettingsSync();
   } catch (e) {
     // localStorageが使えない場合は無視
   }
@@ -2983,6 +3373,7 @@ function getReadToggleStorageKey(type) {
 function saveReadToggle(type, isOn) {
   try {
     localStorage.setItem(getReadToggleStorageKey(type), isOn ? 'on' : 'off');
+    scheduleUserSettingsSync();
   } catch (e) {
     // localStorage が使えない場合は無視
   }
@@ -3225,6 +3616,8 @@ function resetBackgroundImage() {
     // localStorageから削除
     localStorage.removeItem('customBackgroundImage');
     localStorage.removeItem('backgroundBrightness');
+    setStoredSettingsBgDriveFileId('');
+    userSettingsBgUploadPending = false;
     
     // 背景画像をデフォルトに戻す
     var backgroundImage = document.getElementById('backgroundImage');
@@ -3241,6 +3634,7 @@ function resetBackgroundImage() {
     
     // 明るさボタンを「明るい」に戻す
     setBackgroundBrightness('bright', false);
+    scheduleUserSettingsSync();
   } catch (e) {
     showError('背景画像のリセットに失敗しました。');
   }
@@ -3324,6 +3718,12 @@ function confirmBackgroundImage() {
     // localStorageに保存
     try {
       localStorage.setItem('customBackgroundImage', imageUrl);
+      if (imageUrl.indexOf('data:') === 0) {
+        userSettingsBgUploadPending = true;
+      } else {
+        userSettingsBgUploadPending = false;
+        // プリセット選択時も旧 Drive はサーバ側で削除させるため ID は残す
+      }
       
       // 背景画像を更新
       var backgroundImage = document.getElementById('backgroundImage');
@@ -3340,6 +3740,7 @@ function confirmBackgroundImage() {
       
       // プレビューモーダルを閉じる
       closeBackgroundPreviewModal();
+      scheduleUserSettingsSync();
     } catch (e) {
       showError('背景画像の保存に失敗しました。ストレージの容量が不足している可能性があります。');
     }
