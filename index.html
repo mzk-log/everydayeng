@@ -7,7 +7,48 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Everyday English</title>
-  <link rel="stylesheet" href="style.css?v=202609070831">
+  <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
+  <script>
+  (function () {
+    var FRONT_VERSION = '202609112044';
+    // app.js の WEB_APP_URL（PRD）と同一に保つ
+    var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
+    if (!WEB_APP_URL || WEB_APP_URL.indexOf('http') !== 0) {
+      return;
+    }
+    var params = new URLSearchParams();
+    params.set('action', 'getFrontVersion');
+    params.set('referer', window.location.origin || '');
+    fetch(WEB_APP_URL + '?' + params.toString())
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error('network');
+        }
+        return response.json();
+      })
+      .then(function (data) {
+        if (!data || !data.success || !data.version) {
+          return;
+        }
+        var serverV = String(data.version);
+        if (serverV === FRONT_VERSION) {
+          return;
+        }
+        var qs = new URLSearchParams(window.location.search || '');
+        // 既に serverV で取り直しても HTML が古いままなら Pages 未反映 → ループ防止で中止
+        if (qs.get('v') === serverV) {
+          return;
+        }
+        qs.set('v', serverV);
+        var next = window.location.pathname + '?' + qs.toString() + (window.location.hash || '');
+        window.location.replace(next);
+      })
+      .catch(function () {
+        // 版チェック失敗時は現行HTMLで続行
+      });
+  })();
+  </script>
+  <link rel="stylesheet" href="style.css?v=202609112044">
 </head>
 <body>
   <!-- ページローディングオーバーレイ -->
@@ -492,7 +533,7 @@
     </div>
   </div>
 
-  <script src="js/app.js?v=202609070831"></script>
+  <script src="js/app.js?v=202609112044"></script>
 </body>
 </html>
 
