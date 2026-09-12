@@ -2084,6 +2084,12 @@ body.app-auth-locked .login-button {
 body.app-auth-locked .google-login-overlay {
   pointer-events: auto !important;
   opacity: 1 !important;
+  z-index: 600;
+}
+
+body.app-auth-locked .google-login-overlay,
+body.app-auth-locked .google-login-overlay * {
+  pointer-events: auto !important;
 }
 
 /* 学習画面（screen2）がactiveの時はログインボタンを非表示 */
@@ -2095,7 +2101,7 @@ body:has(#screen2.active) .login-button {
 .google-login-overlay {
   position: fixed;
   inset: 0;
-  z-index: 500;
+  z-index: 600;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2113,6 +2119,8 @@ body:has(#screen2.active) .login-button {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
   text-align: center;
   box-sizing: border-box;
+  position: relative;
+  z-index: 1;
 }
 
 .google-login-title {
@@ -2132,7 +2140,11 @@ body:has(#screen2.active) .login-button {
 .google-signin-button {
   display: flex;
   justify-content: center;
+  align-items: center;
   min-height: 44px;
+  width: 100%;
+  position: relative;
+  z-index: 2;
 }
 
 .google-login-error {

@@ -608,10 +608,14 @@ function checkUserEmail() {
   restoreGoogleAuthFromStorage();
   if (!userEmail || !hasValidGoogleIdToken()) {
     setAppAuthUiLocked(true);
-    // 起動時はまず自動選択を試し、だめなら手動ログイン画面へ
-    tryGoogleAutoSignIn(function() {
+    // モバイルは One Tap / prompt がボタン操作を阻害しやすいので手動ログインへ直行
+    if (isLikelyMobileClient()) {
       showGoogleLoginDialog({ cancellable: true });
-    });
+    } else {
+      tryGoogleAutoSignIn(function() {
+        showGoogleLoginDialog({ cancellable: true });
+      });
+    }
     return;
   }
   // トークンありでもカテゴリ取得成功までロック維持
@@ -622,6 +626,26 @@ function checkUserEmail() {
     }
     loadCategories();
   });
+}
+
+/**
+ * スマホ等：GIS の prompt（One Tap）を使わずボタンログインにする判定
+ * @returns {boolean}
+ */
+function isLikelyMobileClient() {
+  var ua = navigator.userAgent || '';
+  if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) {
+    return true;
+  }
+  try {
+    if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches &&
+        window.matchMedia('(max-width: 900px)').matches) {
+      return true;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return false;
 }
 
 /**
@@ -964,6 +988,20 @@ function handleGoogleCredentialResponse(response) {
 }
 
 /**
+ * 進行中の One Tap / prompt をキャンセル（その後の renderButton 阻害対策）
+ */
+function cancelGoogleIdentityPrompt() {
+  try {
+    if (window.google && google.accounts && google.accounts.id &&
+        typeof google.accounts.id.cancel === 'function') {
+      google.accounts.id.cancel();
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+/**
  * Googleログイン画面を表示
  * @param {{ cancellable?: boolean, skipAutoPrompt?: boolean }} [options]
  */
@@ -984,20 +1022,26 @@ function showGoogleLoginDialog(options) {
   setGoogleLoginError('');
   // ページローディングが残っているとボタンが見えないため隠す
   hidePageLoading();
+  // 先に prompt を止めてからボタンを描画（モバイルで無反応になるのを防ぐ）
+  cancelGoogleIdentityPrompt();
   ensureGoogleSignInInitialized(function() {
+    cancelGoogleIdentityPrompt();
     var btnHost = document.getElementById('googleSignInButton');
     if (!btnHost) {
       return;
     }
     btnHost.innerHTML = '';
-    google.accounts.id.renderButton(btnHost, {
-      type: 'standard',
-      theme: 'outline',
-      size: 'large',
-      text: 'signin_with',
-      shape: 'rectangular',
-      logo_alignment: 'left',
-      width: 280
+    // レイアウト確定後に描画（モバイルで iframe サイズ0になるのを回避）
+    requestAnimationFrame(function() {
+      google.accounts.id.renderButton(btnHost, {
+        type: 'standard',
+        theme: 'outline',
+        size: 'large',
+        text: 'signin_with',
+        shape: 'rectangular',
+        logo_alignment: 'left',
+        width: Math.min(280, Math.max(240, (btnHost.clientWidth || 280)))
+      });
     });
   }, { autoSelect: false });
 }
