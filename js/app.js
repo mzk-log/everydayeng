@@ -28,6 +28,7 @@ var googleSignInInitialized = false;
 var googleLoginDialogCancellable = false;
 var googleAuthLockInProgress = false;
 var googleSignInAutoSelectEnabled = false;
+var googleSignInLoginHint = '';
 var modalCurrentIndex = 0; // モーダル内の現在のインデックス
 var retryQuestionIndices = []; // 再チャレンジする問題のインデックスを保存
 var isInRetryMode = false; // 再チャレンジモードかどうか
@@ -809,23 +810,51 @@ function whenGoogleIdentityReady(onReady, onFail) {
 }
 
 /**
+ * 自動選択用：前回ログイン email（login_hint）
+ * @returns {string}
+ */
+function getStoredUserEmailForLoginHint() {
+  var email = userEmail || '';
+  if (!email) {
+    try {
+      email = localStorage.getItem('userEmail') || '';
+    } catch (e) {
+      email = '';
+    }
+  }
+  return String(email || '').trim();
+}
+
+/**
  * GIS 初期化
  * @param {Function} [onReady]
- * @param {{ autoSelect?: boolean }} [initOptions]
+ * @param {{ autoSelect?: boolean, loginHint?: string }} [initOptions]
  */
 function ensureGoogleSignInInitialized(onReady, initOptions) {
   initOptions = initOptions || {};
   var wantAutoSelect = !!initOptions.autoSelect;
+  var loginHint = initOptions.loginHint != null
+    ? String(initOptions.loginHint).trim()
+    : '';
   whenGoogleIdentityReady(function() {
-    if (!googleSignInInitialized || wantAutoSelect !== googleSignInAutoSelectEnabled) {
-      google.accounts.id.initialize({
+    var needInit = !googleSignInInitialized ||
+      wantAutoSelect !== googleSignInAutoSelectEnabled ||
+      loginHint !== googleSignInLoginHint;
+    if (needInit) {
+      var config = {
         client_id: GOOGLE_OAUTH_CLIENT_ID,
         callback: handleGoogleCredentialResponse,
         auto_select: wantAutoSelect,
         cancel_on_tap_outside: true
-      });
+      };
+      // 複数アカウント時に前回ユーザーを優先させる
+      if (loginHint) {
+        config.login_hint = loginHint;
+      }
+      google.accounts.id.initialize(config);
       googleSignInInitialized = true;
       googleSignInAutoSelectEnabled = wantAutoSelect;
+      googleSignInLoginHint = loginHint;
     }
     if (typeof onReady === 'function') {
       onReady();
@@ -854,6 +883,7 @@ function tryGoogleAutoSignIn(onNeedManualLogin) {
   }
 
   hidePageLoading();
+  var hintEmail = getStoredUserEmailForLoginHint();
   ensureGoogleSignInInitialized(function() {
     try {
       google.accounts.id.prompt(function(notification) {
@@ -875,7 +905,7 @@ function tryGoogleAutoSignIn(onNeedManualLogin) {
     } catch (e) {
       needManualLogin();
     }
-  }, { autoSelect: true });
+  }, { autoSelect: true, loginHint: hintEmail });
 }
 
 /**
@@ -891,6 +921,7 @@ function disableGoogleAutoSelect() {
     // ignore
   }
   googleSignInAutoSelectEnabled = false;
+  googleSignInLoginHint = '';
 }
 
 /**
