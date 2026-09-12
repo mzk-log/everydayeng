@@ -10,7 +10,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202609121039';
+    var FRONT_VERSION = '202609121631';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -49,7 +49,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202609121039">
+  <link rel="stylesheet" href="style.css?v=202609121631">
 </head>
 <body>
   <!-- ページローディングオーバーレイ -->
@@ -207,8 +207,10 @@
         <button id="hamburgerMenuButton" class="hamburger-menu-button" type="button" aria-label="メニュー">
           <img src="img/menu.png" alt="メニュー" class="hamburger-icon">
         </button>
-        <h1 class="app-header-title">Everyday English</h1>
-        <div class="app-header-version" id="appHeaderVersion" aria-label="フロント版"></div>
+        <div class="app-header-brand">
+          <h1 class="app-header-title">Everyday English</h1>
+          <div class="app-header-version" id="appHeaderVersion" aria-label="フロント版"></div>
+        </div>
         <div class="audio-source-debug" id="audioSourceDebug" aria-live="polite"></div>
       </div>
       <div class="app-header-tools">
@@ -525,7 +527,7 @@
     </div>
   </div>
 
-  <script src="js/app.js?v=202609121039"></script>
+  <script src="js/app.js?v=202609121631"></script>
 </body>
 </html>
 

@@ -6728,7 +6728,7 @@ function showAudioSourceDebug(source) {
 }
 
 /**
- * ヘッダーにフロント版を表示（タイトル右）
+ * ヘッダーにフロント版を表示（タイトル右／狭い幅ではタイトル下）
  */
 function syncAppHeaderVersionDisplay() {
   var el = document.getElementById('appHeaderVersion');

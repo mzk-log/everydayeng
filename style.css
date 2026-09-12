@@ -685,6 +685,16 @@ body::-webkit-scrollbar {
   min-height: 20px;
 }
 
+/* タイトル＋版（広い画面は横並び、狭い画面は縦積み） */
+.app-header-brand {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .app-header-title {
   font-size: 16px;
   font-weight: bold;
@@ -2987,10 +2997,28 @@ body:has(#screen2.active) .login-button {
     padding: 10px !important;
   }
 
-  /* 学習画面のタイトル(480px) */
+  /* 狭い幅：タイトル下に版（トグル高に収まるよう余白・字を詰める） */
+  .app-header-leading {
+    gap: 6px !important;
+  }
+
+  .app-header-brand {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: center !important;
+    gap: 0 !important;
+  }
+
   .app-header-title {
-    font-size: 13px !important;
-    line-height: 20px !important;
+    font-size: 12px !important;
+    line-height: 1.15 !important;
+  }
+
+  .app-header .app-header-version {
+    font-size: 9px !important;
+    line-height: 1.1 !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
 
   .app-header {
