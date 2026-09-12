@@ -18,7 +18,15 @@ var isAnswerShown = false;
 var isNoteExpanded = false; // note 本文を開いているか（情報あり時のみ意味を持つ）
 var noteClickTimer = null; // note シングル／ダブルクリック判別用
 var NOTE_COLLAPSED_HINT = 'メモあり（タップで表示）';
-var userEmail = null; // ユーザーのメールアドレス
+var userEmail = null; // ユーザーのメールアドレス（Googleログイン後）
+var googleIdToken = null; // Google IDトークン（GAS検証用。ステップ6でサーバ検証）
+
+// Google Identity Services 用クライアントID（GCP OAuth ウェブクライアント）
+var GOOGLE_OAUTH_CLIENT_ID = '451690742730-f7aubfes1nea66l0p3tavuibcgntbaa8.apps.googleusercontent.com';
+var GOOGLE_ID_TOKEN_STORAGE_KEY = 'googleIdToken';
+var googleSignInInitialized = false;
+var googleLoginDialogCancellable = false;
+var googleAuthLockInProgress = false;
 var modalCurrentIndex = 0; // モーダル内の現在のインデックス
 var retryQuestionIndices = []; // 再チャレンジする問題のインデックスを保存
 var isInRetryMode = false; // 再チャレンジモードかどうか
@@ -335,7 +343,7 @@ function pushUserSettingsToServer(onDone) {
   var settings = buildUserSettingsPayloadFromLocal();
   var params = new URLSearchParams();
   params.append('action', 'saveUserSettings');
-  params.append('email', userEmail);
+  appendAuthParams(params);
   params.append('referer', window.location.origin || '');
   params.append('settings', JSON.stringify(settings));
 
@@ -381,7 +389,11 @@ function pushUserSettingsToServer(onDone) {
   })
   .catch(function(error) {
     console.warn('設定同期（保存）エラー:', error);
-    showError('設定の同期に失敗しました: ' + error.toString());
+    var errText = error && error.message ? error.message : String(error);
+    showError('設定の同期に失敗しました: ' + errText);
+    if (isGoogleAuthFailureMessage(errText)) {
+      return;
+    }
     if (typeof onDone === 'function') onDone(error);
   });
 }
@@ -431,7 +443,7 @@ function syncUserSettingsWithServer(onDone) {
 
   var params = new URLSearchParams();
   params.append('action', 'getUserSettings');
-  params.append('email', userEmail);
+  appendAuthParams(params);
   params.append('referer', window.location.origin || '');
   params.append('knownDriveFileId', getStoredSettingsBgDriveFileId());
 
@@ -473,7 +485,12 @@ function syncUserSettingsWithServer(onDone) {
   })
   .catch(function(error) {
     console.warn('設定同期（取得）エラー:', error);
-    showError('設定の同期に失敗しました（端末の設定で続行）: ' + error.toString());
+    var errText = error && error.message ? error.message : String(error);
+    showError('設定の同期に失敗しました（端末の設定で続行）: ' + errText);
+    if (isGoogleAuthFailureMessage(errText)) {
+      userSettingsInitialSyncDone = false;
+      return;
+    }
     userSettingsInitialSyncDone = true;
     if (typeof onDone === 'function') onDone(error);
   });
@@ -521,7 +538,8 @@ var COMPLETION_MESSAGE_IMAGES = [
 
 // 初期化
 window.onload = function() {
-  // メールアドレスを確認
+  // 認証確定まで操作不可（ログインボタンのみ有効）
+  setAppAuthUiLocked(true);
   checkUserEmail();
   
   setupEventListeners();
@@ -583,51 +601,355 @@ function hideCategoryLoadingSpinner() {
   }
 }
 
-// メールアドレスを確認し、必要に応じて入力画面を表示
+// メール／Googleログイン状態を確認し、必要に応じてログイン画面を表示
 function checkUserEmail() {
-  // localStorageからメールアドレスを取得
-  userEmail = localStorage.getItem('userEmail');
-  
-  if (!userEmail) {
-    // メールアドレスが保存されていない場合は入力画面を表示
-    showEmailInputDialog();
+  restoreGoogleAuthFromStorage();
+  if (!userEmail || !hasValidGoogleIdToken()) {
+    setAppAuthUiLocked(true);
+    showGoogleLoginDialog({ cancellable: true });
+    return;
+  }
+  // トークンありでもカテゴリ取得成功までロック維持
+  setAppAuthUiLocked(true);
+  syncUserSettingsWithServer(function(err) {
+    if (err && isGoogleAuthFailureMessage(String(err.message || err))) {
+      return;
+    }
+    loadCategories();
+  });
+}
+
+/**
+ * 未ログイン／未許可時はログイン以外のUIを無効化する
+ * @param {boolean} locked
+ */
+function setAppAuthUiLocked(locked) {
+  if (locked) {
+    document.body.classList.add('app-auth-locked');
+    try {
+      closeSideMenu();
+    } catch (e) {
+      // ignore
+    }
   } else {
-    // 設定同期後にカテゴリ一覧を読み込む
-    syncUserSettingsWithServer(function() {
-      loadCategories();
-    });
+    document.body.classList.remove('app-auth-locked');
+  }
+  var loginBtn = document.getElementById('loginButton');
+  if (loginBtn) {
+    loginBtn.disabled = false;
   }
 }
 
-// メールアドレス入力ダイアログを表示
-function showEmailInputDialog() {
-  var email = prompt('メールアドレスを入力してください:');
-  
-  // nullの場合はキャンセルが押された
-  if (email === null) {
-    return; // 何もせずに終了
-  }
-  
-  if (email && email.trim() !== '') {
-    userEmail = email.trim();
-    // localStorageに保存
-    localStorage.setItem('userEmail', userEmail);
-    userSettingsInitialSyncDone = false;
-    
-    // ログイン成功時はエラーメッセージを自動削除
-    clearErrorMessages();
+/**
+ * @returns {boolean}
+ */
+function isAppAuthUiLocked() {
+  return document.body.classList.contains('app-auth-locked');
+}
 
-    syncDailyStudyStatsDisplay();
-    
-    // 設定同期後にカテゴリリストを読み込む
-    syncUserSettingsWithServer(function() {
-      loadCategories();
-    });
-  } else {
-    // メールアドレスが入力されなかった場合は再度表示
-    alert('メールアドレスは必須です。');
-    showEmailInputDialog();
+/**
+ * localStorage / sessionStorage から認証情報を復元
+ */
+function restoreGoogleAuthFromStorage() {
+  try {
+    userEmail = localStorage.getItem('userEmail');
+  } catch (e) {
+    userEmail = null;
   }
+  try {
+    googleIdToken = sessionStorage.getItem(GOOGLE_ID_TOKEN_STORAGE_KEY) || null;
+  } catch (e2) {
+    googleIdToken = null;
+  }
+  if (googleIdToken && isGoogleIdTokenExpired(googleIdToken)) {
+    clearGoogleIdToken();
+  }
+}
+
+/**
+ * GAS リクエストへ email と idToken を付与
+ * @param {URLSearchParams} params
+ */
+function appendAuthParams(params) {
+  if (!params) {
+    return;
+  }
+  var email = userEmail || '';
+  try {
+    if (!email) {
+      email = localStorage.getItem('userEmail') || '';
+    }
+  } catch (e) {
+    // ignore
+  }
+  if (email) {
+    params.append('email', email);
+  }
+  var token = getGoogleIdToken();
+  if (token) {
+    params.append('idToken', token);
+  }
+}
+
+/**
+ * @returns {string}
+ */
+function getGoogleIdToken() {
+  if (googleIdToken && !isGoogleIdTokenExpired(googleIdToken)) {
+    return googleIdToken;
+  }
+  try {
+    var stored = sessionStorage.getItem(GOOGLE_ID_TOKEN_STORAGE_KEY);
+    if (stored && !isGoogleIdTokenExpired(stored)) {
+      googleIdToken = stored;
+      return stored;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return '';
+}
+
+/**
+ * @param {string} token
+ */
+function setGoogleIdToken(token) {
+  googleIdToken = token || null;
+  try {
+    if (token) {
+      sessionStorage.setItem(GOOGLE_ID_TOKEN_STORAGE_KEY, token);
+    } else {
+      sessionStorage.removeItem(GOOGLE_ID_TOKEN_STORAGE_KEY);
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+function clearGoogleIdToken() {
+  setGoogleIdToken('');
+}
+
+/**
+ * @returns {boolean}
+ */
+function hasValidGoogleIdToken() {
+  return !!getGoogleIdToken();
+}
+
+/**
+ * IDトークンの期限切れか（クライアント側の目安。正式検証はGAS）
+ * @param {string} token
+ * @returns {boolean}
+ */
+function isGoogleIdTokenExpired(token) {
+  var payload = parseJwtPayload(token);
+  if (!payload || payload.exp == null) {
+    return true;
+  }
+  var nowSec = Math.floor(Date.now() / 1000);
+  // 60秒の余裕を見て期限切れ扱い
+  return Number(payload.exp) <= (nowSec + 60);
+}
+
+/**
+ * JWT のペイロードをデコード（署名検証なし。表示・期限確認用）
+ * @param {string} token
+ * @returns {Object|null}
+ */
+function parseJwtPayload(token) {
+  if (!token || typeof token !== 'string') {
+    return null;
+  }
+  var parts = token.split('.');
+  if (parts.length < 2) {
+    return null;
+  }
+  try {
+    var b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) {
+      b64 += '=';
+    }
+    var json = decodeURIComponent(atob(b64).split('').map(function(c) {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    return JSON.parse(json);
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Google Identity Services の読み込み待ち
+ * @param {Function} onReady
+ * @param {Function} [onFail]
+ */
+function whenGoogleIdentityReady(onReady, onFail) {
+  if (window.google && google.accounts && google.accounts.id) {
+    onReady();
+    return;
+  }
+  var tries = 0;
+  var timer = setInterval(function() {
+    tries++;
+    if (window.google && google.accounts && google.accounts.id) {
+      clearInterval(timer);
+      onReady();
+    } else if (tries >= 100) {
+      clearInterval(timer);
+      if (typeof onFail === 'function') {
+        onFail();
+      }
+    }
+  }, 50);
+}
+
+/**
+ * GIS 初期化（1回）
+ * @param {Function} [onReady]
+ */
+function ensureGoogleSignInInitialized(onReady) {
+  whenGoogleIdentityReady(function() {
+    if (!googleSignInInitialized) {
+      google.accounts.id.initialize({
+        client_id: GOOGLE_OAUTH_CLIENT_ID,
+        callback: handleGoogleCredentialResponse,
+        auto_select: false,
+        cancel_on_tap_outside: true
+      });
+      googleSignInInitialized = true;
+    }
+    if (typeof onReady === 'function') {
+      onReady();
+    }
+  }, function() {
+    setGoogleLoginError('Googleログインの読み込みに失敗しました。通信環境を確認して再読み込みしてください。');
+  });
+}
+
+/**
+ * Googleログイン成功コールバック
+ * @param {Object} response
+ */
+function handleGoogleCredentialResponse(response) {
+  if (!response || !response.credential) {
+    setGoogleLoginError('ログインに失敗しました。もう一度お試しください。');
+    return;
+  }
+  var payload = parseJwtPayload(response.credential);
+  var email = payload && payload.email ? String(payload.email).trim() : '';
+  if (!email) {
+    setGoogleLoginError('メールアドレスを取得できませんでした。');
+    return;
+  }
+  setGoogleIdToken(response.credential);
+  userEmail = email;
+  try {
+    localStorage.setItem('userEmail', userEmail);
+  } catch (e) {
+    // ignore
+  }
+  userSettingsInitialSyncDone = false;
+  clearErrorMessages();
+  // アカウント切替時に前ユーザーの問題データが残らないようにする
+  clearAppSessionDataAfterAuthFailure();
+  syncDailyStudyStatsDisplay();
+  hideGoogleLoginDialog();
+  syncUserSettingsWithServer(function(err) {
+    if (err && isGoogleAuthFailureMessage(String(err.message || err))) {
+      return;
+    }
+    loadCategories();
+  });
+}
+
+/**
+ * Googleログイン画面を表示
+ * @param {{ cancellable?: boolean }} [options] - cancellable:false のときのみキャンセル不可（既定はキャンセル可）
+ */
+function showGoogleLoginDialog(options) {
+  options = options || {};
+  // 未指定時はキャンセル可（起動時・再ログイン・未許可後いずれも閉じられる）
+  googleLoginDialogCancellable = options.cancellable !== false;
+
+  var overlay = document.getElementById('googleLoginOverlay');
+  if (overlay) {
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+  }
+  var cancelBtn = document.getElementById('googleLoginCancelButton');
+  if (cancelBtn) {
+    cancelBtn.style.display = googleLoginDialogCancellable ? 'inline-block' : 'none';
+  }
+  setGoogleLoginError('');
+  // ページローディングが残っているとボタンが見えないため隠す
+  hidePageLoading();
+  ensureGoogleSignInInitialized(function() {
+    var btnHost = document.getElementById('googleSignInButton');
+    if (!btnHost) {
+      return;
+    }
+    btnHost.innerHTML = '';
+    google.accounts.id.renderButton(btnHost, {
+      type: 'standard',
+      theme: 'outline',
+      size: 'large',
+      text: 'signin_with',
+      shape: 'rectangular',
+      logo_alignment: 'left',
+      width: 280
+    });
+  });
+}
+
+/**
+ * Googleログイン画面を非表示
+ */
+function hideGoogleLoginDialog() {
+  var overlay = document.getElementById('googleLoginOverlay');
+  if (overlay) {
+    overlay.style.display = 'none';
+    overlay.setAttribute('aria-hidden', 'true');
+  }
+  googleLoginDialogCancellable = false;
+}
+
+/**
+ * キャンセル可能なログイン画面を閉じる
+ * 未ログインのまま閉じた場合は TOP を操作不可状態にする
+ */
+function cancelGoogleLoginDialogIfAllowed() {
+  if (!googleLoginDialogCancellable) {
+    return;
+  }
+  hideGoogleLoginDialog();
+  setGoogleLoginError('');
+  if (!hasValidGoogleIdToken()) {
+    clearAppSessionDataAfterAuthFailure();
+    hidePageLoading();
+  }
+}
+
+/**
+ * @param {string} message
+ */
+function setGoogleLoginError(message) {
+  var el = document.getElementById('googleLoginError');
+  if (!el) {
+    return;
+  }
+  if (message) {
+    el.textContent = message;
+    el.style.display = 'block';
+  } else {
+    el.textContent = '';
+    el.style.display = 'none';
+  }
+}
+
+// 互換：旧名から新ログインへ
+function showEmailInputDialog() {
+  showGoogleLoginDialog();
 }
 
 // ボタン画像を設定する関数（最適化版）
@@ -813,7 +1135,7 @@ function loadCategories(options) {
   // Google Apps Script経由でデータを取得
   var params = new URLSearchParams();
   params.append('action', 'getCategories');
-  params.append('email', userEmail);
+  appendAuthParams(params);
   params.append('referer', window.location.origin);
   params.append('today', getTodayYmdLocal());
   
@@ -907,9 +1229,11 @@ function loadCategories(options) {
         }
         // ページローディングを非表示（Googleスプレッドシートの読み込み完了）
         hidePageLoading();
+        setAppAuthUiLocked(false);
       } catch (e) {
-        showError('データ読み込みエラー: ' + e.toString());
-        if (select) {
+        var loadErr = e && e.message ? e.message : String(e);
+        showError('データ読み込みエラー: ' + loadErr);
+        if (select && !isGoogleAuthFailureMessage(loadErr)) {
           select.disabled = false;
           syncCustomCategorySelect(select);
         }
@@ -918,11 +1242,15 @@ function loadCategories(options) {
         }
         // ページローディングを非表示（エラー時も非表示）
         hidePageLoading();
+        if (!isGoogleAuthFailureMessage(loadErr) && hasValidGoogleIdToken()) {
+          setAppAuthUiLocked(false);
+        }
       }
     })
     .catch(function(error) {
-      showError('アクセスエラー: ' + error.toString());
-      if (select) {
+      var accessErr = error && error.message ? error.message : String(error);
+      showError('アクセスエラー: ' + accessErr);
+      if (select && !isGoogleAuthFailureMessage(accessErr)) {
         select.disabled = false;
         syncCustomCategorySelect(select);
       }
@@ -931,6 +1259,9 @@ function loadCategories(options) {
       }
       // ページローディングを非表示（エラー時も非表示）
       hidePageLoading();
+      if (!isGoogleAuthFailureMessage(accessErr) && hasValidGoogleIdToken()) {
+        setAppAuthUiLocked(false);
+      }
     });
 }
 
@@ -1816,6 +2147,9 @@ function setupEventListeners() {
   
   // 出題読みトグルボタン
   document.getElementById('questionToggleButton').addEventListener('click', function() {
+    if (isAppAuthUiLocked()) {
+      return;
+    }
     if (isListeningModeEnabled()) {
       return; // リスニング練習中はON固定
     }
@@ -1826,6 +2160,9 @@ function setupEventListeners() {
   
   // 解答読みトグルボタン
   document.getElementById('answerToggleButton').addEventListener('click', function() {
+    if (isAppAuthUiLocked()) {
+      return;
+    }
     isAnswerToggleActive = !isAnswerToggleActive;
     applyReadToggleButtonUi();
     // リスニング中の切替は一時的（OFF復帰でON前に戻す）のため保存しない
@@ -1835,7 +2172,28 @@ function setupEventListeners() {
   });
   
   document.getElementById('loginButton').addEventListener('click', function() {
-    showEmailInputDialog();
+    // 再ログイン時はトークンを残したまま開く（キャンセルで現状維持できるようにする）
+    showGoogleLoginDialog({ cancellable: true });
+  });
+
+  var googleLoginCancelButton = document.getElementById('googleLoginCancelButton');
+  if (googleLoginCancelButton) {
+    googleLoginCancelButton.addEventListener('click', function() {
+      cancelGoogleLoginDialogIfAllowed();
+    });
+  }
+  var googleLoginOverlay = document.getElementById('googleLoginOverlay');
+  if (googleLoginOverlay) {
+    googleLoginOverlay.addEventListener('click', function(e) {
+      if (e.target === googleLoginOverlay) {
+        cancelGoogleLoginDialogIfAllowed();
+      }
+    });
+  }
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      cancelGoogleLoginDialogIfAllowed();
+    }
   });
   
   // モーダル閉じるボタン
@@ -2129,6 +2487,9 @@ function closeSideMenu() {
 
 // サイドメニューをトグル
 function toggleSideMenu() {
+  if (isAppAuthUiLocked()) {
+    return;
+  }
   var sideMenu = document.getElementById('sideMenu');
   if (sideMenu && sideMenu.classList.contains('active')) {
     closeSideMenu();
@@ -2971,7 +3332,7 @@ function loadLastDateModeData(options) {
 
   var params = new URLSearchParams();
   params.append('action', 'getAllStudyItems');
-  params.append('email', userEmail);
+  appendAuthParams(params);
   params.append('referer', window.location.origin);
 
   fetch(WEB_APP_URL + '?' + params.toString())
@@ -3224,7 +3585,7 @@ function loadDurationModeData(options) {
   
   var params = new URLSearchParams();
   params.append('action', 'getAllStudyItems');
-  params.append('email', userEmail);
+  appendAuthParams(params);
   params.append('referer', window.location.origin);
   
   fetch(WEB_APP_URL + '?' + params.toString())
@@ -3875,7 +4236,7 @@ function loadCategoryData(categoryNo) {
   var params = new URLSearchParams();
   params.append('action', 'getCategoryData');
   params.append('categoryNo', categoryNo);
-  params.append('email', userEmail);
+  appendAuthParams(params);
   params.append('referer', window.location.origin);
   
   var requestUrl = WEB_APP_URL + '?' + params.toString();
@@ -4613,6 +4974,12 @@ function resetListDisplay() {
 var errorMessages = [];
 
 function showError(message) {
+  var msg = message != null ? String(message) : '';
+  // GAS の Google認証失敗／未許可時はデータ破棄＋操作不可＋再ログイン
+  if (isGoogleAuthFailureMessage(msg)) {
+    enforceGoogleAuthFailureLock(msg);
+  }
+
   // 既存のエラーメッセージコンテナを取得または作成
   var container = document.querySelector('.container');
   if (!container) return;
@@ -4629,6 +4996,117 @@ function showError(message) {
   
   // エラーメッセージを再描画
   renderErrorMessages();
+}
+
+/**
+ * GAS の Google 認証エラーメッセージか（未許可含む）
+ * @param {string} message
+ * @returns {boolean}
+ */
+function isGoogleAuthFailureMessage(message) {
+  var msg = String(message || '');
+  return msg.indexOf('idToken') >= 0 ||
+    msg.indexOf('Google token') >= 0 ||
+    msg.indexOf('sign in with Google') >= 0 ||
+    msg.indexOf('sign in again') >= 0 ||
+    msg.indexOf('Email does not match Google') >= 0 ||
+    msg.indexOf('Email not authorized') >= 0;
+}
+
+/**
+ * 認証失敗／未許可時：学習データを破棄し TOP を操作不可にしてログイン必須にする
+ * @param {string} rawMessage
+ */
+function enforceGoogleAuthFailureLock(rawMessage) {
+  if (googleAuthLockInProgress) {
+    return;
+  }
+  googleAuthLockInProgress = true;
+  try {
+    clearGoogleIdToken();
+    clearAppSessionDataAfterAuthFailure();
+    hidePageLoading();
+    showGoogleLoginDialog({ cancellable: true });
+    var friendly = (String(rawMessage || '').indexOf('Email not authorized') >= 0)
+      ? 'このGoogleアカウントは利用許可されていません。管理者に連絡するか、許可済みアカウントでログインしてください。'
+      : '認証に失敗しました。再度Googleアカウントでログインしてください。';
+    setGoogleLoginError(friendly);
+  } finally {
+    googleAuthLockInProgress = false;
+  }
+}
+
+/**
+ * 認証失敗・アカウント切替時に、操作可能な学習／List 状態を破棄する
+ */
+function clearAppSessionDataAfterAuthFailure() {
+  stopCurrentAudioPlayback();
+  stopStopwatch();
+  setLearningNavIconsNormal();
+
+  var screen2 = document.getElementById('screen2');
+  var screen1 = document.getElementById('screen1');
+  if (screen2) {
+    screen2.classList.remove('active');
+    screen2.classList.remove('is-learning-completed');
+  }
+  if (screen1) {
+    screen1.classList.add('active');
+  }
+  var container = document.querySelector('.container');
+  if (container) {
+    container.classList.remove('learning-mode');
+  }
+
+  categories = [];
+  categoryDataByNo = {};
+  currentCategoryData = [];
+  currentCategoryNo = null;
+  selectedQuestionIndices = [];
+  originalCategoryData = [];
+  currentQuestionIndex = 0;
+  completedQuestionIndices = [];
+  retryQuestionIndices = [];
+  isInRetryMode = false;
+  retryQuestionIndex = 0;
+  isAnswerShown = false;
+  isLearningCompleted = false;
+  justCompletedCategoryNo = null;
+  isDurationCompletionSessionView = false;
+  isLastDateCompletionSessionView = false;
+  isCategoryCompletionSessionView = false;
+  isCategoryTransitionInProgress = false;
+  isCompletionStudyFieldsCollapsed = false;
+  durationModeSortedItems = [];
+  lastDateModeAllItems = [];
+  durationModeSessionItems = [];
+  lastDateModeSessionItems = [];
+  durationModePageIndex = 0;
+  lastDateModePageIndex = 0;
+  todayStudiedItemCount = 0;
+  todayStudiedAnsCount = 0;
+
+  hideCompletionMessage();
+  hideLearningCategorySelect();
+  hideCompletionListSection();
+  restoreCompletionStudyFields();
+
+  var select = document.getElementById('categorySelect');
+  if (select) {
+    select.innerHTML = '<option value="">Categoryを選択してください</option>';
+    select.value = '';
+    select.disabled = true;
+    syncCustomCategorySelect(select);
+  }
+  resetListDisplay();
+  setStartButtonVisible(false);
+  updateListNavButtons();
+  syncDailyStudyStatsDisplay();
+  updateLearningLockedSideMenuControls();
+  setAppAuthUiLocked(true);
+  requestAnimationFrame(function() {
+    requestAnimationFrame(syncAppHeaderHeight);
+  });
 }
 
 // エラーメッセージを描画
@@ -5791,7 +6269,7 @@ function runGasSheetUpdateJob(job, attemptIndex) {
   var params = new URLSearchParams();
   params.append('action', job.action);
   params.append('id', job.id);
-  params.append('email', userEmail);
+  appendAuthParams(params);
   params.append('referer', window.location.origin);
 
   if (job.action === 'updateItemFields') {
@@ -6563,7 +7041,7 @@ function saveDriveAudioAsync(item, sheetField, voiceGender, speed, audioContent)
     params.append('voiceGender', voiceGender || 'female');
     params.append('speed', speed || 'fast');
     params.append('audioContent', audioContent);
-    params.append('email', userEmail);
+    appendAuthParams(params);
     params.append('referer', window.location.origin);
 
     fetch(buildGasPostUrl(), {
@@ -6597,7 +7075,7 @@ function deleteDriveAudioAsync(item, sheetField) {
     params.append('categoryNo', String(resolveItemCategoryNo(item)));
     params.append('no', String(item.no));
     params.append('field', sheetField);
-    params.append('email', userEmail);
+    appendAuthParams(params);
     params.append('referer', window.location.origin);
 
     fetch(buildGasPostUrl(), {
@@ -7078,7 +7556,7 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
   params.append('field', sheetField);
   params.append('voiceGender', voiceGender || 'female');
   params.append('speed', speed || 'fast');
-  params.append('email', userEmail);
+  appendAuthParams(params);
   params.append('referer', window.location.origin);
 
   fetch(buildGasPostUrl(), {
@@ -7124,7 +7602,7 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
   params.append('text', text);
   params.append('voiceGender', voiceGender || 'female');
   params.append('speed', speed || 'fast');
-  params.append('email', userEmail);
+  appendAuthParams(params);
   params.append('referer', window.location.origin);
   
   fetch(buildGasPostUrl(), {
@@ -7293,7 +7771,7 @@ function preloadAudio(text, voiceGender, speed, item, sheetField) {
       params.append('text', text);
       params.append('voiceGender', voiceGender || 'female');
       params.append('speed', speed || 'fast');
-      params.append('email', userEmail);
+      appendAuthParams(params);
       params.append('referer', window.location.origin);
 
       fetch(buildGasPostUrl(), {
@@ -7331,7 +7809,7 @@ function preloadAudio(text, voiceGender, speed, item, sheetField) {
       driveParams.append('field', sheetField);
       driveParams.append('voiceGender', voiceGender || 'female');
       driveParams.append('speed', speed || 'fast');
-      driveParams.append('email', userEmail);
+      appendAuthParams(driveParams);
       driveParams.append('referer', window.location.origin);
 
       fetch(buildGasPostUrl(), {
@@ -8075,7 +8553,7 @@ function loadCategoryDataForCompletionBrowseInner(categoryNo) {
   var params = new URLSearchParams();
   params.append('action', 'getCategoryData');
   params.append('categoryNo', categoryNo);
-  params.append('email', userEmail);
+  appendAuthParams(params);
   params.append('referer', window.location.origin);
   
   fetch(WEB_APP_URL + '?' + params.toString())
@@ -8265,7 +8743,7 @@ function loadCategoryDataAndStartLearning(categoryNo, forceAllQuestions) {
   var params = new URLSearchParams();
   params.append('action', 'getCategoryData');
   params.append('categoryNo', categoryNo);
-  params.append('email', userEmail);
+  appendAuthParams(params);
   params.append('referer', window.location.origin);
   
   fetch(WEB_APP_URL + '?' + params.toString())
@@ -9410,7 +9888,7 @@ function processRecordedAudio() {
     params.append('action', 'speechToText');
     params.append('audioContent', base64Audio);
     params.append('languageCode', 'ja-JP');
-    params.append('email', userEmail);
+    appendAuthParams(params);
     params.append('referer', window.location.origin);
     
     // ローディング表示

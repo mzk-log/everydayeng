@@ -2059,9 +2059,103 @@ tr:last-child td {
   z-index: auto;
 }
 
+/* 未ログイン／未許可：ログイン以外の操作を無効化 */
+body.app-auth-locked .hamburger-menu-button,
+body.app-auth-locked #toggleContainer {
+  pointer-events: none !important;
+  opacity: 0.35;
+}
+
+body.app-auth-locked .container {
+  pointer-events: none !important;
+  opacity: 0.45;
+}
+
+body.app-auth-locked .side-menu,
+body.app-auth-locked .side-menu-overlay {
+  pointer-events: none !important;
+}
+
+body.app-auth-locked .login-button {
+  pointer-events: auto !important;
+  opacity: 1 !important;
+}
+
+body.app-auth-locked .google-login-overlay {
+  pointer-events: auto !important;
+  opacity: 1 !important;
+}
+
 /* 学習画面（screen2）がactiveの時はログインボタンを非表示 */
 body:has(#screen2.active) .login-button {
   display: none;
+}
+
+/* Googleアカウントログインオーバーレイ */
+.google-login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  box-sizing: border-box;
+  background-color: rgba(0, 0, 0, 0.45);
+}
+
+.google-login-panel {
+  width: 100%;
+  max-width: 360px;
+  padding: 28px 24px 24px;
+  border-radius: 10px;
+  background-color: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.google-login-title {
+  margin: 0 0 10px;
+  font-size: 20px;
+  font-weight: bold;
+  color: #222;
+}
+
+.google-login-message {
+  margin: 0 0 20px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #555;
+}
+
+.google-signin-button {
+  display: flex;
+  justify-content: center;
+  min-height: 44px;
+}
+
+.google-login-error {
+  margin: 14px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #c62828;
+}
+
+.google-login-cancel {
+  display: inline-block;
+  margin-top: 18px;
+  padding: 8px 18px;
+  font-size: 14px;
+  color: #444;
+  background: #f2f2f2;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.google-login-cancel:hover {
+  background: #e8e8e8;
 }
 
 /* エラーメッセージ */
