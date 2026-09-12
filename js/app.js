@@ -27,6 +27,7 @@ var GOOGLE_ID_TOKEN_STORAGE_KEY = 'googleIdToken';
 var googleSignInInitialized = false;
 var googleLoginDialogCancellable = false;
 var googleAuthLockInProgress = false;
+var googleSignInAutoSelectEnabled = false;
 var modalCurrentIndex = 0; // モーダル内の現在のインデックス
 var retryQuestionIndices = []; // 再チャレンジする問題のインデックスを保存
 var isInRetryMode = false; // 再チャレンジモードかどうか
@@ -606,7 +607,10 @@ function checkUserEmail() {
   restoreGoogleAuthFromStorage();
   if (!userEmail || !hasValidGoogleIdToken()) {
     setAppAuthUiLocked(true);
-    showGoogleLoginDialog({ cancellable: true });
+    // 起動時はまず自動選択を試し、だめなら手動ログイン画面へ
+    tryGoogleAutoSignIn(function() {
+      showGoogleLoginDialog({ cancellable: true });
+    });
     return;
   }
   // トークンありでもカテゴリ取得成功までロック維持
@@ -805,19 +809,23 @@ function whenGoogleIdentityReady(onReady, onFail) {
 }
 
 /**
- * GIS 初期化（1回）
+ * GIS 初期化
  * @param {Function} [onReady]
+ * @param {{ autoSelect?: boolean }} [initOptions]
  */
-function ensureGoogleSignInInitialized(onReady) {
+function ensureGoogleSignInInitialized(onReady, initOptions) {
+  initOptions = initOptions || {};
+  var wantAutoSelect = !!initOptions.autoSelect;
   whenGoogleIdentityReady(function() {
-    if (!googleSignInInitialized) {
+    if (!googleSignInInitialized || wantAutoSelect !== googleSignInAutoSelectEnabled) {
       google.accounts.id.initialize({
         client_id: GOOGLE_OAUTH_CLIENT_ID,
         callback: handleGoogleCredentialResponse,
-        auto_select: false,
+        auto_select: wantAutoSelect,
         cancel_on_tap_outside: true
       });
       googleSignInInitialized = true;
+      googleSignInAutoSelectEnabled = wantAutoSelect;
     }
     if (typeof onReady === 'function') {
       onReady();
@@ -828,18 +836,78 @@ function ensureGoogleSignInInitialized(onReady) {
 }
 
 /**
+ * 起動時など：Google の自動選択／One Tap を試す
+ * 成功時は handleGoogleCredentialResponse が呼ばれる。
+ * 表示できない／スキップ／閉じられた場合は onNeedManualLogin を呼ぶ。
+ * @param {Function} [onNeedManualLogin]
+ */
+function tryGoogleAutoSignIn(onNeedManualLogin) {
+  var settled = false;
+  function needManualLogin() {
+    if (settled || hasValidGoogleIdToken()) {
+      return;
+    }
+    settled = true;
+    if (typeof onNeedManualLogin === 'function') {
+      onNeedManualLogin();
+    }
+  }
+
+  hidePageLoading();
+  ensureGoogleSignInInitialized(function() {
+    try {
+      google.accounts.id.prompt(function(notification) {
+        if (hasValidGoogleIdToken()) {
+          settled = true;
+          return;
+        }
+        if (!notification) {
+          needManualLogin();
+          return;
+        }
+        var notDisplayed = typeof notification.isNotDisplayed === 'function' && notification.isNotDisplayed();
+        var skipped = typeof notification.isSkippedMoment === 'function' && notification.isSkippedMoment();
+        var dismissed = typeof notification.isDismissedMoment === 'function' && notification.isDismissedMoment();
+        if (notDisplayed || skipped || dismissed) {
+          needManualLogin();
+        }
+      });
+    } catch (e) {
+      needManualLogin();
+    }
+  }, { autoSelect: true });
+}
+
+/**
+ * アカウント切替・未許可後など、自動選択を止める
+ */
+function disableGoogleAutoSelect() {
+  try {
+    if (window.google && google.accounts && google.accounts.id &&
+        typeof google.accounts.id.disableAutoSelect === 'function') {
+      google.accounts.id.disableAutoSelect();
+    }
+  } catch (e) {
+    // ignore
+  }
+  googleSignInAutoSelectEnabled = false;
+}
+
+/**
  * Googleログイン成功コールバック
  * @param {Object} response
  */
 function handleGoogleCredentialResponse(response) {
   if (!response || !response.credential) {
     setGoogleLoginError('ログインに失敗しました。もう一度お試しください。');
+    showGoogleLoginDialog({ cancellable: true });
     return;
   }
   var payload = parseJwtPayload(response.credential);
   var email = payload && payload.email ? String(payload.email).trim() : '';
   if (!email) {
     setGoogleLoginError('メールアドレスを取得できませんでした。');
+    showGoogleLoginDialog({ cancellable: true });
     return;
   }
   setGoogleIdToken(response.credential);
@@ -855,6 +923,7 @@ function handleGoogleCredentialResponse(response) {
   clearAppSessionDataAfterAuthFailure();
   syncDailyStudyStatsDisplay();
   hideGoogleLoginDialog();
+  setAppAuthUiLocked(true);
   syncUserSettingsWithServer(function(err) {
     if (err && isGoogleAuthFailureMessage(String(err.message || err))) {
       return;
@@ -865,7 +934,7 @@ function handleGoogleCredentialResponse(response) {
 
 /**
  * Googleログイン画面を表示
- * @param {{ cancellable?: boolean }} [options] - cancellable:false のときのみキャンセル不可（既定はキャンセル可）
+ * @param {{ cancellable?: boolean, skipAutoPrompt?: boolean }} [options]
  */
 function showGoogleLoginDialog(options) {
   options = options || {};
@@ -899,7 +968,7 @@ function showGoogleLoginDialog(options) {
       logo_alignment: 'left',
       width: 280
     });
-  });
+  }, { autoSelect: false });
 }
 
 /**
@@ -2172,7 +2241,8 @@ function setupEventListeners() {
   });
   
   document.getElementById('loginButton').addEventListener('click', function() {
-    // 再ログイン時はトークンを残したまま開く（キャンセルで現状維持できるようにする）
+    // 再ログイン時は自動選択を止め、手動でアカウント選択できるようにする
+    disableGoogleAutoSelect();
     showGoogleLoginDialog({ cancellable: true });
   });
 
@@ -5026,6 +5096,8 @@ function enforceGoogleAuthFailureLock(rawMessage) {
     clearGoogleIdToken();
     clearAppSessionDataAfterAuthFailure();
     hidePageLoading();
+    // 未許可アカウントの自動再ログインを防ぐ
+    disableGoogleAutoSelect();
     showGoogleLoginDialog({ cancellable: true });
     var friendly = (String(rawMessage || '').indexOf('Email not authorized') >= 0)
       ? 'このGoogleアカウントは利用許可されていません。管理者に連絡するか、許可済みアカウントでログインしてください。'
