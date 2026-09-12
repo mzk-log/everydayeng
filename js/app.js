@@ -28,6 +28,7 @@ var GOOGLE_ID_TOKEN_STORAGE_KEY = 'googleIdToken';
 var GOOGLE_ACCESS_TOKEN_STORAGE_KEY = 'googleAccessToken';
 var googleSignInInitialized = false;
 var googleLoginDialogCancellable = false;
+var googleLoginForceAccountSelect = false; // ヘッダー「ログイン」からの切替時 true
 var googleAuthLockInProgress = false;
 var googleSignInAutoSelectEnabled = false;
 var googleSignInLoginHint = '';
@@ -1068,13 +1069,20 @@ function startGoogleOAuthTokenLogin() {
         scope: 'openid email profile',
         callback: handleGoogleTokenClientResponse,
         error_callback: function() {
-          setGoogleLoginError('ログインがキャンセルされたか、失敗しました。Braveのシールドを弱めて再試行してください。');
+          setGoogleLoginError('ログインがキャンセルされたか、失敗しました。もう一度お試しください。');
         }
       });
-      var hint = getStoredUserEmailForLoginHint();
-      var req = { prompt: '' };
-      if (hint) {
-        req.hint = hint;
+      var req = {};
+      if (googleLoginForceAccountSelect) {
+        // ヘッダー「ログイン」：アカウント選択を必ず出す
+        req.prompt = 'select_account';
+      } else {
+        // 起動時など：前回ユーザー継続を優先
+        req.prompt = '';
+        var hint = getStoredUserEmailForLoginHint();
+        if (hint) {
+          req.hint = hint;
+        }
       }
       tokenClient.requestAccessToken(req);
     } catch (e) {
@@ -1147,11 +1155,12 @@ function completeGoogleLoginWithEmail(email) {
 
 /**
  * Googleログイン画面を表示
- * @param {{ cancellable?: boolean, skipAutoPrompt?: boolean }} [options]
+ * @param {{ cancellable?: boolean, skipAutoPrompt?: boolean, forceAccountSelect?: boolean }} [options]
  */
 function showGoogleLoginDialog(options) {
   options = options || {};
   googleLoginDialogCancellable = options.cancellable !== false;
+  googleLoginForceAccountSelect = !!options.forceAccountSelect;
 
   var overlay = document.getElementById('googleLoginOverlay');
   if (overlay) {
@@ -1194,6 +1203,7 @@ function hideGoogleLoginDialog() {
     overlay.setAttribute('aria-hidden', 'true');
   }
   googleLoginDialogCancellable = false;
+  googleLoginForceAccountSelect = false;
 }
 
 /**
@@ -1500,6 +1510,13 @@ function loadCategories(options) {
         }
         // ボタンの状態を更新
         updateListNavButtons();
+        if (isLearningCompleted) {
+          if (isCompletionStudyFieldsCollapsed) {
+            maintainCompletionScrollAtTop();
+          } else {
+            maintainCompletionScrollAtBottom();
+          }
+        }
         syncDailyStudyStatsDisplay();
         // 解答時間優先モードなら全件Listを読み込み
         if (isDurationQuestionMethod()) {
@@ -2203,6 +2220,11 @@ function hideLearningCategorySelect() {
     learningSelect.value = '';
   }
   setListNavContainerVisible('screen2ListNavContainer', false);
+  // 完了UIを閉じるときは領域も解放（高さ予約を残さない）
+  var screen2Nav = document.getElementById('screen2ListNavContainer');
+  if (screen2Nav) {
+    screen2Nav.style.display = 'none';
+  }
   var learningListPrevButton = document.getElementById('learningListPrevButton');
   var learningListNextButton = document.getElementById('learningListNextButton');
   if (learningListPrevButton) {
@@ -2454,9 +2476,9 @@ function setupEventListeners() {
   });
   
   document.getElementById('loginButton').addEventListener('click', function() {
-    // 再ログイン時は自動選択を止め、手動でアカウント選択できるようにする
+    // 再ログイン時は自動選択を止め、アカウント切替できるようにする
     disableGoogleAutoSelect();
-    showGoogleLoginDialog({ cancellable: true });
+    showGoogleLoginDialog({ cancellable: true, forceAccountSelect: true });
   });
 
   var googleSignInAppButton = document.getElementById('googleSignInAppButton');
@@ -4958,9 +4980,31 @@ function setListNavContainerVisible(containerId, visible) {
   }
   listNavContainer.style.visibility = visible ? 'visible' : 'hidden';
   if (containerId === 'screen2ListNavContainer') {
-    listNavContainer.style.display = visible ? '' : 'none';
-    listNavContainer.style.pointerEvents = visible ? '' : 'none';
+    // 学習完了中は display:none せず高さを維持（<<>> 出現で下にズレるのを防ぐ）
+    if (isLearningCompleted) {
+      listNavContainer.style.display = '';
+      listNavContainer.style.pointerEvents = visible ? '' : 'none';
+    } else {
+      listNavContainer.style.display = visible ? '' : 'none';
+      listNavContainer.style.pointerEvents = visible ? '' : 'none';
+    }
   }
+}
+
+/**
+ * 学習完了直後：Category 下 <<>> の領域高さを先に確保する
+ */
+function reserveCompletionCategoryNavSpace() {
+  if (!isLearningCompleted) {
+    return;
+  }
+  var listNavContainer = document.getElementById('screen2ListNavContainer');
+  if (!listNavContainer) {
+    return;
+  }
+  listNavContainer.style.display = '';
+  listNavContainer.style.visibility = 'hidden';
+  listNavContainer.style.pointerEvents = 'none';
 }
 
 // Listナビゲーションボタンを表示
@@ -9160,6 +9204,62 @@ function scrollPageToBottom() {
 }
 
 /**
+ * 学習画面下ナビ＋余白のクリアランス（px）
+ * @returns {number}
+ */
+function getLearningBottomNavClearancePx() {
+  var navH = 58;
+  try {
+    var raw = window.getComputedStyle(document.documentElement)
+      .getPropertyValue('--app-nav-height')
+      .trim();
+    if (raw) {
+      var parsed = parseFloat(raw);
+      if (!isNaN(parsed) && parsed > 0) {
+        navH = parsed;
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  // .container.learning-mode の padding-bottom（nav+12）に少し余裕
+  return navH + 12 + 8;
+}
+
+/**
+ * 完了メッセージ全体が固定下ナビの上に見える位置へスクロール
+ */
+function scrollPageToShowCompletionMessage() {
+  var section = document.getElementById('completionMessageSection');
+  if (!section || section.style.display === 'none') {
+    scrollPageToBottom();
+    return;
+  }
+  var clearance = getLearningBottomNavClearancePx();
+  var rect = section.getBoundingClientRect();
+  var pageY = window.pageYOffset ||
+    (document.documentElement ? document.documentElement.scrollTop : 0) ||
+    (document.body ? document.body.scrollTop : 0) ||
+    0;
+  var absoluteBottom = pageY + rect.bottom;
+  var target = Math.max(0, absoluteBottom - window.innerHeight + clearance);
+  try {
+    if (typeof window.scrollTo === 'function') {
+      window.scrollTo(0, target);
+      return;
+    }
+  } catch (e) {
+    // fall through
+  }
+  if (document.documentElement) {
+    document.documentElement.scrollTop = target;
+  }
+  if (document.body) {
+    document.body.scrollTop = target;
+  }
+}
+
+/**
  * 学習完了画面：ページを上端に同期固定（カテゴリ切替後用）
  */
 function maintainCompletionScrollAtTop() {
@@ -9179,6 +9279,7 @@ function maintainCompletionScrollAtTop() {
 /**
  * 学習完了画面：ページを最下部に同期固定（初回完了表示用）
  * 出題ブロック畳み後は上端固定に切り替える
+ * ※最下部固定ではなく、完了メッセージが下ナビ上に収まる位置へ合わせる
  */
 function maintainCompletionScrollAtBottom() {
   if (isCompletionStudyFieldsCollapsed) {
@@ -9189,7 +9290,7 @@ function maintainCompletionScrollAtBottom() {
     return;
   }
   function pin() {
-    scrollPageToBottom();
+    scrollPageToShowCompletionMessage();
   }
   pin();
   requestAnimationFrame(function() {
@@ -9406,6 +9507,9 @@ function showCompletionMessage() {
   selectedQuestionIndices = [];
   isCategoryCompletionSessionView = true;
   showLearningCategorySelect();
+  // <<>> 出現前に高さを確保し、続けてナビを確定（後からの伸びを防ぐ）
+  reserveCompletionCategoryNavSpace();
+  updateListNavButtons();
   showCompletionListSection();
   displayList();
   setLearningNavIconsCategoryMode();

@@ -867,6 +867,12 @@ body::-webkit-scrollbar {
   visibility: hidden;
 }
 
+/* 学習完了：Category 下 <<>> の高さ予約（表示切替でレイアウトが伸びないようにする） */
+#screen2 #screen2ListNavContainer {
+  min-height: 22px;
+  box-sizing: border-box;
+}
+
 /* Listナビゲーションボタンコンテナ（内側） */
 .list-nav-buttons {
   display: flex;
