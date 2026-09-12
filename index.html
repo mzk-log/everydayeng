@@ -10,7 +10,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202609122144';
+    var FRONT_VERSION = '202609122200';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -49,7 +49,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202609122144">
+  <link rel="stylesheet" href="style.css?v=202609122200">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -533,13 +533,17 @@
     <div class="google-login-panel" role="dialog" aria-labelledby="googleLoginTitle" aria-modal="true">
       <h2 id="googleLoginTitle" class="google-login-title">ログイン</h2>
       <p class="google-login-message">Googleアカウントでログインしてください</p>
-      <div id="googleSignInButton" class="google-signin-button"></div>
+      <button type="button" id="googleSignInAppButton" class="google-signin-app-button">
+        <span class="google-signin-app-icon" aria-hidden="true"></span>
+        <span class="google-signin-app-label">Googleでログイン</span>
+      </button>
+      <div id="googleSignInButton" class="google-signin-button" style="display: none;"></div>
       <p id="googleLoginError" class="google-login-error" style="display: none;"></p>
       <button type="button" id="googleLoginCancelButton" class="google-login-cancel" style="display: none;">キャンセル</button>
     </div>
   </div>
 
-  <script src="js/app.js?v=202609122144"></script>
+  <script src="js/app.js?v=202609122200"></script>
 </body>
 </html>
 

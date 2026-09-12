@@ -19,11 +19,13 @@ var isNoteExpanded = false; // note 本文を開いているか（情報あり�
 var noteClickTimer = null; // note シングル／ダブルクリック判別用
 var NOTE_COLLAPSED_HINT = 'メモあり（タップで表示）';
 var userEmail = null; // ユーザーのメールアドレス（Googleログイン後）
-var googleIdToken = null; // Google IDトークン（GAS検証用。ステップ6でサーバ検証）
+var googleIdToken = null; // Google IDトークン（GIS credential）
+var googleAccessToken = null; // OAuth access token（自前ボタン／Brave等向け）
 
 // Google Identity Services 用クライアントID（GCP OAuth ウェブクライアント）
 var GOOGLE_OAUTH_CLIENT_ID = '451690742730-f7aubfes1nea66l0p3tavuibcgntbaa8.apps.googleusercontent.com';
 var GOOGLE_ID_TOKEN_STORAGE_KEY = 'googleIdToken';
+var GOOGLE_ACCESS_TOKEN_STORAGE_KEY = 'googleAccessToken';
 var googleSignInInitialized = false;
 var googleLoginDialogCancellable = false;
 var googleAuthLockInProgress = false;
@@ -606,7 +608,7 @@ function hideCategoryLoadingSpinner() {
 // メール／Googleログイン状態を確認し、必要に応じてログイン画面を表示
 function checkUserEmail() {
   restoreGoogleAuthFromStorage();
-  if (!userEmail || !hasValidGoogleIdToken()) {
+  if (!userEmail || !hasValidGoogleAuthToken()) {
     setAppAuthUiLocked(true);
     // モバイルは One Tap / prompt がボタン操作を阻害しやすいので手動ログインへ直行
     if (isLikelyMobileClient()) {
@@ -690,6 +692,11 @@ function restoreGoogleAuthFromStorage() {
   } catch (e2) {
     googleIdToken = null;
   }
+  try {
+    googleAccessToken = sessionStorage.getItem(GOOGLE_ACCESS_TOKEN_STORAGE_KEY) || null;
+  } catch (e3) {
+    googleAccessToken = null;
+  }
   if (googleIdToken && isGoogleIdTokenExpired(googleIdToken)) {
     clearGoogleIdToken();
   }
@@ -717,6 +724,10 @@ function appendAuthParams(params) {
   var token = getGoogleIdToken();
   if (token) {
     params.append('idToken', token);
+  }
+  var accessToken = getGoogleAccessToken();
+  if (accessToken) {
+    params.append('accessToken', accessToken);
   }
 }
 
@@ -760,10 +771,62 @@ function clearGoogleIdToken() {
 }
 
 /**
+ * @returns {string}
+ */
+function getGoogleAccessToken() {
+  if (googleAccessToken) {
+    return googleAccessToken;
+  }
+  try {
+    var stored = sessionStorage.getItem(GOOGLE_ACCESS_TOKEN_STORAGE_KEY);
+    if (stored) {
+      googleAccessToken = stored;
+      return stored;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return '';
+}
+
+/**
+ * @param {string} token
+ */
+function setGoogleAccessToken(token) {
+  googleAccessToken = token || null;
+  try {
+    if (token) {
+      sessionStorage.setItem(GOOGLE_ACCESS_TOKEN_STORAGE_KEY, token);
+    } else {
+      sessionStorage.removeItem(GOOGLE_ACCESS_TOKEN_STORAGE_KEY);
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+function clearGoogleAccessToken() {
+  setGoogleAccessToken('');
+}
+
+function clearAllGoogleAuthTokens() {
+  clearGoogleIdToken();
+  clearGoogleAccessToken();
+}
+
+/**
  * @returns {boolean}
  */
 function hasValidGoogleIdToken() {
   return !!getGoogleIdToken();
+}
+
+/**
+ * IDトークンまたは access token のいずれかがあれば認証済みとみなす
+ * @returns {boolean}
+ */
+function hasValidGoogleAuthToken() {
+  return !!getGoogleIdToken() || !!getGoogleAccessToken();
 }
 
 /**
@@ -814,14 +877,18 @@ function parseJwtPayload(token) {
  * @param {Function} [onFail]
  */
 function whenGoogleIdentityReady(onReady, onFail) {
-  if (window.google && google.accounts && google.accounts.id) {
+  function isReady() {
+    return !!(window.google && google.accounts && google.accounts.id &&
+      google.accounts.oauth2);
+  }
+  if (isReady()) {
     onReady();
     return;
   }
   var tries = 0;
   var timer = setInterval(function() {
     tries++;
-    if (window.google && google.accounts && google.accounts.id) {
+    if (isReady()) {
       clearInterval(timer);
       onReady();
     } else if (tries >= 100) {
@@ -949,7 +1016,7 @@ function disableGoogleAutoSelect() {
 }
 
 /**
- * Googleログイン成功コールバック
+ * Googleログイン成功コールバック（GIS credential / IDトークン）
  * @param {Object} response
  */
 function handleGoogleCredentialResponse(response) {
@@ -965,30 +1032,13 @@ function handleGoogleCredentialResponse(response) {
     showGoogleLoginDialog({ cancellable: true });
     return;
   }
+  clearGoogleAccessToken();
   setGoogleIdToken(response.credential);
-  userEmail = email;
-  try {
-    localStorage.setItem('userEmail', userEmail);
-  } catch (e) {
-    // ignore
-  }
-  userSettingsInitialSyncDone = false;
-  clearErrorMessages();
-  // アカウント切替時に前ユーザーの問題データが残らないようにする
-  clearAppSessionDataAfterAuthFailure();
-  syncDailyStudyStatsDisplay();
-  hideGoogleLoginDialog();
-  setAppAuthUiLocked(true);
-  syncUserSettingsWithServer(function(err) {
-    if (err && isGoogleAuthFailureMessage(String(err.message || err))) {
-      return;
-    }
-    loadCategories();
-  });
+  completeGoogleLoginWithEmail(email);
 }
 
 /**
- * 進行中の One Tap / prompt をキャンセル（その後の renderButton 阻害対策）
+ * 進行中の One Tap / prompt をキャンセル
  */
 function cancelGoogleIdentityPrompt() {
   try {
@@ -1002,12 +1052,105 @@ function cancelGoogleIdentityPrompt() {
 }
 
 /**
+ * 自前ボタン：OAuth access token ログイン（Brave Android 等向け）
+ */
+function startGoogleOAuthTokenLogin() {
+  setGoogleLoginError('');
+  whenGoogleIdentityReady(function() {
+    if (!google.accounts || !google.accounts.oauth2 ||
+        typeof google.accounts.oauth2.initTokenClient !== 'function') {
+      setGoogleLoginError('Googleログインを開始できませんでした。ページを再読み込みしてください。');
+      return;
+    }
+    try {
+      var tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_OAUTH_CLIENT_ID,
+        scope: 'openid email profile',
+        callback: handleGoogleTokenClientResponse,
+        error_callback: function() {
+          setGoogleLoginError('ログインがキャンセルされたか、失敗しました。Braveのシールドを弱めて再試行してください。');
+        }
+      });
+      var hint = getStoredUserEmailForLoginHint();
+      var req = { prompt: '' };
+      if (hint) {
+        req.hint = hint;
+      }
+      tokenClient.requestAccessToken(req);
+    } catch (e) {
+      setGoogleLoginError('Googleログインの起動に失敗しました: ' + e.toString());
+    }
+  }, function() {
+    setGoogleLoginError('Googleログインの読み込みに失敗しました。通信環境を確認して再読み込みしてください。');
+  });
+}
+
+/**
+ * oauth2 TokenClient 成功時
+ * @param {Object} tokenResponse
+ */
+function handleGoogleTokenClientResponse(tokenResponse) {
+  if (!tokenResponse || tokenResponse.error || !tokenResponse.access_token) {
+    setGoogleLoginError('ログインに失敗しました。もう一度お試しください。');
+    return;
+  }
+  var accessToken = tokenResponse.access_token;
+  fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+    headers: { Authorization: 'Bearer ' + accessToken }
+  })
+  .then(function(response) {
+    if (!response.ok) {
+      throw new Error('profile ' + response.status);
+    }
+    return response.json();
+  })
+  .then(function(profile) {
+    var email = profile && profile.email ? String(profile.email).trim() : '';
+    if (!email) {
+      setGoogleLoginError('メールアドレスを取得できませんでした。');
+      return;
+    }
+    clearGoogleIdToken();
+    setGoogleAccessToken(accessToken);
+    completeGoogleLoginWithEmail(email);
+  })
+  .catch(function(error) {
+    setGoogleLoginError('ユーザー情報の取得に失敗しました。もう一度お試しください。');
+    console.warn(error);
+  });
+}
+
+/**
+ * ログイン成功後の共通処理
+ * @param {string} email
+ */
+function completeGoogleLoginWithEmail(email) {
+  userEmail = email;
+  try {
+    localStorage.setItem('userEmail', userEmail);
+  } catch (e) {
+    // ignore
+  }
+  userSettingsInitialSyncDone = false;
+  clearErrorMessages();
+  clearAppSessionDataAfterAuthFailure();
+  syncDailyStudyStatsDisplay();
+  hideGoogleLoginDialog();
+  setAppAuthUiLocked(true);
+  syncUserSettingsWithServer(function(err) {
+    if (err && isGoogleAuthFailureMessage(String(err.message || err))) {
+      return;
+    }
+    loadCategories();
+  });
+}
+
+/**
  * Googleログイン画面を表示
  * @param {{ cancellable?: boolean, skipAutoPrompt?: boolean }} [options]
  */
 function showGoogleLoginDialog(options) {
   options = options || {};
-  // 未指定時はキャンセル可（起動時・再ログイン・未許可後いずれも閉じられる）
   googleLoginDialogCancellable = options.cancellable !== false;
 
   var overlay = document.getElementById('googleLoginOverlay');
@@ -1020,30 +1163,25 @@ function showGoogleLoginDialog(options) {
     cancelBtn.style.display = googleLoginDialogCancellable ? 'inline-block' : 'none';
   }
   setGoogleLoginError('');
-  // ページローディングが残っているとボタンが見えないため隠す
   hidePageLoading();
-  // 先に prompt を止めてからボタンを描画（モバイルで無反応になるのを防ぐ）
   cancelGoogleIdentityPrompt();
-  ensureGoogleSignInInitialized(function() {
-    cancelGoogleIdentityPrompt();
-    var btnHost = document.getElementById('googleSignInButton');
-    if (!btnHost) {
-      return;
-    }
+
+  // Brave等で GIS iframe ボタンが死ぬため、自前ボタンを主にする
+  var appBtn = document.getElementById('googleSignInAppButton');
+  if (appBtn) {
+    appBtn.style.display = 'inline-flex';
+  }
+  var btnHost = document.getElementById('googleSignInButton');
+  if (btnHost) {
     btnHost.innerHTML = '';
-    // レイアウト確定後に描画（モバイルで iframe サイズ0になるのを回避）
-    requestAnimationFrame(function() {
-      google.accounts.id.renderButton(btnHost, {
-        type: 'standard',
-        theme: 'outline',
-        size: 'large',
-        text: 'signin_with',
-        shape: 'rectangular',
-        logo_alignment: 'left',
-        width: Math.min(280, Math.max(240, (btnHost.clientWidth || 280)))
-      });
-    });
-  }, { autoSelect: false });
+    btnHost.style.display = 'none';
+  }
+
+  whenGoogleIdentityReady(function() {
+    // TokenClient 用にライブラリ準備完了を待つだけ
+  }, function() {
+    setGoogleLoginError('Googleログインの読み込みに失敗しました。通信環境を確認して再読み込みしてください。');
+  });
 }
 
 /**
@@ -1068,7 +1206,7 @@ function cancelGoogleLoginDialogIfAllowed() {
   }
   hideGoogleLoginDialog();
   setGoogleLoginError('');
-  if (!hasValidGoogleIdToken()) {
+  if (!hasValidGoogleAuthToken()) {
     clearAppSessionDataAfterAuthFailure();
     hidePageLoading();
   }
@@ -1386,7 +1524,7 @@ function loadCategories(options) {
         }
         // ページローディングを非表示（エラー時も非表示）
         hidePageLoading();
-        if (!isGoogleAuthFailureMessage(loadErr) && hasValidGoogleIdToken()) {
+        if (!isGoogleAuthFailureMessage(loadErr) && hasValidGoogleAuthToken()) {
           setAppAuthUiLocked(false);
         }
       }
@@ -1403,7 +1541,7 @@ function loadCategories(options) {
       }
       // ページローディングを非表示（エラー時も非表示）
       hidePageLoading();
-      if (!isGoogleAuthFailureMessage(accessErr) && hasValidGoogleIdToken()) {
+      if (!isGoogleAuthFailureMessage(accessErr) && hasValidGoogleAuthToken()) {
         setAppAuthUiLocked(false);
       }
     });
@@ -2320,6 +2458,13 @@ function setupEventListeners() {
     disableGoogleAutoSelect();
     showGoogleLoginDialog({ cancellable: true });
   });
+
+  var googleSignInAppButton = document.getElementById('googleSignInAppButton');
+  if (googleSignInAppButton) {
+    googleSignInAppButton.addEventListener('click', function() {
+      startGoogleOAuthTokenLogin();
+    });
+  }
 
   var googleLoginCancelButton = document.getElementById('googleLoginCancelButton');
   if (googleLoginCancelButton) {
@@ -5151,6 +5296,7 @@ function showError(message) {
 function isGoogleAuthFailureMessage(message) {
   var msg = String(message || '');
   return msg.indexOf('idToken') >= 0 ||
+    msg.indexOf('accessToken') >= 0 ||
     msg.indexOf('Google token') >= 0 ||
     msg.indexOf('sign in with Google') >= 0 ||
     msg.indexOf('sign in again') >= 0 ||
@@ -5168,7 +5314,7 @@ function enforceGoogleAuthFailureLock(rawMessage) {
   }
   googleAuthLockInProgress = true;
   try {
-    clearGoogleIdToken();
+    clearAllGoogleAuthTokens();
     clearAppSessionDataAfterAuthFailure();
     hidePageLoading();
     // 未許可アカウントの自動再ログインを防ぐ
