@@ -571,7 +571,7 @@ html {
   margin: 0;
   padding: 0;
   --app-header-height: 54px;
-  --app-nav-height: 56px;
+  --app-nav-height: 58px;
   --app-start-height: 58px;
   overflow-x: hidden;
   overflow-y: auto;
@@ -746,6 +746,18 @@ body::-webkit-scrollbar {
   line-height: 1.3;
   flex-shrink: 0;
   white-space: nowrap;
+}
+
+.app-header .app-header-version {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0;
+  padding: 0 2px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  color: #555;
 }
 
 .app-header .audio-source-debug {
@@ -1357,73 +1369,10 @@ tr:last-child td {
   white-space: pre-line;
 }
 
-/* 出題／解答欄（全幅）＋再生ボタン（欄の右上・フロー外） */
-.field-with-play {
-  position: relative;
-  width: 100%;
-  box-sizing: border-box;
-}
-
+/* 出題／解答テキスト欄 */
 .field-with-play-main {
   width: 100%;
   min-width: 0;
-}
-
-/* 欄の右上に重ねる（高さは取らず、直上の行右端に見える） */
-.field-play-button {
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 2;
-  width: 27px;  /* 旧36pxの75% */
-  height: 27px;
-  margin: 0;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transform: translateY(calc(-100% - 2px));
-  touch-action: manipulation;
-  -webkit-touch-callout: none;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.field-play-button img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  pointer-events: none;
-}
-
-.field-play-button:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.field-play-button.is-long-pressing {
-  transform: translateY(calc(-100% - 2px)) scale(0.92);
-  opacity: 0.85;
-}
-
-.field-play-button .play-button-spinner {
-  width: 15px;
-  height: 15px;
-  border-width: 2px;
-}
-
-/* 再生ボタンと重ならないよう直上行の右に余白 */
-.question-section .question-info {
-  padding-right: 34px;
-  box-sizing: border-box;
-}
-
-.answer-section > .section-label {
-  padding-right: 34px;
-  box-sizing: border-box;
 }
 
 /* 学習回数・最終学習日（背景なし） */
@@ -1768,7 +1717,7 @@ tr:last-child td {
   display: flex;
   justify-content: space-around;  /* 等間隔配置 */
   align-items: center;
-  padding: 10px 20px;  /* 上下10px、左右20px */
+  padding: 14px 20px 8px;  /* 上を厚くし Q/Ans ラベル用余白。ボタンは相対的にやや下へ */
   width: 480px;  /* 中央480px幅 */
   max-width: 480px;
   margin: 0;
@@ -1808,26 +1757,105 @@ tr:last-child td {
   justify-content: center;
 }
 
-/* セッション回答件数（ナビゲーションバー左枠） */
-.navigation-bar .session-ans-count-slot {
+/* 下ナビ：解答再生（左）／出題再生（リトライとHOMEの間）。枠は他ナビと同サイズ・上下中央。ラベルは上余白側へ absolute */
+.navigation-bar .nav-answer-play-slot,
+.navigation-bar .nav-question-play-slot {
   position: relative;
   left: auto;
-  order: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 30px;
+  width: 30px;
   height: 30px;
+  min-width: 30px;
   flex-shrink: 0;
 }
 
-.navigation-bar .session-ans-count {
-  font-size: 14px;
+.navigation-bar .nav-answer-play-slot {
+  order: 1;
+}
+
+.navigation-bar .nav-question-play-slot {
+  order: 4;
+}
+
+.navigation-bar .nav-answer-play-label,
+.navigation-bar .nav-question-play-label {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translateX(-50%);
+  margin-bottom: 6px;
+  font-size: 9px;
   font-weight: 600;
   line-height: 1;
   color: #333;
   white-space: nowrap;
   user-select: none;
+  pointer-events: none;
+}
+
+.navigation-bar .nav-answer-play-button,
+.navigation-bar .nav-question-play-button {
+  position: relative;
+  top: auto;
+  right: auto;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: none;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.navigation-bar .nav-answer-play-button img,
+.navigation-bar .nav-question-play-button img {
+  width: 120%;
+  height: 120%;
+  max-width: none;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.navigation-bar .nav-answer-play-button .play-button-spinner,
+.navigation-bar .nav-question-play-button .play-button-spinner {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
+}
+
+.navigation-bar .nav-answer-play-button.is-long-pressing,
+.navigation-bar .nav-question-play-button.is-long-pressing {
+  transform: scale(0.92);
+  opacity: 0.85;
+}
+
+.navigation-bar .nav-answer-play-slot.is-inactive,
+.navigation-bar .nav-question-play-slot.is-inactive {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.navigation-bar .nav-answer-play-slot.is-inactive .nav-answer-play-button:disabled,
+.navigation-bar .nav-question-play-slot.is-inactive .nav-question-play-button:disabled {
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.navigation-bar .nav-answer-play-button:disabled,
+.navigation-bar .nav-question-play-button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 /* プラスボタン（もう一度）: 学習中は中央の右隣（順序3）。回転アイコン中央に「1」を重ねる */
@@ -1856,29 +1884,6 @@ tr:last-child td {
   color: #e53935;
   pointer-events: none;
   user-select: none;
-}
-
-/* 右枠: 常に空きスペーサー（順序4。中央位置維持用） */
-.nav-button-slot {
-  position: relative;
-  left: auto;
-  order: 4;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  flex-shrink: 0;
-}
-
-.nav-button-slot.is-spacer {
-  visibility: hidden;
-  pointer-events: none;
-}
-
-#nextButton {
-  position: relative;
-  left: auto;
 }
 
 /* ホームボタン: 右余白を削除、順序を5に */
@@ -2395,19 +2400,6 @@ body:has(#screen2.active) .login-button {
 #screen2 .section-label {
   font-size: 14px;
   margin-bottom: 5px;
-}
-
-#screen2 .field-play-button {
-  width: 24px;  /* 旧32pxの75% */
-  height: 24px;
-}
-
-#screen2 .question-section .question-info {
-  padding-right: 30px;
-}
-
-#screen2 .answer-section > .section-label {
-  padding-right: 30px;
 }
 
 /* 学習画面の質問情報 */
@@ -3155,7 +3147,7 @@ body:has(#screen2.active) .login-button {
   /* ナビゲーションバー(480px) - 元の並び順で等間隔に横並び */
   .navigation-bar {
     justify-content: space-around !important;
-    padding: 10px 20px !important;
+    padding: 14px 20px 8px !important;
     width: 100% !important;  /* 横一杯に */
     max-width: none !important;  /* 最大幅の制限を解除 */
     margin: 0 !important;
@@ -3186,8 +3178,8 @@ body:has(#screen2.active) .login-button {
     order: 2 !important;
   }
 
-  /* セッション回答件数(480px) - 順序を1に */
-  .navigation-bar .session-ans-count-slot {
+  /* 下ナビ左：解答再生(480px) - 順序を1に */
+  .navigation-bar .nav-answer-play-slot {
     position: relative !important;
     left: auto !important;
     order: 1 !important;
@@ -3200,16 +3192,11 @@ body:has(#screen2.active) .login-button {
     order: 3 !important;
   }
 
-  /* 右枠空きスペーサー(480px)（順序4） */
-  .nav-button-slot {
+  /* 下ナビ：出題再生(480px)（順序4） */
+  .navigation-bar .nav-question-play-slot {
     position: relative !important;
     left: auto !important;
     order: 4 !important;
-  }
-
-  #nextButton {
-    position: relative !important;
-    left: auto !important;
   }
 
   /* ホームボタン(480px) - 右余白を調整、順序を5に */

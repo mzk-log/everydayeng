@@ -10,7 +10,8 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202609112044';
+    var FRONT_VERSION = '202609121039';
+    window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
     if (!WEB_APP_URL || WEB_APP_URL.indexOf('http') !== 0) {
@@ -48,7 +49,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202609112044">
+  <link rel="stylesheet" href="style.css?v=202609121039">
 </head>
 <body>
   <!-- ページローディングオーバーレイ -->
@@ -207,6 +208,7 @@
           <img src="img/menu.png" alt="メニュー" class="hamburger-icon">
         </button>
         <h1 class="app-header-title">Everyday English</h1>
+        <div class="app-header-version" id="appHeaderVersion" aria-label="フロント版"></div>
         <div class="audio-source-debug" id="audioSourceDebug" aria-live="polite"></div>
       </div>
       <div class="app-header-tools">
@@ -325,46 +327,28 @@
         <div class="section question-section" id="questionSection">
           <div class="section-label" id="questionSectionLabel"></div>
           <div class="question-info" id="questionInfo">[1/1]</div>
-          <div class="field-with-play">
-            <button class="field-play-button" id="questionPlayButton" type="button" disabled
-              aria-label="出題を再生。長押しで音声を再作成"
-              title="短押しで再生 / 長押しで再作成">
-              <img src="img/play-button.png" alt="">
-            </button>
-            <div class="field-with-play-main">
-              <div class="question-text" id="questionText"></div>
-              <textarea id="questionTextEdit" class="field-text-edit" style="display: none;"></textarea>
-              <div class="field-update-controls" id="questionUpdateControls" style="display: none;">
-                <button class="answer-update-button" id="questionUpdateButton" type="button">更新</button>
-                <button class="answer-end-button" id="questionEndButton" type="button">終了</button>
-              </div>
-            </div>
+          <div class="question-text" id="questionText"></div>
+          <textarea id="questionTextEdit" class="field-text-edit" style="display: none;"></textarea>
+          <div class="field-update-controls" id="questionUpdateControls" style="display: none;">
+            <button class="answer-update-button" id="questionUpdateButton" type="button">更新</button>
+            <button class="answer-end-button" id="questionEndButton" type="button">終了</button>
           </div>
           <div class="learning-meta" id="learningMeta"></div>
         </div>
         
         <div class="section answer-section" id="answerSection">
           <div class="section-label" id="answerSectionLabel"></div>
-          <div class="field-with-play">
-            <button class="field-play-button" id="answerPlayButton" type="button" disabled
-              aria-label="解答を再生。長押しで音声を再作成"
-              title="短押しで再生 / 長押しで再作成">
-              <img src="img/play-button.png" alt="">
+          <div class="answer-button-container" id="answerButtonContainer">
+            <!-- 空の黒いボックスとして残す -->
+          </div>
+          <div class="answer-text answer-hidden" id="answerTextDisplay" style="display: none;"></div>
+          <textarea id="answerTextEdit" class="field-text-edit answer-text-edit" style="display: none;"></textarea>
+          <div class="field-update-controls answer-update-controls" id="answerUpdateControls" style="display: none;">
+            <button class="answer-update-button" id="answerUpdateButton" type="button">更新</button>
+            <button class="answer-end-button" id="answerEndButton" type="button">終了</button>
+            <button class="answer-mic-button" id="answerMicButton" type="button" aria-hidden="true" tabindex="-1">
+              <span class="mic-icon">🎤</span>
             </button>
-            <div class="field-with-play-main">
-              <div class="answer-button-container" id="answerButtonContainer">
-                <!-- 空の黒いボックスとして残す -->
-              </div>
-              <div class="answer-text answer-hidden" id="answerTextDisplay" style="display: none;"></div>
-              <textarea id="answerTextEdit" class="field-text-edit answer-text-edit" style="display: none;"></textarea>
-              <div class="field-update-controls answer-update-controls" id="answerUpdateControls" style="display: none;">
-                <button class="answer-update-button" id="answerUpdateButton" type="button">更新</button>
-                <button class="answer-end-button" id="answerEndButton" type="button">終了</button>
-                <button class="answer-mic-button" id="answerMicButton" type="button" aria-hidden="true" tabindex="-1">
-                  <span class="mic-icon">🎤</span>
-                </button>
-              </div>
-            </div>
           </div>
         </div>
         
@@ -416,8 +400,13 @@
       </div>
       
       <div class="navigation-bar">
-        <div class="session-ans-count-slot" id="sessionAnsCountSlot" aria-live="polite">
-          <span class="session-ans-count" id="sessionAnsCount">0件</span>
+        <div class="nav-answer-play-slot is-inactive" id="navAnswerPlaySlot">
+          <span class="nav-answer-play-label" aria-hidden="true">Ans</span>
+          <button class="nav-answer-play-button" id="answerPlayButton" type="button" disabled
+            aria-label="解答を再生。長押しで音声を再作成"
+            title="短押しで再生 / 長押しで再作成">
+            <img src="img/play-button.png" alt="">
+          </button>
         </div>
         <button class="nav-answer-button" id="navAnswerButton" type="button">
           <div class="nav-answer-text blinking" id="navAnswerText">Ans</div>
@@ -427,9 +416,12 @@
           <img src="img/rotate-right-solid.png" alt="">
           <span class="plus-retry-badge" aria-hidden="true">1</span>
         </button>
-        <div class="nav-button-slot is-spacer" id="nextButtonSlot" aria-hidden="true">
-          <button class="nav-button" id="nextButton" type="button" disabled tabindex="-1" aria-hidden="true">
-            <img src="img/angles-right-solid.png" alt="">
+        <div class="nav-question-play-slot is-inactive" id="navQuestionPlaySlot">
+          <span class="nav-question-play-label" aria-hidden="true">Q</span>
+          <button class="nav-question-play-button" id="questionPlayButton" type="button" disabled
+            aria-label="出題を再生。長押しで音声を再作成"
+            title="短押しで再生 / 長押しで再作成">
+            <img src="img/play-button.png" alt="">
           </button>
         </div>
         <button class="nav-button" id="homeButton" type="button">
@@ -533,7 +525,7 @@
     </div>
   </div>
 
-  <script src="js/app.js?v=202609112044"></script>
+  <script src="js/app.js?v=202609121039"></script>
 </body>
 </html>
 

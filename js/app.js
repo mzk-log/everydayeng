@@ -25,8 +25,6 @@ var isInRetryMode = false; // 再チャレンジモードかどうか
 var retryQuestionIndex = 0; // 現在の再チャレンジ問題のインデックス
 var completedQuestionIndices = []; // 完了した問題のインデックスを保存（灰色表示）
 var isLearningCompleted = false; // 学習が完了したかどうか
-var sessionAnsweredCount = 0; // START〜HOME のセッション回答件数（一意問題）
-var sessionAnsweredItemIds = {}; // セッション内で件数に含めた問題ID
 var completionMessageIconRevealTimeoutId = null; // 完了メッセージアイコン表示用タイマー
 var isCompletionCongratsCleared = false; // Next等でお祝い文言を空にしたか
 var isCompletionStudyFieldsCollapsed = false; // 完了後カテゴリ切替で出題／解答／note を畳んだか
@@ -544,6 +542,9 @@ window.onload = function() {
   
   // トグルボタンの初期状態を設定（リスニングON時は出題読みON固定・解答読みON）
   syncQuestionToggleForListeningMode();
+
+  // ヘッダー：フロント版表示
+  syncAppHeaderVersionDisplay();
   
   // ヘッダー高さを同期（コンテンツの padding-top 用）
   requestAnimationFrame(function() {
@@ -870,12 +871,25 @@ function loadCategories(options) {
           populateCategorySelectOptions(select, valueToRestore);
         }
         // 学習完了中なら学習画面のドロップダウンも同期
+        // 中央Next等で既に進んでいる場合は select.value を優先（currentCategoryNo 固定で巻き戻さない）
         var learningSelectContainer = document.getElementById('learningCategorySelectContainer');
         if (learningSelectContainer && learningSelectContainer.style.display !== 'none' && isLearningCompleted) {
-          populateCategorySelectOptions(
-            document.getElementById('learningCategorySelect'),
-            currentCategoryNo
-          );
+          var learningSelectEl = document.getElementById('learningCategorySelect');
+          var learningValueToRestore = '';
+          if (learningSelectEl && learningSelectEl.value) {
+            learningValueToRestore = String(learningSelectEl.value);
+          } else if (currentCategoryNo != null && currentCategoryNo !== '') {
+            learningValueToRestore = String(currentCategoryNo);
+          }
+          if (learningValueToRestore && !isCategoryNoVisible(learningValueToRestore)) {
+            if (currentCategoryNo != null && currentCategoryNo !== '' &&
+                isCategoryNoVisible(currentCategoryNo)) {
+              learningValueToRestore = String(currentCategoryNo);
+            } else {
+              learningValueToRestore = '';
+            }
+          }
+          populateCategorySelectOptions(learningSelectEl, learningValueToRestore);
         }
         if (loadingSpinner) {
           loadingSpinner.style.display = 'none';
@@ -4027,6 +4041,31 @@ function applyCompletionListMinHeight(listContainerEl, heightPx) {
   }
 }
 
+/**
+ * 完了Listの minHeight を解除（実コンテンツ高へ縮められるようにする）
+ * @param {HTMLElement|null} listContainerEl
+ */
+function clearCompletionListMinHeight(listContainerEl) {
+  if (!listContainerEl) {
+    return;
+  }
+  listContainerEl.style.minHeight = '';
+}
+
+/**
+ * 完了List：読み込み待ち中のみ現在高さを一時ピン留めする
+ * @param {HTMLElement|null} listContainerEl
+ */
+function pinCompletionListMinHeightForLoading(listContainerEl) {
+  if (!listContainerEl || !isLearningCompleted) {
+    return;
+  }
+  var h = Math.max(0, Math.floor(listContainerEl.offsetHeight || 0));
+  if (h > 0) {
+    applyCompletionListMinHeight(listContainerEl, h);
+  }
+}
+
 // リストを表示
 function displayList() {
   var ui = getListUiConfig();
@@ -4034,10 +4073,13 @@ function displayList() {
   if (!tableBody) return;
   
   var listContainerEl = ui.containerId ? document.getElementById(ui.containerId) : null;
+  // 再描画中の潰し防止で一時ピン。描画後は実高に合わせて解除／付け直し（間延び防止）
   var pinnedMinHeight = 0;
   if (isLearningCompleted && listContainerEl) {
     pinnedMinHeight = Math.max(0, Math.floor(listContainerEl.offsetHeight || 0));
-    applyCompletionListMinHeight(listContainerEl, pinnedMinHeight);
+    if (pinnedMinHeight > 0) {
+      applyCompletionListMinHeight(listContainerEl, pinnedMinHeight);
+    }
   }
   
   tableBody.innerHTML = '';
@@ -4163,10 +4205,13 @@ function displayList() {
   }
   
   if (isLearningCompleted) {
-    // 完了画面では List 高さを下げない（解除すると List〜ナビ間が一度潰れてから戻る）
+    // 描画後は実コンテンツ高に合わせる（大きい方に張り付かせない＝間延び防止）
     if (listContainerEl) {
-      var afterHeight = listContainerEl.offsetHeight;
-      applyCompletionListMinHeight(listContainerEl, Math.max(pinnedMinHeight || 0, afterHeight || 0));
+      clearCompletionListMinHeight(listContainerEl);
+      var contentHeight = Math.max(0, Math.floor(listContainerEl.offsetHeight || 0));
+      if (contentHeight > 0) {
+        applyCompletionListMinHeight(listContainerEl, contentHeight);
+      }
       bindCompletionListImagesToKeepScroll(listContainerEl);
     }
     updateNavAnswerButton();
@@ -4646,9 +4691,8 @@ function startLearning() {
 
   ensureLearningTimeCounterStarted();
   
-  // 完了時カテゴリナビ用アイコンを通常（件数表示＋右スペーサー）に戻す
+  // 完了時カテゴリナビ用アイコンを通常（左＝解答再生・右スペーサー）に戻す
   setLearningNavIconsNormal();
-  updateSessionAnsweredCountDisplay();
   
   // 元のデータを保存（学習日優先の Plus 用セッションも保持）
   originalCategoryData = currentCategoryData.slice();
@@ -4974,45 +5018,6 @@ function recordDailyStudyStatsOnAns(item) {
   updateDailyStudyStatsDisplay();
 }
 
-/**
- * セッション回答件数表示を更新（○件）
- */
-function updateSessionAnsweredCountDisplay() {
-  var el = document.getElementById('sessionAnsCount');
-  if (el) {
-    el.textContent = String(sessionAnsweredCount) + '件';
-  }
-}
-
-/**
- * セッション回答件数を 0 に戻す（HOME 時）
- */
-function resetSessionAnsweredCount() {
-  sessionAnsweredCount = 0;
-  sessionAnsweredItemIds = {};
-  updateSessionAnsweredCountDisplay();
-}
-
-/**
- * Ans 時：セッション回答件数を更新（問題IDごとに1回のみ。完了・閲覧中は加算しない）
- * @param {Object} item
- */
-function recordSessionAnsweredOnAns(item) {
-  if (isLearningCompleted) {
-    return;
-  }
-  if (!item || item.id == null || String(item.id) === '') {
-    return;
-  }
-  var key = String(item.id);
-  if (sessionAnsweredItemIds[key]) {
-    return;
-  }
-  sessionAnsweredItemIds[key] = true;
-  sessionAnsweredCount += 1;
-  updateSessionAnsweredCountDisplay();
-}
-
 // 学習時間を更新
 function updateLearningTime() {
   syncDailyStudyStatsDisplay();
@@ -5239,28 +5244,27 @@ function showAnswer() {
   // 中央ボタンを Next に切り替え（時間表示は維持）
   updateNavAnswerButton();
   
-  // 出題／解答の再生ボタンを更新（Ans後なので解答再生を有効化）
-  updateFieldPlayButtons();
-  
   // 今日の学習統計（LastDate 更新前に判定）
   recordDailyStudyStatsOnAns(item);
-  // セッション回答件数（同一問題は1回のみ。完了画面では加算しない）
-  recordSessionAnsweredOnAns(item);
 
   // TotalStudyCount / DailyStudyCount / Duration / LastDate をメモリ即反映 → 画面メタ更新 → GASは1リクエストで非同期
   persistAnsStudyStatsAsync(item, stopwatchElapsed);
   updateLearningMetaDisplay(item, 'learningMeta');
   
-  // ナビゲーションボタンを有効化
+  // 解答読みON時は先に自動再生開始（busy を立ててから UI 更新し、Q/Next の隙間をなくす）
+  var willAutoPlayAnswer = isAnswerToggleActive && !isUpdateMode;
+  if (willAutoPlayAnswer) {
+    playFieldAudio('answer');
+  }
+  
+  // 出題／解答の再生ボタンを更新
+  updateFieldPlayButtons();
+  
+  // ナビゲーションボタンを有効化（busy 中は Next/Plus/HOME も抑止）
   updateNavigationButtons();
   
   // プラスボタンを有効化（回答表示中、学習完了でない場合）
   updatePlusButton();
-  
-  // 解答読みトグルボタンがONの場合、自動再生（更新モード中は再生しない）
-  if (isAnswerToggleActive && !isUpdateMode) {
-    playFieldAudio('answer');
-  }
   
   // 出題／解答／note の編集・note開閉を有効化
   setupFieldEditDoubleClick();
@@ -6258,11 +6262,14 @@ function bindFieldPlayButton(button, fieldType) {
 
 /**
  * 出題／解答の再生ボタン有効／無効を更新
+ * 出題再生＝下ナビ（リトライとHOMEの間）、解答再生＝下ナビ左。無効時も枠維持し薄い表示（is-inactive）
  */
 function updateFieldPlayButtons() {
   var item = currentCategoryData[currentQuestionIndex];
   var qBtn = getFieldPlayButton('question');
   var aBtn = getFieldPlayButton('answer');
+  var questionPlaySlot = document.getElementById('navQuestionPlaySlot');
+  var answerPlaySlot = document.getElementById('navAnswerPlaySlot');
   
   function isLoading(btn) {
     return !!(btn && btn.querySelector('.play-button-spinner'));
@@ -6271,6 +6278,12 @@ function updateFieldPlayButtons() {
   if (!item || isLearningCompleted) {
     if (qBtn && !isLoading(qBtn)) qBtn.disabled = true;
     if (aBtn && !isLoading(aBtn)) aBtn.disabled = true;
+    if (questionPlaySlot) {
+      questionPlaySlot.classList.add('is-inactive');
+    }
+    if (answerPlaySlot) {
+      answerPlaySlot.classList.add('is-inactive');
+    }
     // 学習完了時はナビの再入更新ループを避ける
     if (!isLearningCompleted) {
       refreshAdvanceNavControls();
@@ -6279,13 +6292,23 @@ function updateFieldPlayButtons() {
   }
   
   var qText = getEffectiveQuestion(item);
+  var audioBusy = activePlayField !== null;
+  var canPlayQuestion = !!qText && !isImageUrl(qText) && !audioBusy;
   if (qBtn && !isLoading(qBtn)) {
-    qBtn.disabled = !qText || isImageUrl(qText) || activePlayField === 'question';
+    qBtn.disabled = !canPlayQuestion;
+  }
+  if (questionPlaySlot) {
+    questionPlaySlot.classList.toggle('is-inactive', !canPlayQuestion || isLoading(qBtn));
   }
   
   var aText = getEffectiveAnswer(item);
+  var canPlayAnswer = !!isAnswerShown && !!aText && !isImageUrl(aText) && !audioBusy;
   if (aBtn && !isLoading(aBtn)) {
-    aBtn.disabled = !isAnswerShown || !aText || isImageUrl(aText) || activePlayField === 'answer';
+    aBtn.disabled = !canPlayAnswer;
+  }
+  if (answerPlaySlot) {
+    // 取得中スピナー表示中は操作不可だが、枠は維持（薄い表示）
+    answerPlaySlot.classList.toggle('is-inactive', !canPlayAnswer || isLoading(aBtn));
   }
   
   refreshAdvanceNavControls();
@@ -6431,19 +6454,28 @@ function createMp3AudioFromBase64(audioContent) {
 
 /**
  * 再生中の音声を停止し、欄の再生ボタン状態を戻す
+ * @param {{ skipButtonUpdate?: boolean, preserveBusy?: boolean }} [options]
  */
-function stopCurrentAudioPlayback() {
+function stopCurrentAudioPlayback(options) {
+  options = options || {};
   var prevField = activePlayField;
   releaseCurrentAudioElement();
-  activePlayField = null;
+  if (!options.preserveBusy) {
+    activePlayField = null;
+  }
   if (prevField) {
     var prevBtn = getFieldPlayButton(prevField);
     if (prevBtn && prevBtn.querySelector('.play-button-spinner')) {
       hidePlayButtonLoading(prevField);
+      if (!options.skipButtonUpdate) {
+        updateFieldPlayButtons();
+      }
       return;
     }
   }
-  updateFieldPlayButtons();
+  if (!options.skipButtonUpdate) {
+    updateFieldPlayButtons();
+  }
 }
 
 /**
@@ -6606,7 +6638,10 @@ function playFieldAudio(fieldType, forceRefresh) {
     return;
   }
   
-  stopCurrentAudioPlayback();
+  // 停止〜取得開始のあいだも busy を維持（Ans直後の Q/Next 押下防止）
+  stopCurrentAudioPlayback({ skipButtonUpdate: true });
+  activePlayField = fieldType;
+  updateFieldPlayButtons();
   
   var voiceGender = fieldType === 'question' ? getAudioVoice('question') : getAudioVoice('answer');
   var speed = fieldType === 'question' ? getAudioSpeed('question') : getAudioSpeed('answer');
@@ -6682,14 +6717,28 @@ function showAudioSourceDebug(source) {
     return;
   }
   var labelMap = {
-    memory: 'メモリ',
-    localStorage: 'localStorage',
-    Drive: 'Drive',
+    memory: 'Mem',
+    localStorage: 'LocalS',
+    Drive: 'Drv',
     TTS: 'TTS'
   };
   var label = labelMap[source] || String(source || '');
-  el.textContent = '音声:' + label;
+  el.textContent = label;
   el.style.display = 'inline-block';
+}
+
+/**
+ * ヘッダーにフロント版を表示（タイトル右）
+ */
+function syncAppHeaderVersionDisplay() {
+  var el = document.getElementById('appHeaderVersion');
+  if (!el) {
+    return;
+  }
+  var ver = (typeof window.APP_FRONT_VERSION === 'string' && window.APP_FRONT_VERSION)
+    ? window.APP_FRONT_VERSION
+    : '';
+  el.textContent = ver;
 }
 
 /**
@@ -7649,9 +7698,8 @@ function startRetryQuestions() {
 function updateNavigationButtons() {
   syncLearningCompletedScreenClass();
   
-  // 学習中・完了とも：[○件] [中央] [プラス] [空き] [HOME]
+  // 学習中・完了とも：[Ans再生] [中央] [プラス] [Q再生] [HOME]
   setLearningNavIconsNormal();
-  updateSessionAnsweredCountDisplay();
   updateNavAnswerButton();
   updateHomeButton();
 }
@@ -7670,22 +7718,10 @@ function syncLearningCompletedScreenClass() {
 }
 
 /**
- * 右枠（旧 >>）を非表示スペーサーにする（横間隔・中央位置の維持）
+ * 下ナビレイアウトを学習用に整える（互換用。出題再生スロットが右枠を担う）
  */
 function setNextButtonAsUnusedSpacer() {
-  var nextSlot = document.getElementById('nextButtonSlot');
-  var nextButton = document.getElementById('nextButton');
-  if (nextSlot) {
-    nextSlot.classList.add('is-spacer');
-    nextSlot.setAttribute('aria-hidden', 'true');
-  }
-  if (nextButton) {
-    nextButton.disabled = true;
-    nextButton.classList.remove('category-nav-mode');
-    nextButton.removeAttribute('title');
-    nextButton.setAttribute('tabindex', '-1');
-    nextButton.setAttribute('aria-hidden', 'true');
-  }
+  // 旧 >> スペーサーは出題再生スロットに置き換えたため、追加処理なし
 }
 
 /**
@@ -7825,7 +7861,7 @@ function getCurrentCategoryIndex() {
 }
 
 /**
- * 学習ナビを通常状態にする（左＝セッション件数、右＝空きスペーサー）
+ * 学習ナビを通常状態にする（左＝Ans再生、右＝Q再生）
  */
 function setLearningNavIconsNormal() {
   var navBar = document.querySelector('.navigation-bar');
@@ -7833,7 +7869,6 @@ function setLearningNavIconsNormal() {
     navBar.classList.remove('completion-browse-order');
   }
   setNextButtonAsUnusedSpacer();
-  updateSessionAnsweredCountDisplay();
   updateNavAnswerButton();
 }
 
@@ -8034,6 +8069,7 @@ function loadCategoryDataForCompletionBrowseInner(categoryNo) {
     // Listは表示したまま（高さを維持しスクロール位置を固定）
     listMessage.style.display = 'block';
     listMessage.textContent = '読み込み中...';
+    pinCompletionListMinHeightForLoading(listContainer);
   }
   
   var params = new URLSearchParams();
@@ -8059,9 +8095,11 @@ function loadCategoryDataForCompletionBrowseInner(categoryNo) {
       if (!data.items || data.items.length === 0) {
         throw new Error('データがありません');
       }
+      // 最新リクエストなのに select だけずれている場合（完了直後の裏 loadCategories 等）は
+      // 黙って破棄せず、取得対象へ戻して反映する（古いリクエストは requestId で既に除外）
       if (learningSelect && String(learningSelect.value) !== categoryKey) {
-        finishCompletionCategoryBrowse();
-        return;
+        learningSelect.value = categoryNo;
+        syncCustomCategorySelect(learningSelect);
       }
       categoryDataByNo[categoryKey] = data.items;
       if (localCached && isCategoryShuffleQuestionMethod() && String(currentCategoryNo) === categoryKey && currentCategoryData.length > 0) {
@@ -8673,9 +8711,6 @@ function goToHome() {
   
   // 完了時カテゴリナビ用アイコンを通常に戻す
   setLearningNavIconsNormal();
-  
-  // セッション回答件数をリセット（学習時間は継続）
-  resetSessionAnsweredCount();
   
   // 画面遷移
   var screen2 = document.getElementById('screen2');
