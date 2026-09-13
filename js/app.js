@@ -96,12 +96,12 @@ var GAS_UPDATE_MAX_ATTEMPTS = 5; // シート更新の最大試行回数（初�
 var GAS_UPDATE_BASE_DELAY_MS = 700; // リトライの基本待機（指数バックオフ）
 var gasSheetUpdateQueue = []; // シート更新ジョブの直列キュー
 var isGasSheetUpdateQueueRunning = false;
-var AUDIO_FETCH_TIMEOUT_MS = 12000; // 音声 Drive/TTS 取得の打ち切り（ミリ秒）
 var gasAudioFetchQueue = []; // 音声取得ジョブの直列キュー（同時1本）
 var isGasAudioFetchRunning = false;
 var activeAudioFetchGeneration = 0;
 var activeAudioFetchAbort = null;
-var activeAudioFetchTimer = null;
+var USER_SETTINGS_SYNC_MAX_ATTEMPTS = 3; // 起動時設定同期の最大試行（初回含む）
+var USER_SETTINGS_SYNC_RETRY_DELAY_MS = 800; // 設定同期リトライ間隔
 
 // Google Apps Script WebアプリのURL（統合版：TTSとDATAの両方を処理）
 // 注意: Gas_Main.gsをWebアプリとして公開した際のURLを設定してください
@@ -438,6 +438,7 @@ function scheduleUserSettingsSync() {
 
 /**
  * 起動時：サーバ設定を取得し適用。無ければ端末設定をアップロード
+ * 一時失敗時は自動リトライし、それでも失敗なら端末設定でカテゴリ取得へ進む
  * @param {Function} [onDone]
  */
 function syncUserSettingsWithServer(onDone) {
@@ -452,59 +453,73 @@ function syncUserSettingsWithServer(onDone) {
     return;
   }
 
-  var params = new URLSearchParams();
-  params.append('action', 'getUserSettings');
-  appendAuthParams(params);
-  params.append('referer', window.location.origin || '');
-  params.append('knownDriveFileId', getStoredSettingsBgDriveFileId());
+  function attemptSync(attemptIndex) {
+    var params = new URLSearchParams();
+    params.append('action', 'getUserSettings');
+    appendAuthParams(params);
+    params.append('referer', window.location.origin || '');
+    params.append('knownDriveFileId', getStoredSettingsBgDriveFileId());
 
-  fetch(WEB_APP_URL + '?' + params.toString())
-  .then(function(response) {
-    if (!response.ok) {
-      throw new Error('ネットワークエラー: ' + response.status);
-    }
-    return response.json();
-  })
-  .then(function(data) {
-    if (!data || !data.success) {
-      throw new Error((data && data.error) || '設定の取得に失敗しました');
-    }
-    if (data.found && data.settings) {
-      applyUserSettingsFromServer(
-        data.settings,
-        data.backgroundImageContent || '',
-        data.backgroundMimeType || ''
-      );
+    fetch(WEB_APP_URL + '?' + params.toString())
+    .then(function(response) {
+      if (!response.ok) {
+        throw new Error('ネットワークエラー: ' + response.status);
+      }
+      return response.json();
+    })
+    .then(function(data) {
+      if (!data || !data.success) {
+        throw new Error((data && data.error) || '設定の取得に失敗しました');
+      }
+      if (data.found && data.settings) {
+        applyUserSettingsFromServer(
+          data.settings,
+          data.backgroundImageContent || '',
+          data.backgroundMimeType || ''
+        );
+        userSettingsInitialSyncDone = true;
+        if (typeof onDone === 'function') onDone();
+        return;
+      }
+      // サーバ未登録：端末設定をブートストラップ
+      var localBg = '';
+      try {
+        localBg = localStorage.getItem('customBackgroundImage') || '';
+      } catch (e) {
+        localBg = '';
+      }
+      if (localBg.indexOf('data:') === 0) {
+        userSettingsBgUploadPending = true;
+      }
+      pushUserSettingsToServer(function() {
+        userSettingsInitialSyncDone = true;
+        if (typeof onDone === 'function') onDone();
+      });
+    })
+    .catch(function(error) {
+      console.warn('設定同期（取得）エラー:', error);
+      var errText = error && error.message ? error.message : String(error);
+      if (isGoogleAuthFailureMessage(errText)) {
+        userSettingsInitialSyncDone = false;
+        // 認証失敗は再ログイン誘導（showError 経由でロック）
+        showError('設定の同期に失敗しました: ' + errText);
+        return;
+      }
+      var nextAttempt = attemptIndex + 1;
+      if (nextAttempt < USER_SETTINGS_SYNC_MAX_ATTEMPTS) {
+        setTimeout(function() {
+          attemptSync(nextAttempt);
+        }, USER_SETTINGS_SYNC_RETRY_DELAY_MS * nextAttempt);
+        return;
+      }
+      // 一時失敗：端末設定で続行（強いエラー表示はしない）
       userSettingsInitialSyncDone = true;
-      if (typeof onDone === 'function') onDone();
-      return;
-    }
-    // サーバ未登録：端末設定をブートストラップ
-    var localBg = '';
-    try {
-      localBg = localStorage.getItem('customBackgroundImage') || '';
-    } catch (e) {
-      localBg = '';
-    }
-    if (localBg.indexOf('data:') === 0) {
-      userSettingsBgUploadPending = true;
-    }
-    pushUserSettingsToServer(function() {
-      userSettingsInitialSyncDone = true;
-      if (typeof onDone === 'function') onDone();
+      console.warn('設定同期を諦め、端末の設定で続行します。');
+      if (typeof onDone === 'function') onDone(error);
     });
-  })
-  .catch(function(error) {
-    console.warn('設定同期（取得）エラー:', error);
-    var errText = error && error.message ? error.message : String(error);
-    showError('設定の同期に失敗しました（端末の設定で続行）: ' + errText);
-    if (isGoogleAuthFailureMessage(errText)) {
-      userSettingsInitialSyncDone = false;
-      return;
-    }
-    userSettingsInitialSyncDone = true;
-    if (typeof onDone === 'function') onDone(error);
-  });
+  }
+
+  attemptSync(0);
 }
 
 
@@ -6608,11 +6623,6 @@ function enqueueGasSheetUpdate(job) {
 function processGasSheetUpdateQueue() {
   if (isGasSheetUpdateQueueRunning) return;
   if (gasSheetUpdateQueue.length === 0) return;
-  // 音声取得中はシート更新を待たせ、GAS同時アクセスを抑える
-  if (isGasAudioFetchRunning) {
-    setTimeout(processGasSheetUpdateQueue, 150);
-    return;
-  }
   isGasSheetUpdateQueueRunning = true;
   runGasSheetUpdateJob(gasSheetUpdateQueue[0], 0);
 }
@@ -6621,7 +6631,6 @@ function finishGasSheetUpdateJob() {
   gasSheetUpdateQueue.shift();
   isGasSheetUpdateQueueRunning = false;
   processGasSheetUpdateQueue();
-  processGasAudioFetchQueue();
 }
 
 /**
@@ -7311,10 +7320,6 @@ function createMp3AudioFromBase64(audioContent) {
 function invalidateGasAudioFetches() {
   activeAudioFetchGeneration += 1;
   gasAudioFetchQueue = [];
-  if (activeAudioFetchTimer) {
-    clearTimeout(activeAudioFetchTimer);
-    activeAudioFetchTimer = null;
-  }
   if (activeAudioFetchAbort) {
     try {
       activeAudioFetchAbort.abort();
@@ -7326,7 +7331,7 @@ function invalidateGasAudioFetches() {
 }
 
 /**
- * 音声取得ジョブを直列キューへ追加（同時1本。シート更新中は待機）
+ * 音声取得ジョブを直列キューへ追加（同時1本）
  * @param {function(AbortSignal|null, number, function(): void): void} taskFn
  */
 function enqueueGasAudioFetch(taskFn) {
@@ -7344,10 +7349,6 @@ function processGasAudioFetchQueue() {
   if (gasAudioFetchQueue.length === 0) {
     return;
   }
-  if (isGasSheetUpdateQueueRunning) {
-    setTimeout(processGasAudioFetchQueue, 150);
-    return;
-  }
 
   isGasAudioFetchRunning = true;
   var task = gasAudioFetchQueue.shift();
@@ -7361,30 +7362,12 @@ function processGasAudioFetchQueue() {
       return;
     }
     finished = true;
-    if (activeAudioFetchTimer) {
-      clearTimeout(activeAudioFetchTimer);
-      activeAudioFetchTimer = null;
-    }
     if (activeAudioFetchAbort === controller) {
       activeAudioFetchAbort = null;
     }
     isGasAudioFetchRunning = false;
     processGasAudioFetchQueue();
-    processGasSheetUpdateQueue();
   }
-
-  activeAudioFetchTimer = setTimeout(function() {
-    if (generation !== activeAudioFetchGeneration) {
-      return;
-    }
-    if (controller) {
-      try {
-        controller.abort();
-      } catch (e) {
-        // ignore
-      }
-    }
-  }, AUDIO_FETCH_TIMEOUT_MS);
 
   try {
     task(controller ? controller.signal : null, generation, done);
@@ -7394,9 +7377,9 @@ function processGasAudioFetchQueue() {
 }
 
 /**
- * 音声取得タイムアウト／中断時のUI復帰
+ * 音声取得の中断時UI復帰（切替・停止時。時間打ち切りは行わない）
  * @param {string} fieldType
- * @param {boolean} [isTimeout]
+ * @param {boolean} [isTimeout] - 互換のため残すが、通常は false
  */
 function handleAudioFetchAbortOrTimeout(fieldType, isTimeout) {
   hidePlayButtonLoading(fieldType);
@@ -7404,7 +7387,7 @@ function handleAudioFetchAbortOrTimeout(fieldType, isTimeout) {
   updateFieldPlayButtons();
   refreshAdvanceNavControls();
   if (isTimeout) {
-    showError('音声の取得がタイムアウトしました。再生ボタンで再試行してください。');
+    showError('音声の取得に失敗しました。再生ボタンで再試行してください。');
   }
   if (fieldType === 'question') {
     releaseListeningAnsGate();
@@ -8098,7 +8081,7 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
       return;
     }
     if (isAbortError(error)) {
-      handleAudioFetchAbortOrTimeout(fieldType, true);
+      handleAudioFetchAbortOrTimeout(fieldType, false);
       done();
       return;
     }
@@ -8182,7 +8165,7 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
       return;
     }
     if (isAbortError(error)) {
-      handleAudioFetchAbortOrTimeout(fieldType, true);
+      handleAudioFetchAbortOrTimeout(fieldType, false);
       finish();
       return;
     }
