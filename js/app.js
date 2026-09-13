@@ -96,6 +96,12 @@ var GAS_UPDATE_MAX_ATTEMPTS = 5; // シート更新の最大試行回数（初�
 var GAS_UPDATE_BASE_DELAY_MS = 700; // リトライの基本待機（指数バックオフ）
 var gasSheetUpdateQueue = []; // シート更新ジョブの直列キュー
 var isGasSheetUpdateQueueRunning = false;
+var AUDIO_FETCH_TIMEOUT_MS = 12000; // 音声 Drive/TTS 取得の打ち切り（ミリ秒）
+var gasAudioFetchQueue = []; // 音声取得ジョブの直列キュー（同時1本）
+var isGasAudioFetchRunning = false;
+var activeAudioFetchGeneration = 0;
+var activeAudioFetchAbort = null;
+var activeAudioFetchTimer = null;
 
 // Google Apps Script WebアプリのURL（統合版：TTSとDATAの両方を処理）
 // 注意: Gas_Main.gsをWebアプリとして公開した際のURLを設定してください
@@ -580,6 +586,28 @@ window.onload = function() {
   startDailyStudyCountDateWatcher();
 };
 
+// ページローディングを表示する（削除済みなら再作成）
+function showPageLoading() {
+  var loadingOverlay = document.getElementById('pageLoadingOverlay');
+  if (loadingOverlay) {
+    loadingOverlay.classList.remove('hidden');
+    loadingOverlay.style.display = 'flex';
+    loadingOverlay.setAttribute('aria-hidden', 'false');
+    return;
+  }
+  loadingOverlay = document.createElement('div');
+  loadingOverlay.id = 'pageLoadingOverlay';
+  loadingOverlay.className = 'page-loading-overlay';
+  loadingOverlay.setAttribute('aria-hidden', 'false');
+  loadingOverlay.innerHTML =
+    '<div class="page-loading-content">' +
+      '<h1 class="page-loading-title">Everyday English</h1>' +
+      '<div class="page-loading-spinner"></div>' +
+      '<p class="page-loading-status">読み込み中...</p>' +
+    '</div>';
+  document.body.appendChild(loadingOverlay);
+}
+
 // ページローディングを非表示にする
 function hidePageLoading() {
   var loadingOverlay = document.getElementById('pageLoadingOverlay');
@@ -623,6 +651,8 @@ function checkUserEmail() {
   }
   // トークンありでもカテゴリ取得成功までロック維持
   setAppAuthUiLocked(true);
+  // 設定同期〜カテゴリ取得までローディングを維持（ログイン後の空白待ちを防ぐ）
+  showPageLoading();
   syncUserSettingsWithServer(function(err) {
     if (err && isGoogleAuthFailureMessage(String(err.message || err))) {
       return;
@@ -1145,6 +1175,8 @@ function completeGoogleLoginWithEmail(email) {
   syncDailyStudyStatsDisplay();
   hideGoogleLoginDialog();
   setAppAuthUiLocked(true);
+  // 設定同期〜カテゴリ取得までローディング表示（ログイン画面閉鎖後の空白を防ぐ）
+  showPageLoading();
   syncUserSettingsWithServer(function(err) {
     if (err && isGoogleAuthFailureMessage(String(err.message || err))) {
       return;
@@ -6062,15 +6094,15 @@ function showAnswer() {
   // 今日の学習統計（LastDate 更新前に判定）
   recordDailyStudyStatsOnAns(item);
 
-  // TotalStudyCount / DailyStudyCount / Duration / LastDate をメモリ即反映 → 画面メタ更新 → GASは1リクエストで非同期
-  persistAnsStudyStatsAsync(item, stopwatchElapsed);
-  updateLearningMetaDisplay(item, 'learningMeta');
-  
-  // 解答読みON時は先に自動再生開始（busy を立ててから UI 更新し、Q/Next の隙間をなくす）
+  // 解答読みON時は先に自動再生開始（シート更新より優先し、GAS混雑を避ける）
   var willAutoPlayAnswer = isAnswerToggleActive && !isUpdateMode;
   if (willAutoPlayAnswer) {
     playFieldAudio('answer');
   }
+
+  // TotalStudyCount / DailyStudyCount / Duration / LastDate をメモリ即反映 → 画面メタ更新 → GASは1リクエストで非同期
+  persistAnsStudyStatsAsync(item, stopwatchElapsed);
+  updateLearningMetaDisplay(item, 'learningMeta');
   
   // 出題／解答の再生ボタンを更新
   updateFieldPlayButtons();
@@ -6576,6 +6608,11 @@ function enqueueGasSheetUpdate(job) {
 function processGasSheetUpdateQueue() {
   if (isGasSheetUpdateQueueRunning) return;
   if (gasSheetUpdateQueue.length === 0) return;
+  // 音声取得中はシート更新を待たせ、GAS同時アクセスを抑える
+  if (isGasAudioFetchRunning) {
+    setTimeout(processGasSheetUpdateQueue, 150);
+    return;
+  }
   isGasSheetUpdateQueueRunning = true;
   runGasSheetUpdateJob(gasSheetUpdateQueue[0], 0);
 }
@@ -6584,6 +6621,7 @@ function finishGasSheetUpdateJob() {
   gasSheetUpdateQueue.shift();
   isGasSheetUpdateQueueRunning = false;
   processGasSheetUpdateQueue();
+  processGasAudioFetchQueue();
 }
 
 /**
@@ -7268,8 +7306,123 @@ function createMp3AudioFromBase64(audioContent) {
 }
 
 /**
+ * 進行中の音声取得を無効化し、キューを空にする
+ */
+function invalidateGasAudioFetches() {
+  activeAudioFetchGeneration += 1;
+  gasAudioFetchQueue = [];
+  if (activeAudioFetchTimer) {
+    clearTimeout(activeAudioFetchTimer);
+    activeAudioFetchTimer = null;
+  }
+  if (activeAudioFetchAbort) {
+    try {
+      activeAudioFetchAbort.abort();
+    } catch (e) {
+      // ignore
+    }
+    activeAudioFetchAbort = null;
+  }
+}
+
+/**
+ * 音声取得ジョブを直列キューへ追加（同時1本。シート更新中は待機）
+ * @param {function(AbortSignal|null, number, function(): void): void} taskFn
+ */
+function enqueueGasAudioFetch(taskFn) {
+  if (typeof taskFn !== 'function') {
+    return;
+  }
+  gasAudioFetchQueue.push(taskFn);
+  processGasAudioFetchQueue();
+}
+
+function processGasAudioFetchQueue() {
+  if (isGasAudioFetchRunning) {
+    return;
+  }
+  if (gasAudioFetchQueue.length === 0) {
+    return;
+  }
+  if (isGasSheetUpdateQueueRunning) {
+    setTimeout(processGasAudioFetchQueue, 150);
+    return;
+  }
+
+  isGasAudioFetchRunning = true;
+  var task = gasAudioFetchQueue.shift();
+  var generation = activeAudioFetchGeneration;
+  var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  activeAudioFetchAbort = controller;
+  var finished = false;
+
+  function done() {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    if (activeAudioFetchTimer) {
+      clearTimeout(activeAudioFetchTimer);
+      activeAudioFetchTimer = null;
+    }
+    if (activeAudioFetchAbort === controller) {
+      activeAudioFetchAbort = null;
+    }
+    isGasAudioFetchRunning = false;
+    processGasAudioFetchQueue();
+    processGasSheetUpdateQueue();
+  }
+
+  activeAudioFetchTimer = setTimeout(function() {
+    if (generation !== activeAudioFetchGeneration) {
+      return;
+    }
+    if (controller) {
+      try {
+        controller.abort();
+      } catch (e) {
+        // ignore
+      }
+    }
+  }, AUDIO_FETCH_TIMEOUT_MS);
+
+  try {
+    task(controller ? controller.signal : null, generation, done);
+  } catch (e) {
+    done();
+  }
+}
+
+/**
+ * 音声取得タイムアウト／中断時のUI復帰
+ * @param {string} fieldType
+ * @param {boolean} [isTimeout]
+ */
+function handleAudioFetchAbortOrTimeout(fieldType, isTimeout) {
+  hidePlayButtonLoading(fieldType);
+  activePlayField = null;
+  updateFieldPlayButtons();
+  refreshAdvanceNavControls();
+  if (isTimeout) {
+    showError('音声の取得がタイムアウトしました。再生ボタンで再試行してください。');
+  }
+  if (fieldType === 'question') {
+    releaseListeningAnsGate();
+  }
+}
+
+/**
+ * fetch が Abort か判定
+ * @param {*} error
+ * @returns {boolean}
+ */
+function isAbortError(error) {
+  return !!(error && (error.name === 'AbortError' || error.code === 20));
+}
+
+/**
  * 再生中の音声を停止し、欄の再生ボタン状態を戻す
- * @param {{ skipButtonUpdate?: boolean, preserveBusy?: boolean }} [options]
+ * @param {{ skipButtonUpdate?: boolean, preserveBusy?: boolean, keepAudioQueue?: boolean }} [options]
  */
 function stopCurrentAudioPlayback(options) {
   options = options || {};
@@ -7277,6 +7430,9 @@ function stopCurrentAudioPlayback(options) {
   releaseCurrentAudioElement();
   if (!options.preserveBusy) {
     activePlayField = null;
+  }
+  if (!options.keepAudioQueue) {
+    invalidateGasAudioFetches();
   }
   if (prevField) {
     var prevBtn = getFieldPlayButton(prevField);
@@ -7454,7 +7610,7 @@ function playFieldAudio(fieldType, forceRefresh) {
   }
   
   // 停止〜取得開始のあいだも busy を維持（Ans直後の Q/Next 押下防止）
-  stopCurrentAudioPlayback({ skipButtonUpdate: true });
+  stopCurrentAudioPlayback({ skipButtonUpdate: true, keepAudioQueue: false });
   activePlayField = fieldType;
   updateFieldPlayButtons();
   
@@ -7469,12 +7625,16 @@ function playFieldAudio(fieldType, forceRefresh) {
       return;
     }
     if (canUseDriveAudioMeta(item)) {
-      fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetField, item);
+      enqueueGasAudioFetch(function(signal, generation, done) {
+        fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetField, item, signal, generation, done);
+      });
       return;
     }
   }
   
-  fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField);
+  enqueueGasAudioFetch(function(signal, generation, done) {
+    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField, signal, generation, done);
+  });
 }
 
 /**
@@ -7879,8 +8039,11 @@ function hidePlayButtonLoading(fieldType) {
  * @param {string} fieldType
  * @param {string} sheetField
  * @param {Object} item
+ * @param {AbortSignal|null} signal
+ * @param {number} generation
+ * @param {function(): void} done
  */
-function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetField, item) {
+function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetField, item, signal, generation, done) {
   activePlayField = fieldType || null;
   showPlayButtonLoading(fieldType);
   refreshAdvanceNavControls();
@@ -7896,28 +8059,50 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
   appendAuthParams(params);
   params.append('referer', window.location.origin);
 
-  fetch(buildGasPostUrl(), {
+  var fetchOptions = {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: params
-  })
+  };
+  if (signal) {
+    fetchOptions.signal = signal;
+  }
+
+  fetch(buildGasPostUrl(), fetchOptions)
   .then(function(response) {
+    if (generation !== activeAudioFetchGeneration) {
+      return null;
+    }
     if (!response.ok) {
       throw new Error('drive fetch failed');
     }
     return response.json();
   })
   .then(function(data) {
+    if (generation !== activeAudioFetchGeneration) {
+      done();
+      return;
+    }
     if (data && data.success && data.found && data.audioContent) {
       hidePlayButtonLoading(fieldType);
       saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
       playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'Drive');
+      done();
       return;
     }
-    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField);
+    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField, signal, generation, done);
   })
-  .catch(function() {
-    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField);
+  .catch(function(error) {
+    if (generation !== activeAudioFetchGeneration) {
+      done();
+      return;
+    }
+    if (isAbortError(error)) {
+      handleAudioFetchAbortOrTimeout(fieldType, true);
+      done();
+      return;
+    }
+    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField, signal, generation, done);
   });
 }
 
@@ -7929,11 +8114,17 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
  * @param {string} fieldType - 'question' | 'answer'
  * @param {Object} [item]
  * @param {string} [sheetField]
+ * @param {AbortSignal|null} [signal]
+ * @param {number} [generation]
+ * @param {function(): void} [done]
  */
-function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField) {
+function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField, signal, generation, done) {
   activePlayField = fieldType || null;
   showPlayButtonLoading(fieldType);
   refreshAdvanceNavControls();
+
+  var gen = (generation == null) ? activeAudioFetchGeneration : generation;
+  var finish = typeof done === 'function' ? done : function() {};
   
   var params = new URLSearchParams();
   params.append('text', text);
@@ -7941,42 +8132,66 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
   params.append('speed', speed || 'fast');
   appendAuthParams(params);
   params.append('referer', window.location.origin);
-  
-  fetch(buildGasPostUrl(), {
+
+  var fetchOptions = {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: params
-  })
+  };
+  if (signal) {
+    fetchOptions.signal = signal;
+  }
+  
+  fetch(buildGasPostUrl(), fetchOptions)
   .then(function(response) {
+    if (gen !== activeAudioFetchGeneration) {
+      return null;
+    }
     if (!response.ok) {
       throw new Error('ネットワークエラー: ' + response.status);
     }
     return response.json();
   })
   .then(function(data) {
+    if (gen !== activeAudioFetchGeneration) {
+      finish();
+      return;
+    }
     hidePlayButtonLoading(fieldType);
     
-    if (data.success && data.audioContent) {
+    if (data && data.success && data.audioContent) {
       saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
       if (item && sheetField) {
         saveDriveAudioAsync(item, sheetField, voiceGender || 'female', speed || 'fast', data.audioContent);
       }
       playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'TTS');
+      finish();
     } else {
       activePlayField = null;
       updateFieldPlayButtons();
-      showError('音声の生成に失敗しました: ' + (data.error || 'Unknown error'));
+      showError('音声の生成に失敗しました: ' + ((data && data.error) || 'Unknown error'));
       if (fieldType === 'question') releaseListeningAnsGate();
+      finish();
     }
   })
   .catch(function(error) {
+    if (gen !== activeAudioFetchGeneration) {
+      finish();
+      return;
+    }
+    if (isAbortError(error)) {
+      handleAudioFetchAbortOrTimeout(fieldType, true);
+      finish();
+      return;
+    }
     hidePlayButtonLoading(fieldType);
     activePlayField = null;
     updateFieldPlayButtons();
     showError('音声読み上げエラー: ' + error.toString());
     if (fieldType === 'question') releaseListeningAnsGate();
+    finish();
   });
 }
 
