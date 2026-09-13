@@ -697,7 +697,7 @@ body::-webkit-scrollbar {
   flex-direction: row;
   align-items: center;
   gap: 8px;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -781,14 +781,15 @@ body::-webkit-scrollbar {
   font-size: 11px;
   font-weight: bold;
   line-height: 1.3;
-  margin: 0;
+  margin: 0 0 0 8px;
   padding: 0 4px;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
   white-space: nowrap;
   color: #b71c1c;
   background-color: rgba(255, 235, 238, 0.9);
   border-radius: 2px;
+  text-align: left;
 }
 
 /* タイトル（レガシー。現行は .app-header-title） */
@@ -1781,7 +1782,8 @@ tr:last-child td {
 
 /* 下ナビ：解答再生（左）／出題再生（リトライとHOMEの間）。枠は他ナビと同サイズ・上下中央。ラベルは上余白側へ absolute */
 .navigation-bar .nav-answer-play-slot,
-.navigation-bar .nav-question-play-slot {
+.navigation-bar .nav-question-play-slot,
+.navigation-bar .nav-retry-slot {
   position: relative;
   left: auto;
   display: flex;
@@ -1797,12 +1799,17 @@ tr:last-child td {
   order: 1;
 }
 
+.navigation-bar .nav-retry-slot {
+  order: 3;
+}
+
 .navigation-bar .nav-question-play-slot {
   order: 4;
 }
 
 .navigation-bar .nav-answer-play-label,
-.navigation-bar .nav-question-play-label {
+.navigation-bar .nav-question-play-label,
+.navigation-bar .nav-retry-label {
   position: absolute;
   left: 50%;
   bottom: 100%;
@@ -1863,13 +1870,15 @@ tr:last-child td {
 }
 
 .navigation-bar .nav-answer-play-slot.is-inactive,
-.navigation-bar .nav-question-play-slot.is-inactive {
+.navigation-bar .nav-question-play-slot.is-inactive,
+.navigation-bar .nav-retry-slot.is-inactive {
   opacity: 0.3;
   pointer-events: none;
 }
 
 .navigation-bar .nav-answer-play-slot.is-inactive .nav-answer-play-button:disabled,
-.navigation-bar .nav-question-play-slot.is-inactive .nav-question-play-button:disabled {
+.navigation-bar .nav-question-play-slot.is-inactive .nav-question-play-button:disabled,
+.navigation-bar .nav-retry-slot.is-inactive #plusButton:disabled {
   opacity: 1;
   cursor: not-allowed;
 }
@@ -1884,7 +1893,7 @@ tr:last-child td {
 #plusButton {
   position: relative;
   left: auto;
-  order: 3;
+  order: unset;
 }
 
 /* 他ボタンよりアイコンが小さく見えるため画像のみ拡大（「1」は据え置き） */
@@ -3367,11 +3376,17 @@ body:has(#screen2.active) .login-button {
     order: 1 !important;
   }
 
-  /* プラスボタン(480px) - 中央右隣（順序3） */
-  #plusButton {
+  /* プラス（Retry）スロット(480px) - 中央右隣（順序3） */
+  .navigation-bar .nav-retry-slot {
     position: relative !important;
     left: auto !important;
     order: 3 !important;
+  }
+
+  #plusButton {
+    position: relative !important;
+    left: auto !important;
+    order: unset !important;
   }
 
   /* 下ナビ：出題再生(480px)（順序4） */

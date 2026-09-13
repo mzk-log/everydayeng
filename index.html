@@ -10,7 +10,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202609131622';
+    var FRONT_VERSION = '202609131955';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -49,7 +49,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202609131622">
+  <link rel="stylesheet" href="style.css?v=202609131955">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -416,10 +416,13 @@
           <div class="nav-answer-text blinking" id="navAnswerText">Ans</div>
           <div class="nav-answer-stopwatch" id="navAnswerStopwatch">00:00:00</div>
         </button>
-        <button class="nav-button" id="plusButton" type="button" aria-label="もう一度">
-          <img src="img/rotate-right-solid.png" alt="">
-          <span class="plus-retry-badge" aria-hidden="true">1</span>
-        </button>
+        <div class="nav-retry-slot" id="navRetrySlot">
+          <span class="nav-retry-label" aria-hidden="true">Retry</span>
+          <button class="nav-button" id="plusButton" type="button" aria-label="もう一度">
+            <img src="img/rotate-right-solid.png" alt="">
+            <span class="plus-retry-badge" aria-hidden="true">1</span>
+          </button>
+        </div>
         <div class="nav-question-play-slot is-inactive" id="navQuestionPlaySlot">
           <span class="nav-question-play-label" aria-hidden="true">Q</span>
           <button class="nav-question-play-button" id="questionPlayButton" type="button" disabled
@@ -544,7 +547,7 @@
     </div>
   </div>
 
-  <script src="js/app.js?v=202609131622"></script>
+  <script src="js/app.js?v=202609131955"></script>
 </body>
 </html>
 

@@ -9323,14 +9323,23 @@ function loadCategoryDataAndStartLearning(categoryNo, forceAllQuestions) {
 function updatePlusButton() {
   var plusButton = document.getElementById('plusButton');
   if (!plusButton) return;
-  
+
+  var retrySlot = document.getElementById('navRetrySlot');
   var badge = plusButton.querySelector('.plus-retry-badge');
+
+  function setRetrySlotInactive(inactive) {
+    if (!retrySlot) {
+      return;
+    }
+    retrySlot.classList.toggle('is-inactive', !!inactive);
+  }
   
   if (isLearningCompleted) {
     // 学習完了：同じカテゴリ／セッション再学習（「1」バッジは学習中と同様に表示）
     plusButton.disabled = isCategoryTransitionInProgress;
     plusButton.setAttribute('aria-label', '同じカテゴリをもう一度');
     plusButton.title = isCategoryTransitionInProgress ? 'カテゴリの切り替え中です' : '同じカテゴリをもう一度';
+    setRetrySlotInactive(isCategoryTransitionInProgress);
     if (badge) badge.style.display = '';
     return;
   }
@@ -9339,6 +9348,7 @@ function updatePlusButton() {
     plusButton.disabled = true;
     plusButton.removeAttribute('title');
     plusButton.setAttribute('aria-label', 'もう一度');
+    setRetrySlotInactive(true);
     if (badge) badge.style.display = '';
     return;
   }
@@ -9346,9 +9356,11 @@ function updatePlusButton() {
   if (isAdvanceNavBlockedByAudio()) {
     plusButton.disabled = true;
     plusButton.title = '音声の読み上げが終わるまでお待ちください';
+    setRetrySlotInactive(true);
   } else {
     plusButton.disabled = false;
     plusButton.removeAttribute('title');
+    setRetrySlotInactive(false);
   }
   plusButton.setAttribute('aria-label', 'もう一度');
   if (badge) badge.style.display = '';
