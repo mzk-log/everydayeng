@@ -88,7 +88,7 @@ var audioCache = {};
 var CACHE_PREFIX = 'tts_audio_'; // localStorageのキープレフィックス
 var MAX_CACHE_SIZE = 10 * 1024 * 1024; // 最大キャッシュサイズ（10MB）
 // TTSプリロード全体のマスタ。true のとき出題読み／解答読みがONの側のみ先取り取得
-var ENABLE_TTS_PRELOAD = true;
+var ENABLE_TTS_PRELOAD = false;
 // true のとき再生音声の取得元（メモリ／localStorage／Drive／TTS）を画面表示する（本番は false）
 var ENABLE_AUDIO_SOURCE_DEBUG = true;
 var FIELD_PLAY_LONG_PRESS_MS = 700; // 再生ボタン長押しで音声再作成
@@ -7872,8 +7872,7 @@ function hidePlayButtonLoading(fieldType) {
 }
 
 /**
- * Drive から音声を取得し、無ければ TTS（Drive と TTS を並列開始）
- * Drive ヒット時は TTS 結果を破棄（可能なら abort）。Drive ミス時は TTS を使用。
+ * Drive から音声を取得し、無ければ TTS
  * @param {string} text
  * @param {string} voiceGender
  * @param {string} speed
@@ -7886,107 +7885,21 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
   showPlayButtonLoading(fieldType);
   refreshAdvanceNavControls();
 
-  var gender = voiceGender || 'female';
-  var spd = speed || 'fast';
-  var settled = false;
-  var driveDone = false;
-  var driveFound = false;
-  var pendingTtsContent = null;
-  var pendingTtsError = null;
-  var ttsAbortController = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-
-  function finishWithDrive(audioContent) {
-    if (settled) {
-      return;
-    }
-    settled = true;
-    if (ttsAbortController) {
-      try {
-        ttsAbortController.abort();
-      } catch (e) {
-        // ignore
-      }
-    }
-    hidePlayButtonLoading(fieldType);
-    saveAudioToCache(text, audioContent, gender, spd);
-    playAudioFromCache({ audioContent: audioContent }, fieldType, 'Drive');
-  }
-
-  function finishWithTts(audioContent) {
-    if (settled) {
-      return;
-    }
-    settled = true;
-    hidePlayButtonLoading(fieldType);
-    saveAudioToCache(text, audioContent, gender, spd);
-    if (item && sheetField) {
-      saveDriveAudioAsync(item, sheetField, gender, spd, audioContent);
-    }
-    playAudioFromCache({ audioContent: audioContent }, fieldType, 'TTS');
-  }
-
-  function finishWithError(error) {
-    if (settled) {
-      return;
-    }
-    settled = true;
-    hidePlayButtonLoading(fieldType);
-    activePlayField = null;
-    updateFieldPlayButtons();
-    showError('音声読み上げエラー: ' + (error ? error.toString() : 'Unknown error'));
-    if (fieldType === 'question') {
-      releaseListeningAnsGate();
-    }
-  }
-
-  function onDriveResolved(found, audioContent) {
-    driveDone = true;
-    if (found && audioContent) {
-      driveFound = true;
-      finishWithDrive(audioContent);
-      return;
-    }
-    if (pendingTtsContent) {
-      finishWithTts(pendingTtsContent);
-      return;
-    }
-    if (pendingTtsError) {
-      finishWithError(pendingTtsError);
-    }
-  }
-
-  function onTtsResolved(audioContent, error) {
-    if (settled) {
-      return;
-    }
-    if (audioContent) {
-      pendingTtsContent = audioContent;
-      if (driveDone && !driveFound) {
-        finishWithTts(audioContent);
-      }
-      return;
-    }
-    pendingTtsError = error || new Error('TTS failed');
-    if (driveDone && !driveFound) {
-      finishWithError(pendingTtsError);
-    }
-  }
-
-  var driveParams = new URLSearchParams();
-  driveParams.append('action', 'getDriveAudio');
-  driveParams.append('id', String(item.id));
-  driveParams.append('categoryNo', String(resolveItemCategoryNo(item)));
-  driveParams.append('no', String(item.no));
-  driveParams.append('field', sheetField);
-  driveParams.append('voiceGender', gender);
-  driveParams.append('speed', spd);
-  appendAuthParams(driveParams);
-  driveParams.append('referer', window.location.origin);
+  var params = new URLSearchParams();
+  params.append('action', 'getDriveAudio');
+  params.append('id', String(item.id));
+  params.append('categoryNo', String(resolveItemCategoryNo(item)));
+  params.append('no', String(item.no));
+  params.append('field', sheetField);
+  params.append('voiceGender', voiceGender || 'female');
+  params.append('speed', speed || 'fast');
+  appendAuthParams(params);
+  params.append('referer', window.location.origin);
 
   fetch(buildGasPostUrl(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: driveParams
+    body: params
   })
   .then(function(response) {
     if (!response.ok) {
@@ -7996,50 +7909,15 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
   })
   .then(function(data) {
     if (data && data.success && data.found && data.audioContent) {
-      onDriveResolved(true, data.audioContent);
+      hidePlayButtonLoading(fieldType);
+      saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+      playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'Drive');
       return;
     }
-    onDriveResolved(false, null);
+    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField);
   })
   .catch(function() {
-    onDriveResolved(false, null);
-  });
-
-  var ttsParams = new URLSearchParams();
-  ttsParams.append('text', text);
-  ttsParams.append('voiceGender', gender);
-  ttsParams.append('speed', spd);
-  appendAuthParams(ttsParams);
-  ttsParams.append('referer', window.location.origin);
-
-  var ttsFetchOptions = {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: ttsParams
-  };
-  if (ttsAbortController) {
-    ttsFetchOptions.signal = ttsAbortController.signal;
-  }
-
-  fetch(buildGasPostUrl(), ttsFetchOptions)
-  .then(function(response) {
-    if (!response.ok) {
-      throw new Error('ネットワークエラー: ' + response.status);
-    }
-    return response.json();
-  })
-  .then(function(data) {
-    if (data && data.success && data.audioContent) {
-      onTtsResolved(data.audioContent, null);
-      return;
-    }
-    onTtsResolved(null, new Error(data && data.error ? data.error : 'TTS failed'));
-  })
-  .catch(function(error) {
-    if (error && error.name === 'AbortError') {
-      return;
-    }
-    onTtsResolved(null, error);
+    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField);
   });
 }
 
@@ -8204,7 +8082,6 @@ function preloadNextQuestions() {
 
 /**
  * 指定されたテキストの音声をプリロード（バックグラウンドで非同期実行）
- * Drive と TTS を並列開始。Drive ヒット時は TTS を破棄（可能なら abort）。
  * @param {string} text - 読み上げるテキスト
  * @param {string} voiceGender - 音声の性別（'male' または 'female'）
  * @param {string} speed - 読み上げの速さ（'fast', 'medium', 'slow'）
@@ -8226,80 +8103,21 @@ function preloadAudio(text, voiceGender, speed, item, sheetField) {
       return;
     }
 
-    var gender = voiceGender || 'female';
-    var spd = speed || 'fast';
-    var settled = false;
-    var driveDone = false;
-    var driveFound = false;
-    var pendingTtsContent = null;
-    var ttsAbortController = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-
-    function finishPreloadFromDrive(audioContent) {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      if (ttsAbortController) {
-        try {
-          ttsAbortController.abort();
-        } catch (e) {
-          // ignore
-        }
-      }
-      saveAudioToCache(text, audioContent, gender, spd);
-    }
-
-    function finishPreloadFromTts(audioContent) {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      saveAudioToCache(text, audioContent, gender, spd);
-      if (item && sheetField) {
-        saveDriveAudioAsync(item, sheetField, gender, spd, audioContent);
-      }
-    }
-
-    function onDriveResolved(found, audioContent) {
-      driveDone = true;
-      if (found && audioContent) {
-        driveFound = true;
-        finishPreloadFromDrive(audioContent);
-        return;
-      }
-      if (pendingTtsContent) {
-        finishPreloadFromTts(pendingTtsContent);
-      }
-    }
-
-    function onTtsResolved(audioContent) {
-      if (settled || !audioContent) {
-        return;
-      }
-      pendingTtsContent = audioContent;
-      if (driveDone && !driveFound) {
-        finishPreloadFromTts(audioContent);
-      }
-    }
-
     function runTtsPreload() {
       var params = new URLSearchParams();
       params.append('text', text);
-      params.append('voiceGender', gender);
-      params.append('speed', spd);
+      params.append('voiceGender', voiceGender || 'female');
+      params.append('speed', speed || 'fast');
       appendAuthParams(params);
       params.append('referer', window.location.origin);
 
-      var fetchOptions = {
+      fetch(buildGasPostUrl(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
         body: params
-      };
-      if (ttsAbortController) {
-        fetchOptions.signal = ttsAbortController.signal;
-      }
-
-      fetch(buildGasPostUrl(), fetchOptions)
+      })
       .then(function(response) {
         if (!response.ok) {
           return;
@@ -8308,13 +8126,13 @@ function preloadAudio(text, voiceGender, speed, item, sheetField) {
       })
       .then(function(data) {
         if (data && data.success && data.audioContent) {
-          onTtsResolved(data.audioContent);
+          saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+          if (item && sheetField) {
+            saveDriveAudioAsync(item, sheetField, voiceGender || 'female', speed || 'fast', data.audioContent);
+          }
         }
       })
-      .catch(function(error) {
-        if (error && error.name === 'AbortError') {
-          return;
-        }
+      .catch(function() {
         // プリロード失敗は無視
       });
     }
@@ -8326,13 +8144,10 @@ function preloadAudio(text, voiceGender, speed, item, sheetField) {
       driveParams.append('categoryNo', String(resolveItemCategoryNo(item)));
       driveParams.append('no', String(item.no));
       driveParams.append('field', sheetField);
-      driveParams.append('voiceGender', gender);
-      driveParams.append('speed', spd);
+      driveParams.append('voiceGender', voiceGender || 'female');
+      driveParams.append('speed', speed || 'fast');
       appendAuthParams(driveParams);
       driveParams.append('referer', window.location.origin);
-
-      // Drive と TTS を並列開始
-      runTtsPreload();
 
       fetch(buildGasPostUrl(), {
         method: 'POST',
@@ -8347,20 +8162,17 @@ function preloadAudio(text, voiceGender, speed, item, sheetField) {
       })
       .then(function(data) {
         if (data && data.success && data.found && data.audioContent) {
-          onDriveResolved(true, data.audioContent);
+          saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
           return;
         }
-        onDriveResolved(false, null);
+        runTtsPreload();
       })
       .catch(function() {
-        onDriveResolved(false, null);
+        runTtsPreload();
       });
       return;
     }
 
-    // Drive メタが無い場合は TTS のみ
-    driveDone = true;
-    driveFound = false;
     runTtsPreload();
   }, 100);
 }
