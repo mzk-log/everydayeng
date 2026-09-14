@@ -102,6 +102,9 @@ var activeAudioFetchGeneration = 0;
 var activeAudioFetchAbort = null;
 var AUDIO_FETCH_MAX_ATTEMPTS = 3; // Drive／TTS 音声取得の最大試行（初回含む）
 var AUDIO_FETCH_RETRY_BASE_DELAY_MS = 700; // 音声取得リトライの基本待機（指数バックオフ）
+var ALL_STUDY_ITEMS_FETCH_MAX_ATTEMPTS = 3; // 全問取得の最大試行（初回含む）
+var ALL_STUDY_ITEMS_FETCH_TIMEOUT_MS = 60000; // 全問取得1試行あたりの打ち切り
+var ALL_STUDY_ITEMS_RETRY_BASE_DELAY_MS = 800; // 全問取得リトライ間隔
 var USER_SETTINGS_SYNC_MAX_ATTEMPTS = 3; // 起動時設定同期の最大試行（初回含む）
 var USER_SETTINGS_SYNC_RETRY_DELAY_MS = 800; // 設定同期リトライ間隔
 
@@ -3567,6 +3570,165 @@ function mergeAllStudyItemsWithMemory(items, extraItems) {
 }
 
 /**
+ * 全問データの端末キャッシュキー（メール単位）
+ * @returns {string}
+ */
+function getAllStudyItemsLocalStorageKey() {
+  return 'allStudyItemsLocal_v1:' + resolveAuthEmail();
+}
+
+/**
+ * 端末に保存した全問データを読む
+ * @returns {Array|null}
+ */
+function readLocalAllStudyItems() {
+  try {
+    var raw = localStorage.getItem(getAllStudyItemsLocalStorageKey());
+    if (!raw) {
+      return null;
+    }
+    var parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.items) || parsed.items.length === 0) {
+      return null;
+    }
+    return parsed.items;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * 全問データを端末へ保存（容量超過時は静かに失敗）
+ * @param {Array} items
+ */
+function writeLocalAllStudyItems(items) {
+  try {
+    localStorage.setItem(getAllStudyItemsLocalStorageKey(), JSON.stringify({
+      savedAt: Date.now(),
+      items: items || []
+    }));
+  } catch (e) {
+    console.warn('全問データの端末キャッシュ保存に失敗:', e);
+  }
+}
+
+/**
+ * List の「読み込み中...」とカテゴリスピナーを解除
+ * @param {string} [fallbackMessage] - 解除後に出すメッセージ（任意）
+ */
+function clearAllStudyItemsLoadingUi(fallbackMessage) {
+  hideCategoryLoadingSpinner();
+  var listMessage = document.getElementById(
+    isLearningCompleted ? 'completionListMessage' : 'listMessage'
+  );
+  if (!listMessage) {
+    return;
+  }
+  if (fallbackMessage) {
+    listMessage.style.display = 'block';
+    listMessage.textContent = fallbackMessage;
+    return;
+  }
+  if (listMessage.textContent === '読み込み中...') {
+    listMessage.style.display = 'none';
+    listMessage.textContent = '';
+  }
+}
+
+/**
+ * 全問取得の一時失敗か
+ * @param {*} error
+ * @returns {boolean}
+ */
+function isTransientAllStudyItemsError(error) {
+  if (!error) {
+    return false;
+  }
+  var msg = String(error.message || error.toString() || '');
+  if (/Failed to fetch|NetworkError|network error|Load failed|タイムアウト/i.test(msg)) {
+    return true;
+  }
+  if (/ネットワークエラー:\s*(404|408|425|429|5\d\d)\b/.test(msg)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * GAS getAllStudyItems をタイムアウト付きで取得（一時失敗は自動リトライ）
+ * @param {function(*, Array|null): void} onDone - (error, items)
+ */
+function fetchAllStudyItemsFromServer(onDone) {
+  function attempt(attemptIndex) {
+    var controller = null;
+    var timeoutId = null;
+    if (typeof AbortController !== 'undefined') {
+      controller = new AbortController();
+      timeoutId = setTimeout(function() {
+        try {
+          controller.abort();
+        } catch (eAbort) {
+          // ignore
+        }
+      }, ALL_STUDY_ITEMS_FETCH_TIMEOUT_MS);
+    }
+
+    var params = new URLSearchParams();
+    params.append('action', 'getAllStudyItems');
+    appendAuthParams(params);
+    params.append('referer', window.location.origin);
+
+    var fetchOptions = {};
+    if (controller) {
+      fetchOptions.signal = controller.signal;
+    }
+
+    fetch(WEB_APP_URL + '?' + params.toString(), fetchOptions)
+      .then(function(response) {
+        if (!response.ok) {
+          throw new Error('ネットワークエラー: ' + response.status);
+        }
+        return response.json();
+      })
+      .then(function(data) {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        if (!data || !data.success) {
+          throw new Error((data && data.error) || 'データの取得に失敗しました');
+        }
+        if (typeof onDone === 'function') {
+          onDone(null, data.items || []);
+        }
+      })
+      .catch(function(error) {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        var err = error;
+        if (error && (error.name === 'AbortError' || isAbortError(error))) {
+          err = new Error('タイムアウト: 全問データの取得が時間切れです');
+        }
+        if (
+          attemptIndex + 1 < ALL_STUDY_ITEMS_FETCH_MAX_ATTEMPTS &&
+          isTransientAllStudyItemsError(err)
+        ) {
+          var delay = ALL_STUDY_ITEMS_RETRY_BASE_DELAY_MS * Math.pow(2, attemptIndex);
+          setTimeout(function() {
+            attempt(attemptIndex + 1);
+          }, delay);
+          return;
+        }
+        if (typeof onDone === 'function') {
+          onDone(err, null);
+        }
+      });
+  }
+
+  attempt(0);
+}
+
+/**
  * 学習日優先（ノーマル）の総ページ数
  * @returns {number}
  */
@@ -3731,44 +3893,50 @@ function loadLastDateModeData(options) {
   var requestId = lastDateModeLoadRequestId;
   var loadingSpinner = document.getElementById('categoryLoadingSpinner');
   var listMessage = document.getElementById('listMessage');
-  if (loadingSpinner) loadingSpinner.style.display = 'block';
-  if (listMessage && !isLearningCompleted) {
-    listMessage.style.display = 'block';
-    listMessage.textContent = '読み込み中...';
+  var usedLocal = false;
+
+  function applyLastDateItems(rawItems) {
+    var items = mergeAllStudyItemsWithMemory(rawItems || [], lastDateModeAllItems);
+    lastDateModeAllItems = filterItemsByVisibleCategories(items);
+    sortItemsForLastDatePriorityMode(lastDateModeAllItems);
+    regenerateLastDateModeList();
   }
 
-  var params = new URLSearchParams();
-  params.append('action', 'getAllStudyItems');
-  appendAuthParams(params);
-  params.append('referer', window.location.origin);
+  // B: 端末キャッシュがあれば即表示し、裏でサーバ更新
+  var localItems = readLocalAllStudyItems();
+  if (localItems && localItems.length) {
+    usedLocal = true;
+    applyLastDateItems(localItems);
+    clearAllStudyItemsLoadingUi();
+  } else {
+    if (loadingSpinner) loadingSpinner.style.display = 'block';
+    if (listMessage && !isLearningCompleted) {
+      listMessage.style.display = 'block';
+      listMessage.textContent = '読み込み中...';
+    }
+  }
 
-  fetch(WEB_APP_URL + '?' + params.toString())
-    .then(function(response) {
-      if (!response.ok) {
-        throw new Error('ネットワークエラー: ' + response.status);
+  fetchAllStudyItemsFromServer(function(error, items) {
+    if (requestId !== lastDateModeLoadRequestId) return;
+    if (!isLastDateQuestionMethod()) {
+      clearAllStudyItemsLoadingUi();
+      return;
+    }
+    if (error) {
+      clearAllStudyItemsLoadingUi(
+        usedLocal ? null : 'データの取得に失敗しました。再読み込みしてください。'
+      );
+      if (!usedLocal) {
+        showError('アクセスエラー: ' + error.toString());
+      } else {
+        console.warn('全問データ更新失敗（端末キャッシュで継続）:', error);
       }
-      return response.json();
-    })
-    .then(function(data) {
-      if (requestId !== lastDateModeLoadRequestId) return;
-      if (!isLastDateQuestionMethod()) {
-        hideCategoryLoadingSpinner();
-        return;
-      }
-      if (!data.success) {
-        throw new Error(data.error || 'データの取得に失敗しました');
-      }
-      var items = mergeAllStudyItemsWithMemory(data.items || [], lastDateModeAllItems);
-      lastDateModeAllItems = filterItemsByVisibleCategories(items);
-      sortItemsForLastDatePriorityMode(lastDateModeAllItems);
-      regenerateLastDateModeList();
-      hideCategoryLoadingSpinner();
-    })
-    .catch(function(error) {
-      if (requestId !== lastDateModeLoadRequestId) return;
-      showError('アクセスエラー: ' + error.toString());
-      hideCategoryLoadingSpinner();
-    });
+      return;
+    }
+    writeLocalAllStudyItems(items || []);
+    applyLastDateItems(items || []);
+    clearAllStudyItemsLoadingUi();
+  });
 }
 
 /**
@@ -3984,45 +4152,51 @@ function loadDurationModeData(options) {
   var requestId = durationModeLoadRequestId;
   var loadingSpinner = document.getElementById('categoryLoadingSpinner');
   var listMessage = document.getElementById('listMessage');
-  if (loadingSpinner) loadingSpinner.style.display = 'block';
-  if (listMessage && !isLearningCompleted) {
-    listMessage.style.display = 'block';
-    listMessage.textContent = '読み込み中...';
+  var usedLocal = false;
+
+  function applyDurationItems(rawItems) {
+    var items = mergeAllStudyItemsWithMemory(rawItems || [], durationModeSortedItems);
+    durationModeSortedItems = filterItemsByVisibleCategories(items);
+    sortItemsForDurationMode(durationModeSortedItems);
+    if (resetPage) durationModePageIndex = 0;
+    applyDurationModePageToList();
   }
-  
-  var params = new URLSearchParams();
-  params.append('action', 'getAllStudyItems');
-  appendAuthParams(params);
-  params.append('referer', window.location.origin);
-  
-  fetch(WEB_APP_URL + '?' + params.toString())
-    .then(function(response) {
-      if (!response.ok) {
-        throw new Error('ネットワークエラー: ' + response.status);
+
+  // B: 端末キャッシュがあれば即表示し、裏でサーバ更新
+  var localItems = readLocalAllStudyItems();
+  if (localItems && localItems.length) {
+    usedLocal = true;
+    applyDurationItems(localItems);
+    clearAllStudyItemsLoadingUi();
+  } else {
+    if (loadingSpinner) loadingSpinner.style.display = 'block';
+    if (listMessage && !isLearningCompleted) {
+      listMessage.style.display = 'block';
+      listMessage.textContent = '読み込み中...';
+    }
+  }
+
+  fetchAllStudyItemsFromServer(function(error, items) {
+    if (requestId !== durationModeLoadRequestId) return;
+    if (!isDurationQuestionMethod()) {
+      clearAllStudyItemsLoadingUi();
+      return;
+    }
+    if (error) {
+      clearAllStudyItemsLoadingUi(
+        usedLocal ? null : 'データの取得に失敗しました。再読み込みしてください。'
+      );
+      if (!usedLocal) {
+        showError('アクセスエラー: ' + error.toString());
+      } else {
+        console.warn('全問データ更新失敗（端末キャッシュで継続）:', error);
       }
-      return response.json();
-    })
-    .then(function(data) {
-      if (requestId !== durationModeLoadRequestId) return;
-      if (!isDurationQuestionMethod()) {
-        hideCategoryLoadingSpinner();
-        return;
-      }
-      if (!data.success) {
-        throw new Error(data.error || 'データの取得に失敗しました');
-      }
-      var items = mergeAllStudyItemsWithMemory(data.items || [], durationModeSortedItems);
-      durationModeSortedItems = filterItemsByVisibleCategories(items);
-      sortItemsForDurationMode(durationModeSortedItems);
-      if (resetPage) durationModePageIndex = 0;
-      applyDurationModePageToList();
-      hideCategoryLoadingSpinner();
-    })
-    .catch(function(error) {
-      if (requestId !== durationModeLoadRequestId) return;
-      showError('アクセスエラー: ' + error.toString());
-      hideCategoryLoadingSpinner();
-    });
+      return;
+    }
+    writeLocalAllStudyItems(items || []);
+    applyDurationItems(items || []);
+    clearAllStudyItemsLoadingUi();
+  });
 }
 
 /**
