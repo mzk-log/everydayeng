@@ -100,6 +100,8 @@ var gasAudioFetchQueue = []; // 音声取得ジョブの直列キュー（同時
 var isGasAudioFetchRunning = false;
 var activeAudioFetchGeneration = 0;
 var activeAudioFetchAbort = null;
+var AUDIO_FETCH_MAX_ATTEMPTS = 3; // Drive／TTS 音声取得の最大試行（初回含む）
+var AUDIO_FETCH_RETRY_BASE_DELAY_MS = 700; // 音声取得リトライの基本待機（指数バックオフ）
 var USER_SETTINGS_SYNC_MAX_ATTEMPTS = 3; // 起動時設定同期の最大試行（初回含む）
 var USER_SETTINGS_SYNC_RETRY_DELAY_MS = 800; // 設定同期リトライ間隔
 
@@ -110,14 +112,67 @@ var USER_SETTINGS_SYNC_RETRY_DELAY_MS = 800; // 設定同期リトライ間隔
 var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';  //PRD用
 
 /**
- * POST用URL（refererをクエリに付与）
- * GAS WebアプリのリダイレクトでPOSTボディが欠落しても認証できるようにする
+ * 認証用 email（メモリ → localStorage）
+ * @returns {string}
+ */
+function resolveAuthEmail() {
+  var email = userEmail || '';
+  try {
+    if (!email) {
+      email = localStorage.getItem('userEmail') || '';
+    }
+  } catch (e) {
+    email = email || '';
+  }
+  return String(email || '').trim();
+}
+
+/**
+ * POST用URL（referer / email をクエリに付与）
+ * GAS WebアプリのリダイレクトでPOSTボディが欠落しても認証できるようにする。
+ * idToken／accessToken はクエリに出さない（ボディのみ）。
  * @returns {string}
  */
 function buildGasPostUrl() {
   var params = new URLSearchParams();
   params.append('referer', window.location.origin || '');
+  var email = resolveAuthEmail();
+  if (email) {
+    params.append('email', email);
+  }
   return WEB_APP_URL + '?' + params.toString();
+}
+
+/**
+ * 音声取得の一時的なネットワーク失敗か
+ * @param {*} error
+ * @returns {boolean}
+ */
+function isTransientAudioNetworkError(error) {
+  if (!error || isAbortError(error)) {
+    return false;
+  }
+  var msg = String(error.message || error.toString() || '');
+  var statusMatch = msg.match(/(?:ネットワークエラー|drive fetch failed):\s*(\d{3})\b/i);
+  if (statusMatch) {
+    var code = Number(statusMatch[1]);
+    return code === 404 || code === 408 || code === 425 || code === 429 ||
+      (code >= 500 && code <= 599);
+  }
+  if (/Failed to fetch|NetworkError|network error|Load failed/i.test(msg)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 音声取得の一時的な業務エラー応答か（HTTP成功だが再試行価値あり）
+ * @param {string} errorMessage
+ * @returns {boolean}
+ */
+function isTransientAudioBusinessError(errorMessage) {
+  var msg = String(errorMessage || '');
+  return /Email parameter is required/i.test(msg);
 }
 
 // ========================================
@@ -756,14 +811,7 @@ function appendAuthParams(params) {
   if (!params) {
     return;
   }
-  var email = userEmail || '';
-  try {
-    if (!email) {
-      email = localStorage.getItem('userEmail') || '';
-    }
-  } catch (e) {
-    // ignore
-  }
+  var email = resolveAuthEmail();
   if (email) {
     params.append('email', email);
   }
@@ -8031,62 +8079,93 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
   showPlayButtonLoading(fieldType);
   refreshAdvanceNavControls();
 
-  var params = new URLSearchParams();
-  params.append('action', 'getDriveAudio');
-  params.append('id', String(item.id));
-  params.append('categoryNo', String(resolveItemCategoryNo(item)));
-  params.append('no', String(item.no));
-  params.append('field', sheetField);
-  params.append('voiceGender', voiceGender || 'female');
-  params.append('speed', speed || 'fast');
-  appendAuthParams(params);
-  params.append('referer', window.location.origin);
+  function attemptDrive(attemptIndex) {
+    if (generation !== activeAudioFetchGeneration) {
+      done();
+      return;
+    }
 
-  var fetchOptions = {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params
-  };
-  if (signal) {
-    fetchOptions.signal = signal;
+    var params = new URLSearchParams();
+    params.append('action', 'getDriveAudio');
+    params.append('id', String(item.id));
+    params.append('categoryNo', String(resolveItemCategoryNo(item)));
+    params.append('no', String(item.no));
+    params.append('field', sheetField);
+    params.append('voiceGender', voiceGender || 'female');
+    params.append('speed', speed || 'fast');
+    appendAuthParams(params);
+    params.append('referer', window.location.origin);
+
+    var fetchOptions = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params
+    };
+    if (signal) {
+      fetchOptions.signal = signal;
+    }
+
+    fetch(buildGasPostUrl(), fetchOptions)
+    .then(function(response) {
+      if (generation !== activeAudioFetchGeneration) {
+        return null;
+      }
+      if (!response.ok) {
+        throw new Error('drive fetch failed: ' + response.status);
+      }
+      return response.json();
+    })
+    .then(function(data) {
+      if (generation !== activeAudioFetchGeneration) {
+        done();
+        return;
+      }
+      if (data && data.success && data.found && data.audioContent) {
+        hidePlayButtonLoading(fieldType);
+        saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+        playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'Drive');
+        done();
+        return;
+      }
+      var businessError = (data && data.error) ? String(data.error) : '';
+      if (
+        businessError &&
+        attemptIndex + 1 < AUDIO_FETCH_MAX_ATTEMPTS &&
+        isTransientAudioBusinessError(businessError)
+      ) {
+        var bizDelay = AUDIO_FETCH_RETRY_BASE_DELAY_MS * Math.pow(2, attemptIndex);
+        setTimeout(function() {
+          attemptDrive(attemptIndex + 1);
+        }, bizDelay);
+        return;
+      }
+      fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField, signal, generation, done);
+    })
+    .catch(function(error) {
+      if (generation !== activeAudioFetchGeneration) {
+        done();
+        return;
+      }
+      if (isAbortError(error)) {
+        handleAudioFetchAbortOrTimeout(fieldType, false);
+        done();
+        return;
+      }
+      if (
+        attemptIndex + 1 < AUDIO_FETCH_MAX_ATTEMPTS &&
+        isTransientAudioNetworkError(error)
+      ) {
+        var netDelay = AUDIO_FETCH_RETRY_BASE_DELAY_MS * Math.pow(2, attemptIndex);
+        setTimeout(function() {
+          attemptDrive(attemptIndex + 1);
+        }, netDelay);
+        return;
+      }
+      fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField, signal, generation, done);
+    });
   }
 
-  fetch(buildGasPostUrl(), fetchOptions)
-  .then(function(response) {
-    if (generation !== activeAudioFetchGeneration) {
-      return null;
-    }
-    if (!response.ok) {
-      throw new Error('drive fetch failed');
-    }
-    return response.json();
-  })
-  .then(function(data) {
-    if (generation !== activeAudioFetchGeneration) {
-      done();
-      return;
-    }
-    if (data && data.success && data.found && data.audioContent) {
-      hidePlayButtonLoading(fieldType);
-      saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
-      playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'Drive');
-      done();
-      return;
-    }
-    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField, signal, generation, done);
-  })
-  .catch(function(error) {
-    if (generation !== activeAudioFetchGeneration) {
-      done();
-      return;
-    }
-    if (isAbortError(error)) {
-      handleAudioFetchAbortOrTimeout(fieldType, false);
-      done();
-      return;
-    }
-    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField, signal, generation, done);
-  });
+  attemptDrive(0);
 }
 
 /**
@@ -8108,74 +8187,105 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
 
   var gen = (generation == null) ? activeAudioFetchGeneration : generation;
   var finish = typeof done === 'function' ? done : function() {};
-  
-  var params = new URLSearchParams();
-  params.append('text', text);
-  params.append('voiceGender', voiceGender || 'female');
-  params.append('speed', speed || 'fast');
-  appendAuthParams(params);
-  params.append('referer', window.location.origin);
 
-  var fetchOptions = {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: params
-  };
-  if (signal) {
-    fetchOptions.signal = signal;
-  }
-  
-  fetch(buildGasPostUrl(), fetchOptions)
-  .then(function(response) {
-    if (gen !== activeAudioFetchGeneration) {
-      return null;
-    }
-    if (!response.ok) {
-      throw new Error('ネットワークエラー: ' + response.status);
-    }
-    return response.json();
-  })
-  .then(function(data) {
-    if (gen !== activeAudioFetchGeneration) {
-      finish();
-      return;
-    }
-    hidePlayButtonLoading(fieldType);
-    
-    if (data && data.success && data.audioContent) {
-      saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
-      if (item && sheetField) {
-        saveDriveAudioAsync(item, sheetField, voiceGender || 'female', speed || 'fast', data.audioContent);
-      }
-      playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'TTS');
-      finish();
-    } else {
-      activePlayField = null;
-      updateFieldPlayButtons();
-      showError('音声の生成に失敗しました: ' + ((data && data.error) || 'Unknown error'));
-      if (fieldType === 'question') releaseListeningAnsGate();
-      finish();
-    }
-  })
-  .catch(function(error) {
-    if (gen !== activeAudioFetchGeneration) {
-      finish();
-      return;
-    }
-    if (isAbortError(error)) {
-      handleAudioFetchAbortOrTimeout(fieldType, false);
-      finish();
-      return;
-    }
+  function failAudio(errorText) {
     hidePlayButtonLoading(fieldType);
     activePlayField = null;
     updateFieldPlayButtons();
-    showError('音声読み上げエラー: ' + error.toString());
+    showError(errorText);
     if (fieldType === 'question') releaseListeningAnsGate();
     finish();
-  });
+  }
+
+  function attemptTts(attemptIndex) {
+    if (gen !== activeAudioFetchGeneration) {
+      finish();
+      return;
+    }
+
+    var params = new URLSearchParams();
+    params.append('text', text);
+    params.append('voiceGender', voiceGender || 'female');
+    params.append('speed', speed || 'fast');
+    appendAuthParams(params);
+    params.append('referer', window.location.origin);
+
+    var fetchOptions = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params
+    };
+    if (signal) {
+      fetchOptions.signal = signal;
+    }
+
+    fetch(buildGasPostUrl(), fetchOptions)
+    .then(function(response) {
+      if (gen !== activeAudioFetchGeneration) {
+        return null;
+      }
+      if (!response.ok) {
+        throw new Error('ネットワークエラー: ' + response.status);
+      }
+      return response.json();
+    })
+    .then(function(data) {
+      if (gen !== activeAudioFetchGeneration) {
+        finish();
+        return;
+      }
+
+      if (data && data.success && data.audioContent) {
+        hidePlayButtonLoading(fieldType);
+        saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+        if (item && sheetField) {
+          saveDriveAudioAsync(item, sheetField, voiceGender || 'female', speed || 'fast', data.audioContent);
+        }
+        playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'TTS');
+        finish();
+        return;
+      }
+
+      var errMsg = (data && data.error) || 'Unknown error';
+      if (
+        attemptIndex + 1 < AUDIO_FETCH_MAX_ATTEMPTS &&
+        isTransientAudioBusinessError(errMsg)
+      ) {
+        var bizDelay = AUDIO_FETCH_RETRY_BASE_DELAY_MS * Math.pow(2, attemptIndex);
+        setTimeout(function() {
+          attemptTts(attemptIndex + 1);
+        }, bizDelay);
+        return;
+      }
+      failAudio('音声の生成に失敗しました: ' + errMsg);
+    })
+    .catch(function(error) {
+      if (gen !== activeAudioFetchGeneration) {
+        finish();
+        return;
+      }
+      if (isAbortError(error)) {
+        handleAudioFetchAbortOrTimeout(fieldType, false);
+        finish();
+        return;
+      }
+      if (
+        attemptIndex + 1 < AUDIO_FETCH_MAX_ATTEMPTS &&
+        isTransientAudioNetworkError(error)
+      ) {
+        var netDelay = AUDIO_FETCH_RETRY_BASE_DELAY_MS * Math.pow(2, attemptIndex);
+        setTimeout(function() {
+          attemptTts(attemptIndex + 1);
+        }, netDelay);
+        return;
+      }
+      failAudio('音声読み上げエラー: ' + error.toString());
+    });
+  }
+
+  attemptTts(0);
 }
 
 /**
