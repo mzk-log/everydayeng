@@ -107,8 +107,13 @@ var AUDIO_FETCH_RETRY_BASE_DELAY_MS = 700; // 音声取得リトライの基本�
 var ALL_STUDY_ITEMS_FETCH_MAX_ATTEMPTS = 3; // 全問取得の最大試行（初回含む）
 var ALL_STUDY_ITEMS_FETCH_TIMEOUT_MS = 60000; // 全問取得1試行あたりの打ち切り
 var ALL_STUDY_ITEMS_RETRY_BASE_DELAY_MS = 800; // 全問取得リトライ間隔
+var ANS_SHEET_PERSIST_MAX_DEFER_MS = 8000; // 解答音声優先時、シート更新開始の上限待ち
 var USER_SETTINGS_SYNC_MAX_ATTEMPTS = 3; // 起動時設定同期の最大試行（初回含む）
 var USER_SETTINGS_SYNC_RETRY_DELAY_MS = 800; // 設定同期リトライ間隔
+
+// Ans後：音声ネット取得を優先し、シート更新を遅延するための保留
+var pendingAnsSheetPersist = null;
+var ansSheetPersistTimer = null;
 
 // 通信診断（ENABLE_LOAD_DIAG）
 var loadDiagBootTimer = null;
@@ -174,7 +179,16 @@ function formatLoadDiagLine(slot) {
     phasePart += ' ' + Math.min((slot.attempt || 0) + 1, slot.maxAttempts) + '/' + slot.maxAttempts;
   }
   parts.push(phasePart);
-  parts.push(slot.status || '-');
+  // 4: 通信待ちを明示（フリーズと区別しやすくする）
+  var statusLabel = slot.status || '-';
+  if (statusLabel === '取得中' || statusLabel === '通信待ち') {
+    if (slot.phase === '更新' || String(slot.phase).indexOf('更新') === 0) {
+      statusLabel = '通信待ち';
+    } else if (slot.phase === '更新待機') {
+      statusLabel = '音声優先';
+    }
+  }
+  parts.push(statusLabel);
   if (slot.lastSuccessSec != null && !isNaN(slot.lastSuccessSec)) {
     parts.push('直前成功 ' + Number(slot.lastSuccessSec).toFixed(1) + 's');
   }
@@ -4304,8 +4318,16 @@ function loadLastDateModeData(options) {
       return;
     }
     writeLocalAllStudyItems(items || []);
-    applyLastDateItems(items || [], true);
-    clearAllStudyItemsLoadingUi();
+    // 3: ソート／List再生成を次ティックへ（UIカウント停止の緩和）
+    setTimeout(function() {
+      if (requestId !== lastDateModeLoadRequestId) return;
+      if (!isLastDateQuestionMethod()) {
+        clearAllStudyItemsLoadingUi();
+        return;
+      }
+      applyLastDateItems(items || [], true);
+      clearAllStudyItemsLoadingUi();
+    }, 0);
   });
 }
 
@@ -4567,8 +4589,15 @@ function loadDurationModeData(options) {
       return;
     }
     writeLocalAllStudyItems(items || []);
-    applyDurationItems(items || [], true);
-    clearAllStudyItemsLoadingUi();
+    setTimeout(function() {
+      if (requestId !== durationModeLoadRequestId) return;
+      if (!isDurationQuestionMethod()) {
+        clearAllStudyItemsLoadingUi();
+        return;
+      }
+      applyDurationItems(items || [], true);
+      clearAllStudyItemsLoadingUi();
+    }, 0);
   });
 }
 
@@ -6047,6 +6076,11 @@ function clearAppSessionDataAfterAuthFailure() {
   completedQuestionIndices = [];
   sheetUpdateOkCount = 0;
   sheetUpdateFailCount = 0;
+  pendingAnsSheetPersist = null;
+  if (ansSheetPersistTimer) {
+    clearTimeout(ansSheetPersistTimer);
+    ansSheetPersistTimer = null;
+  }
   retryQuestionIndices = [];
   isInRetryMode = false;
   retryQuestionIndex = 0;
@@ -6708,14 +6742,19 @@ function showAnswer() {
   // 今日の学習統計（LastDate 更新前に判定）
   recordDailyStudyStatsOnAns(item);
 
-  // 解答読みON時は先に自動再生開始（シート更新より優先し、GAS混雑を避ける）
+  // 解答読みON時は音声を先に開始し、シート更新は音声のネット取得完了後（上限あり）に回す
   var willAutoPlayAnswer = isAnswerToggleActive && !isUpdateMode;
   if (willAutoPlayAnswer) {
-    playFieldAudio('answer');
+    persistAnsStudyStatsAsync(item, stopwatchElapsed, { deferNetwork: true });
+    playFieldAudio('answer', false, {
+      onSettled: function() {
+        flushPendingAnsSheetPersist();
+      }
+    });
+  } else {
+    persistAnsStudyStatsAsync(item, stopwatchElapsed);
   }
 
-  // TotalStudyCount / DailyStudyCount / Duration / LastDate をメモリ即反映 → 画面メタ更新 → GASは1リクエストで非同期
-  persistAnsStudyStatsAsync(item, stopwatchElapsed);
   updateLearningMetaDisplay(item, 'learningMeta');
   
   // 出題／解答の再生ボタンを更新
@@ -7254,6 +7293,7 @@ function runGasSheetUpdateJob(job, attemptIndex) {
   beginLoadDiag('run', '更新', GAS_UPDATE_MAX_ATTEMPTS, {
     attempt: attemptIndex,
     kind: 'update',
+    status: '通信待ち',
     queueWait: Math.max(0, gasSheetUpdateQueue.length - 1)
   });
 
@@ -7378,9 +7418,11 @@ function updateItemFieldsAsync(item, fields, onSuccess, onFinalError) {
  * Ans押下時: TotalStudyCount / DailyStudyCount / Duration_old / Duration / LastDate をメモリ更新し、1リクエストで保存
  * @param {Object} item
  * @param {number} elapsedMs
+ * @param {{deferNetwork?: boolean}} [options] - true のときネット送信を保留（音声優先）
  */
-function persistAnsStudyStatsAsync(item, elapsedMs) {
+function persistAnsStudyStatsAsync(item, elapsedMs, options) {
   if (!item) return;
+  options = options || {};
 
   var nextCount = getRetryCountNumber(item.total_study_count) + 1;
   item.total_study_count = nextCount;
@@ -7403,13 +7445,56 @@ function persistAnsStudyStatsAsync(item, elapsedMs) {
   var now = getNowYmdHmLocal();
   item.last_date = now;
 
-  updateItemFieldsAsync(item, {
+  var fields = {
     total_study_count: nextCount,
     daily_study_count: nextDaily,
     duration_old: previousDuration,
     duration: duration,
     last_date: now
+  };
+
+  if (options.deferNetwork) {
+    scheduleAnsSheetPersist(item, fields);
+    return;
+  }
+  updateItemFieldsAsync(item, fields);
+}
+
+/**
+ * Ansシート更新の保留をクリアして即送信
+ */
+function flushPendingAnsSheetPersist() {
+  if (ansSheetPersistTimer) {
+    clearTimeout(ansSheetPersistTimer);
+    ansSheetPersistTimer = null;
+  }
+  if (!pendingAnsSheetPersist) {
+    return;
+  }
+  var pending = pendingAnsSheetPersist;
+  pendingAnsSheetPersist = null;
+  updateItemFieldsAsync(pending.item, pending.fields);
+}
+
+/**
+ * 音声ネット取得を優先するため、シート更新を短時間保留（上限後は強制送信）
+ * @param {Object} item
+ * @param {Object} fields
+ */
+function scheduleAnsSheetPersist(item, fields) {
+  if (ansSheetPersistTimer) {
+    clearTimeout(ansSheetPersistTimer);
+    ansSheetPersistTimer = null;
+  }
+  pendingAnsSheetPersist = { item: item, fields: fields };
+  beginLoadDiag('run', '更新待機', 0, {
+    status: '音声優先',
+    kind: 'update'
   });
+  ansSheetPersistTimer = setTimeout(function() {
+    ansSheetPersistTimer = null;
+    flushPendingAnsSheetPersist();
+  }, ANS_SHEET_PERSIST_MAX_DEFER_MS);
 }
 
 /**
@@ -8192,25 +8277,49 @@ function deleteDriveAudioAsync(item, sheetField) {
  * 指定欄のテキストを読み上げる
  * @param {string} fieldType - 'question' | 'answer'
  * @param {boolean} [forceRefresh=false] - true のときキャッシュ／Driveを使わず再生成
+ * @param {{onSettled?: function(): void}} [options] - ネット取得不要または完了時（キャッシュヒット含む）
  */
-function playFieldAudio(fieldType, forceRefresh) {
+function playFieldAudio(fieldType, forceRefresh, options) {
+  options = options || {};
+  var onSettled = typeof options.onSettled === 'function' ? options.onSettled : null;
+  var settled = false;
+  function settleAudioNetwork() {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    if (onSettled) {
+      try {
+        onSettled();
+      } catch (eSettle) {
+        console.warn(eSettle);
+      }
+    }
+  }
+
   var item = currentCategoryData[currentQuestionIndex];
   if (!item || isLearningCompleted) {
     if (fieldType === 'question') releaseListeningAnsGate();
+    settleAudioNetwork();
     return;
   }
   
-  if (fieldType === 'answer' && !isAnswerShown) return;
+  if (fieldType === 'answer' && !isAnswerShown) {
+    settleAudioNetwork();
+    return;
+  }
   
   var text = fieldType === 'answer' ? getEffectiveAnswer(item) : getEffectiveQuestion(item);
   if (!text || isImageUrl(text)) {
     if (fieldType === 'question') releaseListeningAnsGate();
+    settleAudioNetwork();
     return;
   }
   
   if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
     showError('音声読み上げの設定が完了していません。WebアプリURLを設定してください。');
     if (fieldType === 'question') releaseListeningAnsGate();
+    settleAudioNetwork();
     return;
   }
   
@@ -8238,19 +8347,29 @@ function playFieldAudio(fieldType, forceRefresh) {
           ? String(cachedResult.audioData.audioContent).length
           : null
       });
-      playAudioFromCache(cachedResult.audioData, fieldType, cachedResult.source);
+      // 3: base64→Audio を次ティックへ回し、UIカウント停止を緩和
+      setTimeout(function() {
+        playAudioFromCache(cachedResult.audioData, fieldType, cachedResult.source);
+      }, 0);
+      settleAudioNetwork();
       return;
     }
     if (canUseDriveAudioMeta(item)) {
       enqueueGasAudioFetch(function(signal, generation, done) {
-        fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetField, item, signal, generation, done);
+        fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetField, item, signal, generation, function() {
+          done();
+          settleAudioNetwork();
+        });
       });
       return;
     }
   }
   
   enqueueGasAudioFetch(function(signal, generation, done) {
-    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField, signal, generation, done);
+    fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField, signal, generation, function() {
+      done();
+      settleAudioNetwork();
+    });
   });
 }
 
@@ -8735,8 +8854,11 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
           ok: true,
           bytes: String(data.audioContent).length
         });
-        playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'Drive');
         done();
+        setTimeout(function() {
+          if (generation !== activeAudioFetchGeneration) return;
+          playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'Drive');
+        }, 0);
         return;
       }
       var businessError = (data && data.error) ? String(data.error) : '';
@@ -8880,8 +9002,11 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
           ok: true,
           bytes: String(data.audioContent).length
         });
-        playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'TTS');
         finish();
+        setTimeout(function() {
+          if (gen !== activeAudioFetchGeneration) return;
+          playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'TTS');
+        }, 0);
         return;
       }
 
@@ -9154,6 +9279,7 @@ function goToPreviousQuestion() {
 // 次の問題に進む
 function goToNextQuestion() {
   if (isAdvanceNavBlockedByAudio()) return;
+  flushPendingAnsSheetPersist();
   clearAudioSourceDebug();
   
   // 現在の問題を完了リストに追加（重複チェック）
@@ -9227,6 +9353,7 @@ function handlePlusButtonClick() {
   
   if (!isAnswerShown) return;
   if (isAdvanceNavBlockedByAudio()) return;
+  flushPendingAnsSheetPersist();
   
   // RetryCount を非同期で +1（学習フローは止めない）
   var plusTargetItem = currentCategoryData[currentQuestionIndex];
@@ -10546,6 +10673,7 @@ function goToHome() {
   if (isFieldAudioBusy()) return;
   
   // 万一の抜け対策：再生中音声を停止してから遷移する
+  flushPendingAnsSheetPersist();
   stopCurrentAudioPlayback();
   clearAudioSourceDebug();
   
