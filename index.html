@@ -10,7 +10,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202609142045';
+    var FRONT_VERSION = '202609151955';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -49,7 +49,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202609142045">
+  <link rel="stylesheet" href="style.css?v=202609151955">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -59,6 +59,7 @@
       <h1 class="page-loading-title">Everyday English</h1>
       <div class="page-loading-spinner"></div>
       <p class="page-loading-status">読み込み中...</p>
+      <p class="page-loading-diag" id="pageLoadingDiag" aria-live="polite"></p>
     </div>
   </div>
   <div class="background-image" id="backgroundImage">
@@ -239,6 +240,7 @@
       <div class="learning-time" id="learningTime"><学習>00:00:00</div>
       <div class="learning-item-count" id="learningItemCount">0問　選択：0/0カテゴリ・0/0問</div>
     </div>
+    <p class="net-load-diag" id="netLoadDiag" aria-live="polite" style="display: none;"></p>
   </header>
   <div class="container">
     <!-- 初期画面 -->
@@ -365,6 +367,7 @@
             <button class="answer-end-button" id="noteEndButton" type="button">終了</button>
           </div>
         </div>
+        <p class="learning-load-diag" id="learningLoadDiag" aria-live="polite" style="display: none;"></p>
         
         <div class="section completion-list-section" id="completionListSection" style="display: none;">
           <div class="section-label-container">
@@ -547,7 +550,7 @@
     </div>
   </div>
 
-  <script src="js/app.js?v=202609142045"></script>
+  <script src="js/app.js?v=202609151955"></script>
 </body>
 </html>
 

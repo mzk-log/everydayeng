@@ -569,6 +569,37 @@
   color: rgba(255, 255, 255, 0.9);
 }
 
+.page-loading-diag,
+.net-load-diag,
+.learning-load-diag {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.page-loading-diag {
+  max-width: 92vw;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.net-load-diag {
+  padding: 2px 10px 6px;
+  color: #333;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.learning-load-diag {
+  margin: 8px 0 12px;
+  padding: 6px 8px;
+  color: #222;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
 /* HTML要素 */
 html {
   width: 100%;

@@ -91,6 +91,8 @@ var MAX_CACHE_SIZE = 10 * 1024 * 1024; // 最大キャッシュサイズ（10MB�
 var ENABLE_TTS_PRELOAD = false;
 // true のとき再生音声の取得元（メモリ／localStorage／Drive／TTS）を画面表示する（本番は false）
 var ENABLE_AUDIO_SOURCE_DEBUG = true;
+// true のとき通信診断（経過秒・段階・リトライ・状態等）を画面表示する（本番は false 可）
+var ENABLE_LOAD_DIAG = true;
 var FIELD_PLAY_LONG_PRESS_MS = 700; // 再生ボタン長押しで音声再作成
 var GAS_UPDATE_MAX_ATTEMPTS = 5; // シート更新の最大試行回数（初回含む）
 var GAS_UPDATE_BASE_DELAY_MS = 700; // リトライの基本待機（指数バックオフ）
@@ -107,6 +109,290 @@ var ALL_STUDY_ITEMS_FETCH_TIMEOUT_MS = 60000; // 全問取得1試行あたりの
 var ALL_STUDY_ITEMS_RETRY_BASE_DELAY_MS = 800; // 全問取得リトライ間隔
 var USER_SETTINGS_SYNC_MAX_ATTEMPTS = 3; // 起動時設定同期の最大試行（初回含む）
 var USER_SETTINGS_SYNC_RETRY_DELAY_MS = 800; // 設定同期リトライ間隔
+
+// 通信診断（ENABLE_LOAD_DIAG）
+var loadDiagBootTimer = null;
+var loadDiagRunTimer = null;
+var loadDiagLastBootSuccessSec = null;
+var loadDiagLastAudioSuccessSec = null;
+var loadDiagLastUpdateSuccessSec = null;
+var loadDiagLastAllSuccessSec = null;
+var loadDiagBoot = {
+  phase: '',
+  attempt: 0,
+  maxAttempts: 0,
+  status: 'idle',
+  startedAt: 0,
+  bytes: null,
+  queueWait: null,
+  lastSuccessSec: null
+};
+var loadDiagRun = {
+  phase: '',
+  attempt: 0,
+  maxAttempts: 0,
+  status: 'idle',
+  startedAt: 0,
+  bytes: null,
+  queueWait: null,
+  lastSuccessSec: null
+};
+
+/**
+ * @returns {boolean}
+ */
+function isLoadDiagEnabled() {
+  return ENABLE_LOAD_DIAG === true;
+}
+
+/**
+ * @param {number} ms
+ * @returns {string}
+ */
+function formatLoadDiagElapsed(ms) {
+  return (Math.max(0, ms) / 1000).toFixed(1) + 's';
+}
+
+/**
+ * @param {Object} slot
+ * @returns {string}
+ */
+function formatLoadDiagLine(slot) {
+  if (!slot) {
+    return '-';
+  }
+  var parts = [];
+  if (slot.startedAt) {
+    parts.push(formatLoadDiagElapsed(Date.now() - slot.startedAt));
+  } else {
+    parts.push('0.0s');
+  }
+  var phasePart = slot.phase || '-';
+  if (slot.maxAttempts > 0) {
+    phasePart += ' ' + Math.min((slot.attempt || 0) + 1, slot.maxAttempts) + '/' + slot.maxAttempts;
+  }
+  parts.push(phasePart);
+  parts.push(slot.status || '-');
+  if (slot.lastSuccessSec != null && !isNaN(slot.lastSuccessSec)) {
+    parts.push('直前成功 ' + Number(slot.lastSuccessSec).toFixed(1) + 's');
+  }
+  if (slot.bytes != null && slot.bytes >= 0) {
+    parts.push(Math.max(1, Math.round(slot.bytes / 1024)) + 'KB');
+  }
+  if (slot.queueWait != null && slot.queueWait > 0) {
+    parts.push('q:' + slot.queueWait);
+  }
+  return parts.join(' | ');
+}
+
+/**
+ * エラーから短い状態ラベルを作る
+ * @param {*} error
+ * @returns {string}
+ */
+function loadDiagStatusFromError(error) {
+  var msg = String(error && (error.message || error) || '');
+  var m = msg.match(/(?:ネットワークエラー|drive fetch failed):\s*(\d{3})\b/i);
+  if (m) {
+    return m[1];
+  }
+  if (/Failed to fetch/i.test(msg)) {
+    return 'Failed to fetch';
+  }
+  if (/タイムアウト/i.test(msg)) {
+    return 'timeout';
+  }
+  if (/Abort/i.test(msg)) {
+    return 'abort';
+  }
+  if (!msg) {
+    return 'error';
+  }
+  return msg.length > 36 ? msg.slice(0, 36) + '…' : msg;
+}
+
+/**
+ * @param {*} obj
+ * @returns {number|null}
+ */
+function approxJsonBytes(obj) {
+  try {
+    return JSON.stringify(obj).length;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * 診断UIを描画
+ */
+function refreshLoadDiagUi() {
+  if (!isLoadDiagEnabled()) {
+    var hideIds = ['pageLoadingDiag', 'learningLoadDiag', 'netLoadDiag'];
+    for (var i = 0; i < hideIds.length; i++) {
+      var elHide = document.getElementById(hideIds[i]);
+      if (elHide) {
+        elHide.style.display = 'none';
+      }
+    }
+    return;
+  }
+
+  var bootEl = document.getElementById('pageLoadingDiag');
+  if (bootEl) {
+    bootEl.style.display = 'block';
+    bootEl.textContent = formatLoadDiagLine(loadDiagBoot);
+  }
+
+  var netEl = document.getElementById('netLoadDiag');
+  if (netEl) {
+    netEl.style.display = 'block';
+    // 起動中は boot、それ以外は直近の run（無ければ boot の最終）
+    var overlay = document.getElementById('pageLoadingOverlay');
+    var bootVisible = overlay && !overlay.classList.contains('hidden') &&
+      overlay.style.display !== 'none';
+    netEl.textContent = bootVisible || (loadDiagRun.status === 'idle' && !loadDiagRun.startedAt)
+      ? formatLoadDiagLine(loadDiagBoot)
+      : formatLoadDiagLine(loadDiagRun);
+  }
+
+  var runEl = document.getElementById('learningLoadDiag');
+  if (runEl) {
+    var screen2 = document.getElementById('screen2');
+    var onLearning = !!(screen2 && screen2.classList.contains('active'));
+    runEl.style.display = onLearning ? 'block' : 'none';
+    if (onLearning) {
+      runEl.textContent = formatLoadDiagLine(loadDiagRun);
+    }
+  }
+}
+
+/**
+ * @param {'boot'|'run'} which
+ */
+function startLoadDiagTicker(which) {
+  stopLoadDiagTicker(which);
+  var timerId = setInterval(function() {
+    refreshLoadDiagUi();
+  }, 250);
+  if (which === 'boot') {
+    loadDiagBootTimer = timerId;
+  } else {
+    loadDiagRunTimer = timerId;
+  }
+}
+
+/**
+ * @param {'boot'|'run'} which
+ */
+function stopLoadDiagTicker(which) {
+  if (which === 'boot' && loadDiagBootTimer) {
+    clearInterval(loadDiagBootTimer);
+    loadDiagBootTimer = null;
+  }
+  if (which === 'run' && loadDiagRunTimer) {
+    clearInterval(loadDiagRunTimer);
+    loadDiagRunTimer = null;
+  }
+}
+
+/**
+ * @param {'boot'|'run'} which
+ * @param {string} phase
+ * @param {number} [maxAttempts]
+ * @param {Object} [extra]
+ */
+function beginLoadDiag(which, phase, maxAttempts, extra) {
+  if (!isLoadDiagEnabled()) {
+    return;
+  }
+  extra = extra || {};
+  var slot = which === 'boot' ? loadDiagBoot : loadDiagRun;
+  slot.phase = phase || '';
+  slot.attempt = extra.attempt != null ? extra.attempt : 0;
+  slot.maxAttempts = maxAttempts || 0;
+  slot.status = extra.status || '取得中';
+  slot.startedAt = Date.now();
+  slot.bytes = extra.bytes != null ? extra.bytes : null;
+  slot.queueWait = extra.queueWait != null ? extra.queueWait : null;
+  if (which === 'boot') {
+    slot.lastSuccessSec = loadDiagLastBootSuccessSec;
+  } else if (extra.kind === 'update') {
+    slot.lastSuccessSec = loadDiagLastUpdateSuccessSec;
+  } else if (extra.kind === 'all') {
+    slot.lastSuccessSec = loadDiagLastAllSuccessSec;
+  } else {
+    slot.lastSuccessSec = loadDiagLastAudioSuccessSec;
+  }
+  startLoadDiagTicker(which);
+  refreshLoadDiagUi();
+}
+
+/**
+ * @param {'boot'|'run'} which
+ * @param {Object} patch
+ */
+function updateLoadDiag(which, patch) {
+  if (!isLoadDiagEnabled() || !patch) {
+    return;
+  }
+  var slot = which === 'boot' ? loadDiagBoot : loadDiagRun;
+  if (patch.phase != null) slot.phase = patch.phase;
+  if (patch.attempt != null) slot.attempt = patch.attempt;
+  if (patch.maxAttempts != null) slot.maxAttempts = patch.maxAttempts;
+  if (patch.status != null) slot.status = patch.status;
+  if (patch.bytes != null) slot.bytes = patch.bytes;
+  if (patch.queueWait != null) slot.queueWait = patch.queueWait;
+  if (patch.lastSuccessSec != null) slot.lastSuccessSec = patch.lastSuccessSec;
+  if (patch.restartTimer) {
+    slot.startedAt = Date.now();
+  }
+  refreshLoadDiagUi();
+}
+
+/**
+ * @param {'boot'|'run'} which
+ * @param {string} status
+ * @param {{ok?: boolean, kind?: string, bytes?: number, keepTickerMs?: number}} [opts]
+ */
+function finishLoadDiag(which, status, opts) {
+  if (!isLoadDiagEnabled()) {
+    return;
+  }
+  opts = opts || {};
+  var slot = which === 'boot' ? loadDiagBoot : loadDiagRun;
+  var elapsedSec = slot.startedAt ? (Date.now() - slot.startedAt) / 1000 : 0;
+  slot.status = status || '完了';
+  if (opts.bytes != null) {
+    slot.bytes = opts.bytes;
+  }
+  if (opts.ok) {
+    if (which === 'boot') {
+      loadDiagLastBootSuccessSec = elapsedSec;
+      slot.lastSuccessSec = elapsedSec;
+    } else if (opts.kind === 'update') {
+      loadDiagLastUpdateSuccessSec = elapsedSec;
+      slot.lastSuccessSec = elapsedSec;
+    } else if (opts.kind === 'all') {
+      loadDiagLastAllSuccessSec = elapsedSec;
+      slot.lastSuccessSec = elapsedSec;
+    } else {
+      loadDiagLastAudioSuccessSec = elapsedSec;
+      slot.lastSuccessSec = elapsedSec;
+    }
+  }
+  refreshLoadDiagUi();
+  var keepMs = opts.keepTickerMs != null ? opts.keepTickerMs : (which === 'boot' ? 0 : 1200);
+  if (keepMs <= 0) {
+    stopLoadDiagTicker(which);
+    refreshLoadDiagUi();
+    return;
+  }
+  setTimeout(function() {
+    stopLoadDiagTicker(which);
+    refreshLoadDiagUi();
+  }, keepMs);
+}
 
 // Google Apps Script WebアプリのURL（統合版：TTSとDATAの両方を処理）
 // 注意: Gas_Main.gsをWebアプリとして公開した際のURLを設定してください
@@ -512,6 +798,7 @@ function syncUserSettingsWithServer(onDone) {
   }
 
   function attemptSync(attemptIndex) {
+    beginLoadDiag('boot', '設定同期', USER_SETTINGS_SYNC_MAX_ATTEMPTS, { attempt: attemptIndex });
     var params = new URLSearchParams();
     params.append('action', 'getUserSettings');
     appendAuthParams(params);
@@ -529,6 +816,10 @@ function syncUserSettingsWithServer(onDone) {
       if (!data || !data.success) {
         throw new Error((data && data.error) || '設定の取得に失敗しました');
       }
+      updateLoadDiag('boot', {
+        status: 'OK',
+        bytes: approxJsonBytes(data)
+      });
       if (data.found && data.settings) {
         applyUserSettingsFromServer(
           data.settings,
@@ -536,6 +827,7 @@ function syncUserSettingsWithServer(onDone) {
           data.backgroundMimeType || ''
         );
         userSettingsInitialSyncDone = true;
+        finishLoadDiag('boot', 'OK', { ok: true, bytes: approxJsonBytes(data), keepTickerMs: 0 });
         if (typeof onDone === 'function') onDone();
         return;
       }
@@ -549,16 +841,23 @@ function syncUserSettingsWithServer(onDone) {
       if (localBg.indexOf('data:') === 0) {
         userSettingsBgUploadPending = true;
       }
+      updateLoadDiag('boot', { phase: '設定保存', status: '取得中' });
       pushUserSettingsToServer(function() {
         userSettingsInitialSyncDone = true;
+        finishLoadDiag('boot', 'OK', { ok: true, keepTickerMs: 0 });
         if (typeof onDone === 'function') onDone();
       });
     })
     .catch(function(error) {
       console.warn('設定同期（取得）エラー:', error);
       var errText = error && error.message ? error.message : String(error);
+      updateLoadDiag('boot', {
+        attempt: attemptIndex,
+        status: loadDiagStatusFromError(error)
+      });
       if (isGoogleAuthFailureMessage(errText)) {
         userSettingsInitialSyncDone = false;
+        finishLoadDiag('boot', loadDiagStatusFromError(error), { ok: false, keepTickerMs: 0 });
         // 認証失敗は再ログイン誘導（showError 経由でロック）
         showError('設定の同期に失敗しました: ' + errText);
         return;
@@ -573,6 +872,7 @@ function syncUserSettingsWithServer(onDone) {
       // 一時失敗：端末設定で続行（強いエラー表示はしない）
       userSettingsInitialSyncDone = true;
       console.warn('設定同期を諦め、端末の設定で続行します。');
+      finishLoadDiag('boot', loadDiagStatusFromError(error), { ok: false, keepTickerMs: 0 });
       if (typeof onDone === 'function') onDone(error);
     });
   }
@@ -627,6 +927,7 @@ window.onload = function() {
   checkUserEmail();
   
   setupEventListeners();
+  refreshLoadDiagUi();
   
   // 画像は後から読み込む（優先度：低）
   // 背景画像とボタン画像を並列で読み込む
@@ -666,6 +967,7 @@ function showPageLoading() {
     loadingOverlay.classList.remove('hidden');
     loadingOverlay.style.display = 'flex';
     loadingOverlay.setAttribute('aria-hidden', 'false');
+    beginLoadDiag('boot', '起動', 0);
     return;
   }
   loadingOverlay = document.createElement('div');
@@ -677,14 +979,22 @@ function showPageLoading() {
       '<h1 class="page-loading-title">Everyday English</h1>' +
       '<div class="page-loading-spinner"></div>' +
       '<p class="page-loading-status">読み込み中...</p>' +
+      '<p class="page-loading-diag" id="pageLoadingDiag"></p>' +
     '</div>';
   document.body.appendChild(loadingOverlay);
+  beginLoadDiag('boot', '起動', 0);
 }
 
 // ページローディングを非表示にする
 function hidePageLoading() {
   var loadingOverlay = document.getElementById('pageLoadingOverlay');
   if (loadingOverlay) {
+    if (loadDiagBoot.status === '取得中') {
+      finishLoadDiag('boot', '完了', { ok: true, keepTickerMs: 0 });
+    } else {
+      stopLoadDiagTicker('boot');
+      refreshLoadDiagUi();
+    }
     // フェードアウトアニメーション
     loadingOverlay.classList.add('hidden');
     syncAppHeaderHeight();
@@ -693,6 +1003,7 @@ function hidePageLoading() {
       if (loadingOverlay.parentNode) {
         loadingOverlay.parentNode.removeChild(loadingOverlay);
       }
+      refreshLoadDiagUi();
     }, 300); // transition時間（0.3s）に合わせる
   }
 }
@@ -1520,6 +1831,7 @@ function loadCategories(options) {
     if (loadingSpinner) {
       loadingSpinner.style.display = 'block';
     }
+    beginLoadDiag('boot', 'カテゴリ', 0);
   }
   
   // Google Apps Script経由でデータを取得
@@ -1548,7 +1860,13 @@ function loadCategories(options) {
         if (!data.categories || data.categories.length === 0) {
           throw new Error('カテゴリが見つかりません');
         }
-        
+
+        if (!quiet) {
+          updateLoadDiag('boot', {
+            status: 'OK',
+            bytes: approxJsonBytes(data)
+          });
+        }
         categories = data.categories;
         applyTodayStudiedItemCount(data.today_item_count, data.today_ymd || getTodayYmdLocal());
         applyTodayStudiedAnsCount(data.today_ans_count, data.today_ymd || getTodayYmdLocal());
@@ -1629,6 +1947,9 @@ function loadCategories(options) {
         setAppAuthUiLocked(false);
       } catch (e) {
         var loadErr = e && e.message ? e.message : String(e);
+        if (!quiet) {
+          finishLoadDiag('boot', loadDiagStatusFromError(e), { ok: false, keepTickerMs: 0 });
+        }
         showError('データ読み込みエラー: ' + loadErr);
         if (select && !isGoogleAuthFailureMessage(loadErr)) {
           select.disabled = false;
@@ -1646,6 +1967,9 @@ function loadCategories(options) {
     })
     .catch(function(error) {
       var accessErr = error && error.message ? error.message : String(error);
+      if (!quiet) {
+        finishLoadDiag('boot', loadDiagStatusFromError(error), { ok: false, keepTickerMs: 0 });
+      }
       showError('アクセスエラー: ' + accessErr);
       if (select && !isGoogleAuthFailureMessage(accessErr)) {
         select.disabled = false;
@@ -3660,6 +3984,7 @@ function isTransientAllStudyItemsError(error) {
  */
 function fetchAllStudyItemsFromServer(onDone) {
   function attempt(attemptIndex) {
+    beginLoadDiag('run', '全問', ALL_STUDY_ITEMS_FETCH_MAX_ATTEMPTS, { attempt: attemptIndex, kind: 'all' });
     var controller = null;
     var timeoutId = null;
     if (typeof AbortController !== 'undefined') {
@@ -3697,6 +4022,8 @@ function fetchAllStudyItemsFromServer(onDone) {
         if (!data || !data.success) {
           throw new Error((data && data.error) || 'データの取得に失敗しました');
         }
+        var bytes = approxJsonBytes(data);
+        finishLoadDiag('run', 'OK', { ok: true, bytes: bytes, kind: 'all' });
         if (typeof onDone === 'function') {
           onDone(null, data.items || []);
         }
@@ -3709,6 +4036,10 @@ function fetchAllStudyItemsFromServer(onDone) {
         if (error && (error.name === 'AbortError' || isAbortError(error))) {
           err = new Error('タイムアウト: 全問データの取得が時間切れです');
         }
+        updateLoadDiag('run', {
+          attempt: attemptIndex,
+          status: loadDiagStatusFromError(err)
+        });
         if (
           attemptIndex + 1 < ALL_STUDY_ITEMS_FETCH_MAX_ATTEMPTS &&
           isTransientAllStudyItemsError(err)
@@ -3719,6 +4050,7 @@ function fetchAllStudyItemsFromServer(onDone) {
           }, delay);
           return;
         }
+        finishLoadDiag('run', loadDiagStatusFromError(err), { ok: false });
         if (typeof onDone === 'function') {
           onDone(err, null);
         }
@@ -5809,6 +6141,7 @@ function startLearning() {
   var screen2 = document.getElementById('screen2');
   if (screen1) screen1.classList.remove('active');
   if (screen2) screen2.classList.add('active');
+  refreshLoadDiagUi();
   
   // コンテナのパディングを減らす
   var container = document.querySelector('.container');
@@ -6872,6 +7205,12 @@ function runGasSheetUpdateJob(job, attemptIndex) {
     return;
   }
 
+  beginLoadDiag('run', '更新', GAS_UPDATE_MAX_ATTEMPTS, {
+    attempt: attemptIndex,
+    kind: 'update',
+    queueWait: Math.max(0, gasSheetUpdateQueue.length - 1)
+  });
+
   var params = new URLSearchParams();
   params.append('action', job.action);
   params.append('id', job.id);
@@ -6902,12 +7241,22 @@ function runGasSheetUpdateJob(job, attemptIndex) {
     if (!data.success) {
       throw new Error(data.error || 'Unknown error');
     }
+    finishLoadDiag('run', 'OK', {
+      ok: true,
+      kind: 'update',
+      bytes: approxJsonBytes(data)
+    });
     if (typeof job.onSuccess === 'function') {
       job.onSuccess(data);
     }
     finishGasSheetUpdateJob();
   })
   .catch(function(error) {
+    updateLoadDiag('run', {
+      attempt: attemptIndex,
+      status: loadDiagStatusFromError(error),
+      queueWait: Math.max(0, gasSheetUpdateQueue.length - 1)
+    });
     var nextAttempt = attemptIndex + 1;
     if (nextAttempt < GAS_UPDATE_MAX_ATTEMPTS) {
       var delay = GAS_UPDATE_BASE_DELAY_MS * Math.pow(2, attemptIndex);
@@ -6916,6 +7265,7 @@ function runGasSheetUpdateJob(job, attemptIndex) {
       }, delay);
       return;
     }
+    finishLoadDiag('run', loadDiagStatusFromError(error), { ok: false, kind: 'update' });
     showError('更新エラー: ' + error.toString());
     if (typeof job.onFinalError === 'function') {
       job.onFinalError(error);
@@ -7826,6 +8176,18 @@ function playFieldAudio(fieldType, forceRefresh) {
   if (!forceRefresh) {
     var cachedResult = getCachedAudio(text, voiceGender, speed);
     if (cachedResult && cachedResult.audioData) {
+      beginLoadDiag('run', cachedResult.source || 'Mem', 0, {
+        status: 'OK',
+        bytes: cachedResult.audioData.audioContent
+          ? String(cachedResult.audioData.audioContent).length
+          : null
+      });
+      finishLoadDiag('run', 'OK', {
+        ok: true,
+        bytes: cachedResult.audioData.audioContent
+          ? String(cachedResult.audioData.audioContent).length
+          : null
+      });
       playAudioFromCache(cachedResult.audioData, fieldType, cachedResult.source);
       return;
     }
@@ -8252,12 +8614,22 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
   activePlayField = fieldType || null;
   showPlayButtonLoading(fieldType);
   refreshAdvanceNavControls();
+  beginLoadDiag('run', 'Drv', AUDIO_FETCH_MAX_ATTEMPTS, {
+    queueWait: gasAudioFetchQueue.length
+  });
 
   function attemptDrive(attemptIndex) {
     if (generation !== activeAudioFetchGeneration) {
       done();
       return;
     }
+    updateLoadDiag('run', {
+      phase: 'Drv',
+      attempt: attemptIndex,
+      maxAttempts: AUDIO_FETCH_MAX_ATTEMPTS,
+      status: '取得中',
+      queueWait: gasAudioFetchQueue.length
+    });
 
     var params = new URLSearchParams();
     params.append('action', 'getDriveAudio');
@@ -8297,6 +8669,10 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
       if (data && data.success && data.found && data.audioContent) {
         hidePlayButtonLoading(fieldType);
         saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+        finishLoadDiag('run', 'OK', {
+          ok: true,
+          bytes: String(data.audioContent).length
+        });
         playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'Drive');
         done();
         return;
@@ -8307,6 +8683,10 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
         attemptIndex + 1 < AUDIO_FETCH_MAX_ATTEMPTS &&
         isTransientAudioBusinessError(businessError)
       ) {
+        updateLoadDiag('run', {
+          attempt: attemptIndex,
+          status: loadDiagStatusFromError(businessError)
+        });
         var bizDelay = AUDIO_FETCH_RETRY_BASE_DELAY_MS * Math.pow(2, attemptIndex);
         setTimeout(function() {
           attemptDrive(attemptIndex + 1);
@@ -8321,6 +8701,7 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
         return;
       }
       if (isAbortError(error)) {
+        finishLoadDiag('run', 'abort', { ok: false });
         handleAudioFetchAbortOrTimeout(fieldType, false);
         done();
         return;
@@ -8329,6 +8710,10 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
         attemptIndex + 1 < AUDIO_FETCH_MAX_ATTEMPTS &&
         isTransientAudioNetworkError(error)
       ) {
+        updateLoadDiag('run', {
+          attempt: attemptIndex,
+          status: loadDiagStatusFromError(error)
+        });
         var netDelay = AUDIO_FETCH_RETRY_BASE_DELAY_MS * Math.pow(2, attemptIndex);
         setTimeout(function() {
           attemptDrive(attemptIndex + 1);
@@ -8362,7 +8747,12 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
   var gen = (generation == null) ? activeAudioFetchGeneration : generation;
   var finish = typeof done === 'function' ? done : function() {};
 
+  beginLoadDiag('run', 'TTS', AUDIO_FETCH_MAX_ATTEMPTS, {
+    queueWait: gasAudioFetchQueue.length
+  });
+
   function failAudio(errorText) {
+    finishLoadDiag('run', loadDiagStatusFromError(errorText), { ok: false });
     hidePlayButtonLoading(fieldType);
     activePlayField = null;
     updateFieldPlayButtons();
@@ -8376,6 +8766,13 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
       finish();
       return;
     }
+    updateLoadDiag('run', {
+      phase: 'TTS',
+      attempt: attemptIndex,
+      maxAttempts: AUDIO_FETCH_MAX_ATTEMPTS,
+      status: '取得中',
+      queueWait: gasAudioFetchQueue.length
+    });
 
     var params = new URLSearchParams();
     params.append('text', text);
@@ -8417,6 +8814,10 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
         if (item && sheetField) {
           saveDriveAudioAsync(item, sheetField, voiceGender || 'female', speed || 'fast', data.audioContent);
         }
+        finishLoadDiag('run', 'OK', {
+          ok: true,
+          bytes: String(data.audioContent).length
+        });
         playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'TTS');
         finish();
         return;
@@ -8427,6 +8828,10 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
         attemptIndex + 1 < AUDIO_FETCH_MAX_ATTEMPTS &&
         isTransientAudioBusinessError(errMsg)
       ) {
+        updateLoadDiag('run', {
+          attempt: attemptIndex,
+          status: loadDiagStatusFromError(errMsg)
+        });
         var bizDelay = AUDIO_FETCH_RETRY_BASE_DELAY_MS * Math.pow(2, attemptIndex);
         setTimeout(function() {
           attemptTts(attemptIndex + 1);
@@ -8441,6 +8846,7 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
         return;
       }
       if (isAbortError(error)) {
+        finishLoadDiag('run', 'abort', { ok: false });
         handleAudioFetchAbortOrTimeout(fieldType, false);
         finish();
         return;
@@ -8449,6 +8855,10 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
         attemptIndex + 1 < AUDIO_FETCH_MAX_ATTEMPTS &&
         isTransientAudioNetworkError(error)
       ) {
+        updateLoadDiag('run', {
+          attempt: attemptIndex,
+          status: loadDiagStatusFromError(error)
+        });
         var netDelay = AUDIO_FETCH_RETRY_BASE_DELAY_MS * Math.pow(2, attemptIndex);
         setTimeout(function() {
           attemptTts(attemptIndex + 1);
