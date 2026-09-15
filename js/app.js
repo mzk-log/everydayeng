@@ -3858,11 +3858,15 @@ function pickLastDateModeListItems(sortedItems) {
 
 /**
  * getAllStudyItems 取得結果をセッション内メモリでマージ
- * @param {Array} items
+ * @param {Array} items - 取得した配列（サーバ or 端末）
  * @param {Array} [extraItems]
+ * @param {{preferIncomingStudyMeta?: boolean}} [options]
+ *   preferIncomingStudyMeta=true：学習メタ（日時・回数・duration）は items 側を優先（シート正）
  * @returns {Array}
  */
-function mergeAllStudyItemsWithMemory(items, extraItems) {
+function mergeAllStudyItemsWithMemory(items, extraItems, options) {
+  options = options || {};
+  var preferIncomingStudyMeta = !!options.preferIncomingStudyMeta;
   var byId = {};
   Object.keys(categoryDataByNo).forEach(function(catKey) {
     var catItems = categoryDataByNo[catKey] || [];
@@ -3883,6 +3887,27 @@ function mergeAllStudyItemsWithMemory(items, extraItems) {
   return (items || []).map(function(it) {
     var mem = it && it.id != null ? byId[String(it.id)] : null;
     if (!mem) return it;
+    var retryCount;
+    var totalStudyCount;
+    var dailyStudyCount;
+    var durationOld;
+    var duration;
+    var lastDate;
+    if (preferIncomingStudyMeta) {
+      retryCount = it.retry_count != null ? it.retry_count : mem.retry_count;
+      totalStudyCount = it.total_study_count != null ? it.total_study_count : mem.total_study_count;
+      dailyStudyCount = it.daily_study_count != null ? it.daily_study_count : mem.daily_study_count;
+      durationOld = it.duration_old != null ? it.duration_old : mem.duration_old;
+      duration = it.duration != null ? it.duration : mem.duration;
+      lastDate = it.last_date != null ? it.last_date : mem.last_date;
+    } else {
+      retryCount = mem.retry_count != null ? mem.retry_count : it.retry_count;
+      totalStudyCount = mem.total_study_count != null ? mem.total_study_count : it.total_study_count;
+      dailyStudyCount = mem.daily_study_count != null ? mem.daily_study_count : it.daily_study_count;
+      durationOld = mem.duration_old != null ? mem.duration_old : it.duration_old;
+      duration = mem.duration != null ? mem.duration : it.duration;
+      lastDate = mem.last_date != null ? mem.last_date : it.last_date;
+    }
     return {
       id: it.id,
       category_no: it.category_no != null ? it.category_no : mem.category_no,
@@ -3892,12 +3917,12 @@ function mergeAllStudyItemsWithMemory(items, extraItems) {
       a_title: it.a_title,
       answer: mem.answer != null ? mem.answer : it.answer,
       note: mem.note != null ? mem.note : it.note,
-      retry_count: mem.retry_count != null ? mem.retry_count : it.retry_count,
-      total_study_count: mem.total_study_count != null ? mem.total_study_count : it.total_study_count,
-      daily_study_count: mem.daily_study_count != null ? mem.daily_study_count : it.daily_study_count,
-      duration_old: mem.duration_old != null ? mem.duration_old : it.duration_old,
-      duration: mem.duration != null ? mem.duration : it.duration,
-      last_date: mem.last_date != null ? mem.last_date : it.last_date
+      retry_count: retryCount,
+      total_study_count: totalStudyCount,
+      daily_study_count: dailyStudyCount,
+      duration_old: durationOld,
+      duration: duration,
+      last_date: lastDate
     };
   });
 }
@@ -4236,18 +4261,22 @@ function loadLastDateModeData(options) {
   var listMessage = document.getElementById('listMessage');
   var usedLocal = false;
 
-  function applyLastDateItems(rawItems) {
-    var items = mergeAllStudyItemsWithMemory(rawItems || [], lastDateModeAllItems);
+  function applyLastDateItems(rawItems, fromServer) {
+    // サーバ成功時はシート側学習メタを優先（端末キャッシュの古い日時で上書きしない）
+    var extra = fromServer ? [] : lastDateModeAllItems;
+    var items = mergeAllStudyItemsWithMemory(rawItems || [], extra, {
+      preferIncomingStudyMeta: !!fromServer
+    });
     lastDateModeAllItems = filterItemsByVisibleCategories(items);
     sortItemsForLastDatePriorityMode(lastDateModeAllItems);
     regenerateLastDateModeList();
   }
 
-  // B: 端末キャッシュがあれば即表示し、裏でサーバ更新
+  // B: 端末キャッシュがあれば仮表示し、裏でサーバ更新（成功後はシート正）
   var localItems = readLocalAllStudyItems();
   if (localItems && localItems.length) {
     usedLocal = true;
-    applyLastDateItems(localItems);
+    applyLastDateItems(localItems, false);
     clearAllStudyItemsLoadingUi();
   } else {
     if (loadingSpinner) loadingSpinner.style.display = 'block';
@@ -4275,7 +4304,7 @@ function loadLastDateModeData(options) {
       return;
     }
     writeLocalAllStudyItems(items || []);
-    applyLastDateItems(items || []);
+    applyLastDateItems(items || [], true);
     clearAllStudyItemsLoadingUi();
   });
 }
@@ -4495,19 +4524,22 @@ function loadDurationModeData(options) {
   var listMessage = document.getElementById('listMessage');
   var usedLocal = false;
 
-  function applyDurationItems(rawItems) {
-    var items = mergeAllStudyItemsWithMemory(rawItems || [], durationModeSortedItems);
+  function applyDurationItems(rawItems, fromServer) {
+    var extra = fromServer ? [] : durationModeSortedItems;
+    var items = mergeAllStudyItemsWithMemory(rawItems || [], extra, {
+      preferIncomingStudyMeta: !!fromServer
+    });
     durationModeSortedItems = filterItemsByVisibleCategories(items);
     sortItemsForDurationMode(durationModeSortedItems);
     if (resetPage) durationModePageIndex = 0;
     applyDurationModePageToList();
   }
 
-  // B: 端末キャッシュがあれば即表示し、裏でサーバ更新
+  // B: 端末キャッシュがあれば仮表示し、裏でサーバ更新（成功後はシート正）
   var localItems = readLocalAllStudyItems();
   if (localItems && localItems.length) {
     usedLocal = true;
-    applyDurationItems(localItems);
+    applyDurationItems(localItems, false);
     clearAllStudyItemsLoadingUi();
   } else {
     if (loadingSpinner) loadingSpinner.style.display = 'block';
@@ -4535,7 +4567,7 @@ function loadDurationModeData(options) {
       return;
     }
     writeLocalAllStudyItems(items || []);
-    applyDurationItems(items || []);
+    applyDurationItems(items || [], true);
     clearAllStudyItemsLoadingUi();
   });
 }
@@ -9122,6 +9154,7 @@ function goToPreviousQuestion() {
 // 次の問題に進む
 function goToNextQuestion() {
   if (isAdvanceNavBlockedByAudio()) return;
+  clearAudioSourceDebug();
   
   // 現在の問題を完了リストに追加（重複チェック）
   if (completedQuestionIndices.indexOf(currentQuestionIndex) === -1) {
