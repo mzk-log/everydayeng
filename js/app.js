@@ -117,6 +117,8 @@ var loadDiagLastBootSuccessSec = null;
 var loadDiagLastAudioSuccessSec = null;
 var loadDiagLastUpdateSuccessSec = null;
 var loadDiagLastAllSuccessSec = null;
+var sheetUpdateOkCount = 0; // セッション内：シート更新ジョブ成功数
+var sheetUpdateFailCount = 0; // セッション内：シート更新ジョブ最終失敗数
 var loadDiagBoot = {
   phase: '',
   attempt: 0,
@@ -182,6 +184,7 @@ function formatLoadDiagLine(slot) {
   if (slot.queueWait != null && slot.queueWait > 0) {
     parts.push('q:' + slot.queueWait);
   }
+  parts.push('書込OK:' + sheetUpdateOkCount + ' 失敗:' + sheetUpdateFailCount);
   return parts.join(' | ');
 }
 
@@ -246,14 +249,20 @@ function refreshLoadDiagUi() {
 
   var netEl = document.getElementById('netLoadDiag');
   if (netEl) {
-    netEl.style.display = 'block';
-    // 起動中は boot、それ以外は直近の run（無ければ boot の最終）
-    var overlay = document.getElementById('pageLoadingOverlay');
-    var bootVisible = overlay && !overlay.classList.contains('hidden') &&
-      overlay.style.display !== 'none';
-    netEl.textContent = bootVisible || (loadDiagRun.status === 'idle' && !loadDiagRun.startedAt)
-      ? formatLoadDiagLine(loadDiagBoot)
-      : formatLoadDiagLine(loadDiagRun);
+    var screen2ForNet = document.getElementById('screen2');
+    var onLearningForNet = !!(screen2ForNet && screen2ForNet.classList.contains('active'));
+    // 学習中は note 下の診断行のみ（ヘッダーと二重にしない）
+    if (onLearningForNet) {
+      netEl.style.display = 'none';
+    } else {
+      netEl.style.display = 'block';
+      var overlay = document.getElementById('pageLoadingOverlay');
+      var bootVisible = overlay && !overlay.classList.contains('hidden') &&
+        overlay.style.display !== 'none';
+      netEl.textContent = bootVisible || (loadDiagRun.status === 'idle' && !loadDiagRun.startedAt)
+        ? formatLoadDiagLine(loadDiagBoot)
+        : formatLoadDiagLine(loadDiagRun);
+    }
   }
 
   var runEl = document.getElementById('learningLoadDiag');
@@ -6004,6 +6013,8 @@ function clearAppSessionDataAfterAuthFailure() {
   originalCategoryData = [];
   currentQuestionIndex = 0;
   completedQuestionIndices = [];
+  sheetUpdateOkCount = 0;
+  sheetUpdateFailCount = 0;
   retryQuestionIndices = [];
   isInRetryMode = false;
   retryQuestionIndex = 0;
@@ -6466,6 +6477,7 @@ function displayQuestion() {
   }
   
   stopCurrentAudioPlayback();
+  clearAudioSourceDebug();
   
   var item = currentCategoryData[currentQuestionIndex];
   var effectiveQuestion = getEffectiveQuestion(item);
@@ -7201,6 +7213,8 @@ function runGasSheetUpdateJob(job, attemptIndex) {
     if (typeof job.onFinalError === 'function') {
       job.onFinalError(new Error('メールアドレスが設定されていません。'));
     }
+    sheetUpdateFailCount += 1;
+    refreshLoadDiagUi();
     finishGasSheetUpdateJob();
     return;
   }
@@ -7246,6 +7260,8 @@ function runGasSheetUpdateJob(job, attemptIndex) {
       kind: 'update',
       bytes: approxJsonBytes(data)
     });
+    sheetUpdateOkCount += 1;
+    refreshLoadDiagUi();
     if (typeof job.onSuccess === 'function') {
       job.onSuccess(data);
     }
@@ -7265,7 +7281,9 @@ function runGasSheetUpdateJob(job, attemptIndex) {
       }, delay);
       return;
     }
+    sheetUpdateFailCount += 1;
     finishLoadDiag('run', loadDiagStatusFromError(error), { ok: false, kind: 'update' });
+    refreshLoadDiagUi();
     showError('更新エラー: ' + error.toString());
     if (typeof job.onFinalError === 'function') {
       job.onFinalError(error);
@@ -8267,6 +8285,18 @@ function showAudioSourceDebug(source) {
   var label = labelMap[source] || String(source || '');
   el.textContent = label;
   el.style.display = 'inline-block';
+}
+
+/**
+ * ヘッダーの音声取得元デバッグ表示を消す
+ */
+function clearAudioSourceDebug() {
+  var el = document.getElementById('audioSourceDebug');
+  if (!el) {
+    return;
+  }
+  el.textContent = '';
+  el.style.display = 'none';
 }
 
 /**
@@ -10484,6 +10514,7 @@ function goToHome() {
   
   // 万一の抜け対策：再生中音声を停止してから遷移する
   stopCurrentAudioPlayback();
+  clearAudioSourceDebug();
   
   // ストップウォッチを停止
   stopStopwatch();
