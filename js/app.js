@@ -27,6 +27,8 @@ var googleAccessToken = null; // OAuth access token（自前ボタン／Brave等
 var GOOGLE_OAUTH_CLIENT_ID = '451690742730-f7aubfes1nea66l0p3tavuibcgntbaa8.apps.googleusercontent.com';
 var GOOGLE_ID_TOKEN_STORAGE_KEY = 'googleIdToken';
 var GOOGLE_ACCESS_TOKEN_STORAGE_KEY = 'googleAccessToken';
+var GOOGLE_ACCESS_TOKEN_EXPIRES_KEY = 'googleAccessTokenExpiresAt';
+var googleAccessTokenExpiresAt = 0;
 var googleSignInInitialized = false;
 var googleLoginDialogCancellable = false;
 var googleLoginForceAccountSelect = false; // ヘッダー「ログイン」からの切替時 true
@@ -1329,14 +1331,9 @@ function checkUserEmail() {
   restoreGoogleAuthFromStorage();
   if (!userEmail || !hasValidGoogleAuthToken()) {
     setAppAuthUiLocked(true);
-    // モバイルは One Tap / prompt がボタン操作を阻害しやすいので手動ログインへ直行
-    if (isLikelyMobileClient()) {
+    tryGoogleResumeSignIn(function() {
       showGoogleLoginDialog({ cancellable: true });
-    } else {
-      tryGoogleAutoSignIn(function() {
-        showGoogleLoginDialog({ cancellable: true });
-      });
-    }
+    });
     return;
   }
   // トークンありでもカテゴリ取得成功までロック維持
@@ -1400,7 +1397,7 @@ function isAppAuthUiLocked() {
 }
 
 /**
- * localStorage / sessionStorage から認証情報を復元
+ * localStorage から認証情報を復元（旧 sessionStorage があれば移行）
  */
 function restoreGoogleAuthFromStorage() {
   try {
@@ -1408,19 +1405,60 @@ function restoreGoogleAuthFromStorage() {
   } catch (e) {
     userEmail = null;
   }
-  try {
-    googleIdToken = sessionStorage.getItem(GOOGLE_ID_TOKEN_STORAGE_KEY) || null;
-  } catch (e2) {
-    googleIdToken = null;
-  }
-  try {
-    googleAccessToken = sessionStorage.getItem(GOOGLE_ACCESS_TOKEN_STORAGE_KEY) || null;
-  } catch (e3) {
-    googleAccessToken = null;
-  }
+  googleIdToken = readPersistedAuthValue(GOOGLE_ID_TOKEN_STORAGE_KEY);
+  googleAccessToken = readPersistedAuthValue(GOOGLE_ACCESS_TOKEN_STORAGE_KEY);
+  googleAccessTokenExpiresAt = Number(readPersistedAuthValue(GOOGLE_ACCESS_TOKEN_EXPIRES_KEY) || 0) || 0;
   if (googleIdToken && isGoogleIdTokenExpired(googleIdToken)) {
     clearGoogleIdToken();
   }
+  if (googleAccessToken && googleAccessTokenExpiresAt && Date.now() >= googleAccessTokenExpiresAt) {
+    clearGoogleAccessToken();
+  }
+}
+
+/**
+ * 認証トークンの永続値を読む（localStorage。旧 sessionStorage は移行して消す）
+ * @param {string} key
+ * @returns {string|null}
+ */
+function readPersistedAuthValue(key) {
+  try {
+    var localVal = localStorage.getItem(key);
+    if (localVal) {
+      return localVal;
+    }
+  } catch (e) {}
+  try {
+    var sessionVal = sessionStorage.getItem(key);
+    if (sessionVal) {
+      try {
+        localStorage.setItem(key, sessionVal);
+      } catch (e2) {}
+      try {
+        sessionStorage.removeItem(key);
+      } catch (e3) {}
+      return sessionVal;
+    }
+  } catch (e4) {}
+  return null;
+}
+
+/**
+ * 認証トークンを localStorage に保存する（sessionStorage は使わない）
+ * @param {string} key
+ * @param {string} value
+ */
+function writePersistedAuthValue(key, value) {
+  try {
+    if (value) {
+      localStorage.setItem(key, value);
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch (e) {}
+  try {
+    sessionStorage.removeItem(key);
+  } catch (e2) {}
 }
 
 /**
@@ -1453,7 +1491,7 @@ function getGoogleIdToken() {
     return googleIdToken;
   }
   try {
-    var stored = sessionStorage.getItem(GOOGLE_ID_TOKEN_STORAGE_KEY);
+    var stored = localStorage.getItem(GOOGLE_ID_TOKEN_STORAGE_KEY);
     if (stored && !isGoogleIdTokenExpired(stored)) {
       googleIdToken = stored;
       return stored;
@@ -1469,15 +1507,7 @@ function getGoogleIdToken() {
  */
 function setGoogleIdToken(token) {
   googleIdToken = token || null;
-  try {
-    if (token) {
-      sessionStorage.setItem(GOOGLE_ID_TOKEN_STORAGE_KEY, token);
-    } else {
-      sessionStorage.removeItem(GOOGLE_ID_TOKEN_STORAGE_KEY);
-    }
-  } catch (e) {
-    // ignore
-  }
+  writePersistedAuthValue(GOOGLE_ID_TOKEN_STORAGE_KEY, token || '');
 }
 
 function clearGoogleIdToken() {
@@ -1488,13 +1518,23 @@ function clearGoogleIdToken() {
  * @returns {string}
  */
 function getGoogleAccessToken() {
+  if (googleAccessTokenExpiresAt && Date.now() >= googleAccessTokenExpiresAt) {
+    clearGoogleAccessToken();
+    return '';
+  }
   if (googleAccessToken) {
     return googleAccessToken;
   }
   try {
-    var stored = sessionStorage.getItem(GOOGLE_ACCESS_TOKEN_STORAGE_KEY);
+    var stored = localStorage.getItem(GOOGLE_ACCESS_TOKEN_STORAGE_KEY);
+    var storedExp = Number(localStorage.getItem(GOOGLE_ACCESS_TOKEN_EXPIRES_KEY) || 0) || 0;
+    if (storedExp && Date.now() >= storedExp) {
+      clearGoogleAccessToken();
+      return '';
+    }
     if (stored) {
       googleAccessToken = stored;
+      googleAccessTokenExpiresAt = storedExp;
       return stored;
     }
   } catch (e) {
@@ -1505,18 +1545,20 @@ function getGoogleAccessToken() {
 
 /**
  * @param {string} token
+ * @param {number} [expiresInSec]
  */
-function setGoogleAccessToken(token) {
+function setGoogleAccessToken(token, expiresInSec) {
   googleAccessToken = token || null;
-  try {
-    if (token) {
-      sessionStorage.setItem(GOOGLE_ACCESS_TOKEN_STORAGE_KEY, token);
-    } else {
-      sessionStorage.removeItem(GOOGLE_ACCESS_TOKEN_STORAGE_KEY);
-    }
-  } catch (e) {
-    // ignore
+  if (token && expiresInSec) {
+    googleAccessTokenExpiresAt = Date.now() + (Number(expiresInSec) * 1000) - 60000;
+  } else if (!token) {
+    googleAccessTokenExpiresAt = 0;
   }
+  writePersistedAuthValue(GOOGLE_ACCESS_TOKEN_STORAGE_KEY, token || '');
+  writePersistedAuthValue(
+    GOOGLE_ACCESS_TOKEN_EXPIRES_KEY,
+    googleAccessTokenExpiresAt ? String(googleAccessTokenExpiresAt) : ''
+  );
 }
 
 function clearGoogleAccessToken() {
@@ -1666,6 +1708,76 @@ function ensureGoogleSignInInitialized(onReady, initOptions) {
     }
   }, function() {
     setGoogleLoginError('Googleログインの読み込みに失敗しました。通信環境を確認して再読み込みしてください。');
+  });
+}
+
+/**
+ * 起動時：保存トークンが無い／切れているときの再開
+ * デスクトップは One Tap、スマホは画面なしの TokenClient（prompt=none）
+ * @param {Function} [onNeedManualLogin]
+ */
+function tryGoogleResumeSignIn(onNeedManualLogin) {
+  if (isLikelyMobileClient()) {
+    tryGoogleSilentAccessToken(onNeedManualLogin);
+    return;
+  }
+  tryGoogleAutoSignIn(onNeedManualLogin);
+}
+
+/**
+ * スマホ：One Tap を出さず、同意済みなら access token を静かに取得
+ * @param {Function} [onNeedManualLogin]
+ */
+function tryGoogleSilentAccessToken(onNeedManualLogin) {
+  var settled = false;
+  function needManualLogin() {
+    if (settled || hasValidGoogleAuthToken()) {
+      return;
+    }
+    settled = true;
+    hidePageLoading();
+    if (typeof onNeedManualLogin === 'function') {
+      onNeedManualLogin();
+    }
+  }
+
+  whenGoogleIdentityReady(function() {
+    if (!google.accounts || !google.accounts.oauth2 ||
+        typeof google.accounts.oauth2.initTokenClient !== 'function') {
+      needManualLogin();
+      return;
+    }
+    try {
+      var tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_OAUTH_CLIENT_ID,
+        scope: 'openid email profile',
+        callback: function(tokenResponse) {
+          if (settled) {
+            return;
+          }
+          if (!tokenResponse || tokenResponse.error || !tokenResponse.access_token) {
+            needManualLogin();
+            return;
+          }
+          settled = true;
+          handleGoogleTokenClientResponse(tokenResponse);
+        },
+        error_callback: function() {
+          needManualLogin();
+        }
+      });
+      var req = { prompt: 'none' };
+      var hint = getStoredUserEmailForLoginHint();
+      if (hint) {
+        req.hint = hint;
+      }
+      tokenClient.requestAccessToken(req);
+      setTimeout(needManualLogin, 8000);
+    } catch (e) {
+      needManualLogin();
+    }
+  }, function() {
+    needManualLogin();
   });
 }
 
@@ -1832,7 +1944,7 @@ function handleGoogleTokenClientResponse(tokenResponse) {
       return;
     }
     clearGoogleIdToken();
-    setGoogleAccessToken(accessToken);
+    setGoogleAccessToken(accessToken, tokenResponse.expires_in);
     completeGoogleLoginWithEmail(email);
   })
   .catch(function(error) {
