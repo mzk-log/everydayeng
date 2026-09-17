@@ -4,6 +4,7 @@ var currentCategoryData = [];
 var currentCategoryNo = null;
 var categoryDataByNo = {}; // カテゴリ切替高速化用（セッション内キャッシュ）
 var currentQuestionIndex = 0;
+var displayedLearningItem = null; // 出題表示中の item（Ans は index 再参照しない）
 var learningStartTime = null;
 var learningTimeInterval = null;
 var dailyStudyCountDateCheckInterval = null;
@@ -50,8 +51,17 @@ var isAnswerToggleActive = false; // 解答読みトグルボタンの状態（O
 var questionToggleBeforeListeningLock = null; // リスニングON固定前の出題読み状態
 var answerToggleBeforeListening = null; // リスニングON前の解答読み状態（OFF復帰用）
 var currentAudio = null; // 現在再生中のAudioオブジェクト
+var completionSfxAudios = []; // 学習完了効果音（出題／解答音声とは別）
+var COMPLETION_SFX_URL = 'audio/pirorin.mp3';
+var UI_CLICK_SFX_URL = 'audio/buho.mp3';
+var UI_CLICK_SFX_VOLUME = 0.6; // 既定1.0より少し小さく
+var uiClickSfxAudio = null; // ボタン効果音（使い回し。Pages静的ファイル）
+var uiClickSfxPlaying = false;
+var uiClickSfxWaiters = [];
 var activePlayField = null; // 再生／取得中の欄 'question' | 'answer' | null
 var waitingListeningAnsGate = false; // リスニング時：出題音声終了まで Ans 無効・計測待機
+var pendingQuestionAutoplayTimerReset = false; // 出題読み自動再生終了後に計測をゼロリセットするか
+var sessionRetryPressCountById = {}; // START〜終了：問題IDごとのリトライ押下回数（シート累計とは別）
 var isCategoryTransitionInProgress = false; // カテゴリ切替：データ取得〜1問目表示まで
 var isRefreshingAdvanceNavControls = false; // refreshAdvanceNavControls の再入防止
 var justCompletedCategoryNo = null; // 直前に完了したカテゴリ（完了画面のList／中央Next/Start判定用）
@@ -108,6 +118,7 @@ var ALL_STUDY_ITEMS_FETCH_MAX_ATTEMPTS = 3; // 全問取得の最大試行（初
 var ALL_STUDY_ITEMS_FETCH_TIMEOUT_MS = 60000; // 全問取得1試行あたりの打ち切り
 var ALL_STUDY_ITEMS_RETRY_BASE_DELAY_MS = 800; // 全問取得リトライ間隔
 var ANS_SHEET_PERSIST_MAX_DEFER_MS = 8000; // 解答音声優先時、シート更新開始の上限待ち
+var AUDIO_PLAY_CANPLAY_TIMEOUT_MS = 300; // Blob再生: canplay待ちの上限（超えたら再生開始）
 var USER_SETTINGS_SYNC_MAX_ATTEMPTS = 3; // 起動時設定同期の最大試行（初回含む）
 var USER_SETTINGS_SYNC_RETRY_DELAY_MS = 800; // 設定同期リトライ間隔
 
@@ -124,6 +135,11 @@ var loadDiagLastUpdateSuccessSec = null;
 var loadDiagLastAllSuccessSec = null;
 var sheetUpdateOkCount = 0; // セッション内：シート更新ジョブ成功数
 var sheetUpdateFailCount = 0; // セッション内：シート更新ジョブ最終失敗数
+var LOAD_DIAG_HISTORY_MAX = 8; // 直近完了ログ（スクショ1画面向け）
+var LOAD_DIAG_COPY_LONG_PRESS_MS = 700;
+var loadDiagHistory = []; // 古い→新しい。表示は新しい順
+var loadDiagCopyFeedbackUntil = 0;
+var loadDiagCopyFeedbackTimer = null;
 var loadDiagBoot = {
   phase: '',
   attempt: 0,
@@ -161,19 +177,33 @@ function formatLoadDiagElapsed(ms) {
 }
 
 /**
- * @param {Object} slot
+ * @param {Date} [date]
  * @returns {string}
  */
-function formatLoadDiagLine(slot) {
+function formatLoadDiagClock(date) {
+  var d = date || new Date();
+  function pad(n) {
+    return (n < 10 ? '0' : '') + n;
+  }
+  return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+
+/**
+ * @param {Object} slot
+ * @param {{elapsedMs?: number}} [options]
+ * @returns {string}
+ */
+function formatLoadDiagLine(slot, options) {
   if (!slot) {
     return '-';
   }
+  options = options || {};
   var parts = [];
-  if (slot.startedAt) {
-    parts.push(formatLoadDiagElapsed(Date.now() - slot.startedAt));
-  } else {
-    parts.push('0.0s');
+  var elapsedMs = options.elapsedMs;
+  if (elapsedMs == null) {
+    elapsedMs = slot.startedAt ? (Date.now() - slot.startedAt) : 0;
   }
+  parts.push(formatLoadDiagElapsed(elapsedMs));
   var phasePart = slot.phase || '-';
   if (slot.maxAttempts > 0) {
     phasePart += ' ' + Math.min((slot.attempt || 0) + 1, slot.maxAttempts) + '/' + slot.maxAttempts;
@@ -200,6 +230,151 @@ function formatLoadDiagLine(slot) {
   }
   parts.push('書込OK:' + sheetUpdateOkCount + ' 失敗:' + sheetUpdateFailCount);
   return parts.join(' | ');
+}
+
+/**
+ * 完了した診断行を直近履歴へ追加（最大 LOAD_DIAG_HISTORY_MAX）
+ * @param {string} line
+ */
+function pushLoadDiagHistory(line) {
+  if (!line) {
+    return;
+  }
+  loadDiagHistory.push(line);
+  if (loadDiagHistory.length > LOAD_DIAG_HISTORY_MAX) {
+    loadDiagHistory = loadDiagHistory.slice(-LOAD_DIAG_HISTORY_MAX);
+  }
+}
+
+/**
+ * いまの1行＋直近履歴（新しい順）
+ * @param {Object} liveSlot
+ * @returns {string}
+ */
+function getLoadDiagBlockText(liveSlot) {
+  var lines = [];
+  if (Date.now() < loadDiagCopyFeedbackUntil) {
+    lines.push('コピーしました');
+  }
+  lines.push(formatLoadDiagLine(liveSlot));
+  for (var i = loadDiagHistory.length - 1; i >= 0; i--) {
+    lines.push(loadDiagHistory[i]);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * 診断テキストをクリップボードへコピー
+ * @param {string} text
+ * @param {function(): void} [onDone]
+ */
+function copyLoadDiagText(text, onDone) {
+  function doneOk() {
+    if (typeof onDone === 'function') {
+      onDone();
+    }
+  }
+  function fallbackCopy() {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', 'readonly');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    var ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch (eCopy) {
+      ok = false;
+    }
+    document.body.removeChild(ta);
+    if (ok) {
+      doneOk();
+    } else {
+      showError('診断ログをコピーできませんでした。');
+    }
+  }
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    navigator.clipboard.writeText(text).then(doneOk).catch(function() {
+      fallbackCopy();
+    });
+    return;
+  }
+  fallbackCopy();
+}
+
+function showLoadDiagCopiedFeedback() {
+  loadDiagCopyFeedbackUntil = Date.now() + 1500;
+  if (loadDiagCopyFeedbackTimer) {
+    clearTimeout(loadDiagCopyFeedbackTimer);
+  }
+  refreshLoadDiagUi();
+  loadDiagCopyFeedbackTimer = setTimeout(function() {
+    loadDiagCopyFeedbackTimer = null;
+    loadDiagCopyFeedbackUntil = 0;
+    refreshLoadDiagUi();
+  }, 1500);
+}
+
+/**
+ * 診断ブロック長押しで表示中テキストをコピー
+ * @param {HTMLElement|null} el
+ */
+function bindLoadDiagCopyPress(el) {
+  if (!el || el.getAttribute('data-diag-copy-bound') === '1') {
+    return;
+  }
+  el.setAttribute('data-diag-copy-bound', '1');
+  el.setAttribute('title', '長押しで診断ログをコピー');
+
+  var pressTimer = null;
+  var pressActive = false;
+
+  function clearPressTimer() {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  }
+
+  el.addEventListener('pointerdown', function(e) {
+    if (typeof e.button === 'number' && e.button !== 0) {
+      return;
+    }
+    pressActive = true;
+    clearPressTimer();
+    pressTimer = setTimeout(function() {
+      pressTimer = null;
+      if (!pressActive) {
+        return;
+      }
+      var text = el.textContent || '';
+      if (!text) {
+        return;
+      }
+      copyLoadDiagText(text, showLoadDiagCopiedFeedback);
+    }, LOAD_DIAG_COPY_LONG_PRESS_MS);
+  });
+
+  function endPress() {
+    pressActive = false;
+    clearPressTimer();
+  }
+
+  el.addEventListener('pointerup', endPress);
+  el.addEventListener('pointercancel', endPress);
+  el.addEventListener('pointerleave', endPress);
+  el.addEventListener('contextmenu', function(e) {
+    e.preventDefault();
+  });
+}
+
+function bindAllLoadDiagCopyPress() {
+  bindLoadDiagCopyPress(document.getElementById('pageLoadingDiag'));
+  bindLoadDiagCopyPress(document.getElementById('netLoadDiag'));
+  bindLoadDiagCopyPress(document.getElementById('learningLoadDiag'));
 }
 
 /**
@@ -258,7 +433,8 @@ function refreshLoadDiagUi() {
   var bootEl = document.getElementById('pageLoadingDiag');
   if (bootEl) {
     bootEl.style.display = 'block';
-    bootEl.textContent = formatLoadDiagLine(loadDiagBoot);
+    bootEl.textContent = getLoadDiagBlockText(loadDiagBoot);
+    bindLoadDiagCopyPress(bootEl);
   }
 
   var netEl = document.getElementById('netLoadDiag');
@@ -273,9 +449,11 @@ function refreshLoadDiagUi() {
       var overlay = document.getElementById('pageLoadingOverlay');
       var bootVisible = overlay && !overlay.classList.contains('hidden') &&
         overlay.style.display !== 'none';
-      netEl.textContent = bootVisible || (loadDiagRun.status === 'idle' && !loadDiagRun.startedAt)
-        ? formatLoadDiagLine(loadDiagBoot)
-        : formatLoadDiagLine(loadDiagRun);
+      var netSlot = bootVisible || (loadDiagRun.status === 'idle' && !loadDiagRun.startedAt)
+        ? loadDiagBoot
+        : loadDiagRun;
+      netEl.textContent = getLoadDiagBlockText(netSlot);
+      bindLoadDiagCopyPress(netEl);
     }
   }
 
@@ -285,8 +463,12 @@ function refreshLoadDiagUi() {
     var onLearning = !!(screen2 && screen2.classList.contains('active'));
     runEl.style.display = onLearning ? 'block' : 'none';
     if (onLearning) {
-      runEl.textContent = formatLoadDiagLine(loadDiagRun);
+      runEl.textContent = getLoadDiagBlockText(loadDiagRun);
+      bindLoadDiagCopyPress(runEl);
     }
+  }
+  if (typeof syncAppHeaderHeight === 'function') {
+    syncAppHeaderHeight();
   }
 }
 
@@ -403,6 +585,11 @@ function finishLoadDiag(which, status, opts) {
       loadDiagLastAudioSuccessSec = elapsedSec;
       slot.lastSuccessSec = elapsedSec;
     }
+  }
+  if (slot.startedAt) {
+    pushLoadDiagHistory(
+      formatLoadDiagClock() + ' ' + formatLoadDiagLine(slot, { elapsedMs: elapsedSec * 1000 })
+    );
   }
   refreshLoadDiagUi();
   var keepMs = opts.keepTickerMs != null ? opts.keepTickerMs : (which === 'boot' ? 0 : 1200);
@@ -822,6 +1009,7 @@ function syncUserSettingsWithServer(onDone) {
 
   function attemptSync(attemptIndex) {
     beginLoadDiag('boot', '設定同期', USER_SETTINGS_SYNC_MAX_ATTEMPTS, { attempt: attemptIndex });
+    setPageLoadingProgress(10, '設定');
     var params = new URLSearchParams();
     params.append('action', 'getUserSettings');
     appendAuthParams(params);
@@ -951,6 +1139,7 @@ window.onload = function() {
   
   setupEventListeners();
   refreshLoadDiagUi();
+  bindAllLoadDiagCopyPress();
   
   // 画像は後から読み込む（優先度：低）
   // 背景画像とボタン画像を並列で読み込む
@@ -984,28 +1173,122 @@ window.onload = function() {
 };
 
 // ページローディングを表示する（削除済みなら再作成）
+function getPageLoadingOverlayHtml() {
+  return '<div class="page-loading-content">' +
+    '<h1 class="page-loading-title">Everyday English</h1>' +
+    '<div class="page-loading-spinner"></div>' +
+    '<p class="page-loading-percent" id="pageLoadingPercent">0%</p>' +
+    '<div class="page-loading-bar" aria-hidden="true"><div class="page-loading-bar-fill" id="pageLoadingBarFill"></div></div>' +
+    '<p class="page-loading-status" id="pageLoadingStatus">読み込み中...</p>' +
+    '<p class="page-loading-diag" id="pageLoadingDiag" title="長押しで診断ログをコピー"></p>' +
+    '</div>';
+}
+
+function isPageLoadingVisible() {
+  var loadingOverlay = document.getElementById('pageLoadingOverlay');
+  return !!(loadingOverlay && !loadingOverlay.classList.contains('hidden'));
+}
+
+/**
+ * 全画面ローディングの進捗（段階％。全問受信中はバイト数が分かるとき上乗せ）
+ * @param {number} percent
+ * @param {string} [label]
+ */
+function setPageLoadingProgress(percent, label) {
+  if (!isPageLoadingVisible()) {
+    return;
+  }
+  var pct = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  var percentEl = document.getElementById('pageLoadingPercent');
+  var statusEl = document.getElementById('pageLoadingStatus') ||
+    document.querySelector('.page-loading-status');
+  var fillEl = document.getElementById('pageLoadingBarFill');
+  if (percentEl) {
+    percentEl.textContent = pct + '%';
+  }
+  if (statusEl) {
+    statusEl.textContent = label ? ('読み込み中... ' + label) : '読み込み中...';
+  }
+  if (fillEl) {
+    fillEl.style.width = pct + '%';
+  }
+}
+
+function finishPageLoadingAndUnlock() {
+  setPageLoadingProgress(100, '完了');
+  hidePageLoading();
+  if (hasValidGoogleAuthToken()) {
+    setAppAuthUiLocked(false);
+  }
+}
+
+function shouldHoldPageLoadingForAllStudy(options) {
+  options = options || {};
+  if (options.pageLoading === true) {
+    return true;
+  }
+  if (options.pageLoading === false) {
+    return false;
+  }
+  return isPageLoadingVisible();
+}
+
+function beginAllStudyItemsNetworkWait(holdOverlay) {
+  var loadingSpinner = document.getElementById('categoryLoadingSpinner');
+  var listMessage = document.getElementById('listMessage');
+  if (holdOverlay) {
+    if (!isPageLoadingVisible()) {
+      showPageLoading();
+    }
+    setPageLoadingProgress(50, '全問データ');
+  }
+  if (holdOverlay || !currentCategoryData || currentCategoryData.length === 0) {
+    if (loadingSpinner) {
+      loadingSpinner.style.display = 'block';
+    }
+    if (listMessage && !isLearningCompleted) {
+      listMessage.style.display = 'block';
+      listMessage.textContent = '読み込み中...';
+    }
+  }
+}
+
+function updateAllStudyFetchProgress(received, total) {
+  var receivedKb = Math.max(1, Math.round((Number(received) || 0) / 1024));
+  var pct;
+  var label;
+  if (total > 0) {
+    pct = 50 + Math.round(45 * Math.min(1, received / total));
+    label = '全問データ ' + receivedKb + 'KB';
+  } else {
+    pct = Math.min(90, 55 + Math.round((Number(received) || 0) / 8192));
+    label = '全問データ ' + receivedKb + 'KB受信';
+  }
+  setPageLoadingProgress(pct, label);
+}
+
+// ページローディングを表示する（削除済みなら再作成）
 function showPageLoading() {
   var loadingOverlay = document.getElementById('pageLoadingOverlay');
   if (loadingOverlay) {
+    if (!document.getElementById('pageLoadingPercent')) {
+      loadingOverlay.innerHTML = getPageLoadingOverlayHtml();
+    }
     loadingOverlay.classList.remove('hidden');
     loadingOverlay.style.display = 'flex';
     loadingOverlay.setAttribute('aria-hidden', 'false');
     beginLoadDiag('boot', '起動', 0);
+    setPageLoadingProgress(5, '起動');
     return;
   }
   loadingOverlay = document.createElement('div');
   loadingOverlay.id = 'pageLoadingOverlay';
   loadingOverlay.className = 'page-loading-overlay';
   loadingOverlay.setAttribute('aria-hidden', 'false');
-  loadingOverlay.innerHTML =
-    '<div class="page-loading-content">' +
-      '<h1 class="page-loading-title">Everyday English</h1>' +
-      '<div class="page-loading-spinner"></div>' +
-      '<p class="page-loading-status">読み込み中...</p>' +
-      '<p class="page-loading-diag" id="pageLoadingDiag"></p>' +
-    '</div>';
+  loadingOverlay.innerHTML = getPageLoadingOverlayHtml();
   document.body.appendChild(loadingOverlay);
   beginLoadDiag('boot', '起動', 0);
+  setPageLoadingProgress(5, '起動');
 }
 
 // ページローディングを非表示にする
@@ -1855,6 +2138,7 @@ function loadCategories(options) {
       loadingSpinner.style.display = 'block';
     }
     beginLoadDiag('boot', 'カテゴリ', 0);
+    setPageLoadingProgress(30, 'カテゴリ');
   }
   
   // Google Apps Script経由でデータを取得
@@ -1957,17 +2241,27 @@ function loadCategories(options) {
           }
         }
         syncDailyStudyStatsDisplay();
-        // 解答時間優先モードなら全件Listを読み込み
+        // 学習日／解答時間優先は全問取得完了まで全画面ローディングを維持
         if (isDurationQuestionMethod()) {
           applyQuestionMethodModeUi();
-          loadDurationModeData({ resetPage: true, resort: true, forceFetch: true });
+          setPageLoadingProgress(50, '全問データ');
+          loadDurationModeData({ resetPage: true, resort: true, forceFetch: true, pageLoading: !quiet });
+          if (quiet) {
+            hidePageLoading();
+            setAppAuthUiLocked(false);
+          }
         } else if (isLastDateQuestionMethod()) {
           applyQuestionMethodModeUi();
-          loadLastDateModeData({ regenerate: true, forceFetch: true });
+          setPageLoadingProgress(50, '全問データ');
+          loadLastDateModeData({ regenerate: true, forceFetch: true, pageLoading: !quiet });
+          if (quiet) {
+            hidePageLoading();
+            setAppAuthUiLocked(false);
+          }
+        } else {
+          hidePageLoading();
+          setAppAuthUiLocked(false);
         }
-        // ページローディングを非表示（Googleスプレッドシートの読み込み完了）
-        hidePageLoading();
-        setAppAuthUiLocked(false);
       } catch (e) {
         var loadErr = e && e.message ? e.message : String(e);
         if (!quiet) {
@@ -2390,9 +2684,9 @@ function applyVisibleCategoriesChange() {
   }
   
   if (isDurationQuestionMethod()) {
-    loadDurationModeData({ resetPage: true, resort: true, forceFetch: true });
+    loadDurationModeData({ resetPage: true, resort: true, forceFetch: true, pageLoading: true });
   } else if (isLastDateQuestionMethod()) {
-    loadLastDateModeData({ regenerate: true, forceFetch: true });
+    loadLastDateModeData({ regenerate: true, forceFetch: true, pageLoading: true });
   } else {
     updateListNavButtons();
   }
@@ -2874,7 +3168,7 @@ function setupEventListeners() {
   });
   
   document.getElementById('startButton').addEventListener('click', function() {
-    startLearning();
+    playUiClickSfxThen(startLearning);
   });
   
   // ナビゲーションバー中央ボタン（Ans / Next）
@@ -3207,6 +3501,8 @@ function setupEventListeners() {
       closeBackgroundPreviewModal();
     }
   });
+
+  preloadUiClickSfx();
 }
 
 // サイドメニューを開く
@@ -3470,9 +3766,9 @@ function setQuestionMethod(method) {
   scheduleUserSettingsSync();
   
   if (next === 'duration') {
-    loadDurationModeData({ resetPage: true, resort: true, forceFetch: true });
+    loadDurationModeData({ resetPage: true, resort: true, forceFetch: true, pageLoading: true });
   } else if (next === 'lastDate' || next === 'lastDateNormal') {
-    loadLastDateModeData({ regenerate: true, forceFetch: true });
+    loadLastDateModeData({ regenerate: true, forceFetch: true, pageLoading: true });
   } else {
     // カテゴリ毎（ノーマル／シャッフル）：選択中カテゴリを再読込（シャッフル時は再シャッフル、ノーマルはシート順）
     restoreCategoryModeListFromSelection();
@@ -3486,6 +3782,28 @@ function setQuestionMethod(method) {
 function isQuestionMethodLockedOnLearningScreen() {
   var screen2 = document.getElementById('screen2');
   return !!(screen2 && screen2.classList.contains('active'));
+}
+
+/**
+ * 学習中（screen2・未完了）。全問再取得の後着で出題順を変えない判定に使う
+ * @returns {boolean}
+ */
+function isActiveLearningSession() {
+  return isQuestionMethodLockedOnLearningScreen() && !isLearningCompleted;
+}
+
+/**
+ * 画面に出している問題。学習中は displayedLearningItem を優先
+ * @returns {Object|null}
+ */
+function getCurrentLearningItem() {
+  if (displayedLearningItem) {
+    return displayedLearningItem;
+  }
+  if (currentQuestionIndex >= 0 && currentQuestionIndex < currentCategoryData.length) {
+    return currentCategoryData[currentQuestionIndex];
+  }
+  return null;
 }
 
 /**
@@ -4027,12 +4345,53 @@ function isTransientAllStudyItemsError(error) {
 }
 
 /**
+ * 応答ボディを読みつつ進捗を返す（Content-Length が無い場合は受信バイトのみ）
+ * @param {Response} response
+ * @param {function(number, number): void} [onProgress]
+ * @returns {Promise<Object>}
+ */
+function parseJsonResponseWithProgress(response, onProgress) {
+  var total = Number(response.headers.get('Content-Length') || 0);
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    if (typeof onProgress === 'function') {
+      onProgress(0, total);
+    }
+    return response.json();
+  }
+  var reader = response.body.getReader();
+  var chunks = [];
+  var received = 0;
+  function pump() {
+    return reader.read().then(function(result) {
+      if (result.done) {
+        var bytes = new Uint8Array(received);
+        var offset = 0;
+        for (var i = 0; i < chunks.length; i++) {
+          bytes.set(chunks[i], offset);
+          offset += chunks[i].length;
+        }
+        var text = new TextDecoder('utf-8').decode(bytes);
+        return JSON.parse(text);
+      }
+      chunks.push(result.value);
+      received += result.value.byteLength;
+      if (typeof onProgress === 'function') {
+        onProgress(received, total);
+      }
+      return pump();
+    });
+  }
+  return pump();
+}
+
+/**
  * GAS getAllStudyItems をタイムアウト付きで取得（一時失敗は自動リトライ）
  * @param {function(*, Array|null): void} onDone - (error, items)
  */
 function fetchAllStudyItemsFromServer(onDone) {
   function attempt(attemptIndex) {
     beginLoadDiag('run', '全問', ALL_STUDY_ITEMS_FETCH_MAX_ATTEMPTS, { attempt: attemptIndex, kind: 'all' });
+    updateAllStudyFetchProgress(0, 0);
     var controller = null;
     var timeoutId = null;
     if (typeof AbortController !== 'undefined') {
@@ -4061,7 +4420,7 @@ function fetchAllStudyItemsFromServer(onDone) {
         if (!response.ok) {
           throw new Error('ネットワークエラー: ' + response.status);
         }
-        return response.json();
+        return parseJsonResponseWithProgress(response, updateAllStudyFetchProgress);
       })
       .then(function(data) {
         if (timeoutId) {
@@ -4121,6 +4480,9 @@ function getLastDateModePageCount() {
  * 学習日優先（ノーマル）：現在ページを List へ反映
  */
 function applyLastDateModePageToList() {
+  if (isActiveLearningSession()) {
+    return;
+  }
   isLastDateCompletionSessionView = false;
   lastDateModeNeedsResortBeforePaging = false;
   var pageCount = getLastDateModePageCount();
@@ -4162,6 +4524,9 @@ function applyLastDateModePageToList() {
  * 学習日優先：再ソート→（シャッフル＝抽選／ノーマル＝先頭ページ）→List表示
  */
 function regenerateLastDateModeList() {
+  if (isActiveLearningSession()) {
+    return;
+  }
   if (lastDateModeAllItems.length > 0) {
     sortItemsForLastDatePriorityMode(lastDateModeAllItems);
   }
@@ -4271,62 +4636,55 @@ function loadLastDateModeData(options) {
 
   lastDateModeLoadRequestId++;
   var requestId = lastDateModeLoadRequestId;
-  var loadingSpinner = document.getElementById('categoryLoadingSpinner');
-  var listMessage = document.getElementById('listMessage');
-  var usedLocal = false;
+  var holdOverlay = shouldHoldPageLoadingForAllStudy(options);
+  var localItems = readLocalAllStudyItems();
+  var usedLocal = !!(localItems && localItems.length);
 
   function applyLastDateItems(rawItems, fromServer) {
-    // サーバ成功時はシート側学習メタを優先（端末キャッシュの古い日時で上書きしない）
     var extra = fromServer ? [] : lastDateModeAllItems;
     var items = mergeAllStudyItemsWithMemory(rawItems || [], extra, {
       preferIncomingStudyMeta: !!fromServer
     });
     lastDateModeAllItems = filterItemsByVisibleCategories(items);
     sortItemsForLastDatePriorityMode(lastDateModeAllItems);
+    if (isActiveLearningSession()) {
+      return;
+    }
     regenerateLastDateModeList();
   }
 
-  // B: 端末キャッシュがあれば仮表示し、裏でサーバ更新（成功後はシート正）
-  var localItems = readLocalAllStudyItems();
-  if (localItems && localItems.length) {
-    usedLocal = true;
-    applyLastDateItems(localItems, false);
-    clearAllStudyItemsLoadingUi();
-  } else {
-    if (loadingSpinner) loadingSpinner.style.display = 'block';
-    if (listMessage && !isLearningCompleted) {
-      listMessage.style.display = 'block';
-      listMessage.textContent = '読み込み中...';
-    }
-  }
+  beginAllStudyItemsNetworkWait(holdOverlay);
 
   fetchAllStudyItemsFromServer(function(error, items) {
     if (requestId !== lastDateModeLoadRequestId) return;
     if (!isLastDateQuestionMethod()) {
       clearAllStudyItemsLoadingUi();
+      if (holdOverlay) finishPageLoadingAndUnlock();
       return;
     }
     if (error) {
-      clearAllStudyItemsLoadingUi(
-        usedLocal ? null : 'データの取得に失敗しました。再読み込みしてください。'
-      );
-      if (!usedLocal) {
-        showError('アクセスエラー: ' + error.toString());
-      } else {
+      if (usedLocal) {
+        applyLastDateItems(localItems, false);
+        clearAllStudyItemsLoadingUi();
         console.warn('全問データ更新失敗（端末キャッシュで継続）:', error);
+      } else {
+        clearAllStudyItemsLoadingUi('データの取得に失敗しました。再読み込みしてください。');
+        showError('アクセスエラー: ' + error.toString());
       }
+      if (holdOverlay) finishPageLoadingAndUnlock();
       return;
     }
     writeLocalAllStudyItems(items || []);
-    // 3: ソート／List再生成を次ティックへ（UIカウント停止の緩和）
     setTimeout(function() {
       if (requestId !== lastDateModeLoadRequestId) return;
       if (!isLastDateQuestionMethod()) {
         clearAllStudyItemsLoadingUi();
+        if (holdOverlay) finishPageLoadingAndUnlock();
         return;
       }
       applyLastDateItems(items || [], true);
       clearAllStudyItemsLoadingUi();
+      if (holdOverlay) finishPageLoadingAndUnlock();
     }, 0);
   });
 }
@@ -4461,6 +4819,9 @@ function getDurationModePageCount() {
  * 現在ページの件数を currentCategoryData へ反映してList表示
  */
 function applyDurationModePageToList() {
+  if (isActiveLearningSession()) {
+    return;
+  }
   isDurationCompletionSessionView = false;
   var pageCount = getDurationModePageCount();
   if (pageCount <= 0) {
@@ -4542,9 +4903,9 @@ function loadDurationModeData(options) {
   
   durationModeLoadRequestId++;
   var requestId = durationModeLoadRequestId;
-  var loadingSpinner = document.getElementById('categoryLoadingSpinner');
-  var listMessage = document.getElementById('listMessage');
-  var usedLocal = false;
+  var holdOverlay = shouldHoldPageLoadingForAllStudy(options);
+  var localItems = readLocalAllStudyItems();
+  var usedLocal = !!(localItems && localItems.length);
 
   function applyDurationItems(rawItems, fromServer) {
     var extra = fromServer ? [] : durationModeSortedItems;
@@ -4553,39 +4914,32 @@ function loadDurationModeData(options) {
     });
     durationModeSortedItems = filterItemsByVisibleCategories(items);
     sortItemsForDurationMode(durationModeSortedItems);
+    if (isActiveLearningSession()) {
+      return;
+    }
     if (resetPage) durationModePageIndex = 0;
     applyDurationModePageToList();
   }
 
-  // B: 端末キャッシュがあれば仮表示し、裏でサーバ更新（成功後はシート正）
-  var localItems = readLocalAllStudyItems();
-  if (localItems && localItems.length) {
-    usedLocal = true;
-    applyDurationItems(localItems, false);
-    clearAllStudyItemsLoadingUi();
-  } else {
-    if (loadingSpinner) loadingSpinner.style.display = 'block';
-    if (listMessage && !isLearningCompleted) {
-      listMessage.style.display = 'block';
-      listMessage.textContent = '読み込み中...';
-    }
-  }
+  beginAllStudyItemsNetworkWait(holdOverlay);
 
   fetchAllStudyItemsFromServer(function(error, items) {
     if (requestId !== durationModeLoadRequestId) return;
     if (!isDurationQuestionMethod()) {
       clearAllStudyItemsLoadingUi();
+      if (holdOverlay) finishPageLoadingAndUnlock();
       return;
     }
     if (error) {
-      clearAllStudyItemsLoadingUi(
-        usedLocal ? null : 'データの取得に失敗しました。再読み込みしてください。'
-      );
-      if (!usedLocal) {
-        showError('アクセスエラー: ' + error.toString());
-      } else {
+      if (usedLocal) {
+        applyDurationItems(localItems, false);
+        clearAllStudyItemsLoadingUi();
         console.warn('全問データ更新失敗（端末キャッシュで継続）:', error);
+      } else {
+        clearAllStudyItemsLoadingUi('データの取得に失敗しました。再読み込みしてください。');
+        showError('アクセスエラー: ' + error.toString());
       }
+      if (holdOverlay) finishPageLoadingAndUnlock();
       return;
     }
     writeLocalAllStudyItems(items || []);
@@ -4593,10 +4947,12 @@ function loadDurationModeData(options) {
       if (requestId !== durationModeLoadRequestId) return;
       if (!isDurationQuestionMethod()) {
         clearAllStudyItemsLoadingUi();
+        if (holdOverlay) finishPageLoadingAndUnlock();
         return;
       }
       applyDurationItems(items || [], true);
       clearAllStudyItemsLoadingUi();
+      if (holdOverlay) finishPageLoadingAndUnlock();
     }, 0);
   });
 }
@@ -6049,6 +6405,8 @@ function enforceGoogleAuthFailureLock(rawMessage) {
  */
 function clearAppSessionDataAfterAuthFailure() {
   stopCurrentAudioPlayback();
+  stopUiClickSfx();
+  stopCompletionSfx();
   stopStopwatch();
   setLearningNavIconsNormal();
 
@@ -6073,15 +6431,23 @@ function clearAppSessionDataAfterAuthFailure() {
   selectedQuestionIndices = [];
   originalCategoryData = [];
   currentQuestionIndex = 0;
+  displayedLearningItem = null;
   completedQuestionIndices = [];
   sheetUpdateOkCount = 0;
   sheetUpdateFailCount = 0;
+  loadDiagHistory = [];
+  loadDiagCopyFeedbackUntil = 0;
+  if (loadDiagCopyFeedbackTimer) {
+    clearTimeout(loadDiagCopyFeedbackTimer);
+    loadDiagCopyFeedbackTimer = null;
+  }
   pendingAnsSheetPersist = null;
   if (ansSheetPersistTimer) {
     clearTimeout(ansSheetPersistTimer);
     ansSheetPersistTimer = null;
   }
   retryQuestionIndices = [];
+  sessionRetryPressCountById = {};
   isInRetryMode = false;
   retryQuestionIndex = 0;
   isAnswerShown = false;
@@ -6182,6 +6548,7 @@ function startLearning() {
     return;
   }
 
+  sessionRetryPressCountById = {};
   ensureLearningTimeCounterStarted();
   
   // 完了時カテゴリナビ用アイコンを通常（左＝解答再生・右スペーサー）に戻す
@@ -6262,6 +6629,7 @@ function startLearning() {
   
   // 最初の問題を表示
   currentQuestionIndex = 0;
+  displayedLearningItem = null;
   
   // 再チャレンジ関連変数をリセット
   retryQuestionIndices = [];
@@ -6539,6 +6907,7 @@ function updateLearningTime() {
 // 問題を表示
 function displayQuestion() {
   if (currentQuestionIndex < 0 || currentQuestionIndex >= currentCategoryData.length) {
+    displayedLearningItem = null;
     return;
   }
   
@@ -6546,6 +6915,7 @@ function displayQuestion() {
   clearAudioSourceDebug();
   
   var item = currentCategoryData[currentQuestionIndex];
+  displayedLearningItem = item || null;
   var effectiveQuestion = getEffectiveQuestion(item);
   var isListeningQuestion = isListeningModeEnabled() && effectiveQuestion && !isImageUrl(effectiveQuestion);
   
@@ -6589,6 +6959,7 @@ function displayQuestion() {
   isAnswerShown = false;
   
   // ストップウォッチ：通常は即開始。リスニング（テキスト出題）は出題音声終了後
+  pendingQuestionAutoplayTimerReset = false;
   resetStopwatch();
   if (isListeningQuestion) {
     waitingListeningAnsGate = true;
@@ -6613,14 +6984,23 @@ function displayQuestion() {
   
   // 出題読みトグルON、またはリスニング練習モード時は出題を自動再生
   if ((isQuestionToggleActive || isListeningQuestion) && effectiveQuestion && !isImageUrl(effectiveQuestion)) {
+    if (!isListeningQuestion && isQuestionToggleActive) {
+      pendingQuestionAutoplayTimerReset = true;
+    }
     setTimeout(function() {
-      var currentItem = currentCategoryData[currentQuestionIndex];
-      if (!currentItem || isAnswerShown) return;
+      var currentItem = getCurrentLearningItem();
+      if (!currentItem || isAnswerShown) {
+        pendingQuestionAutoplayTimerReset = false;
+        if (waitingListeningAnsGate) releaseListeningAnsGate();
+        return;
+      }
       var text = getEffectiveQuestion(currentItem);
       if (text && !isImageUrl(text)) {
         playFieldAudio('question');
       } else if (waitingListeningAnsGate) {
         releaseListeningAnsGate();
+      } else {
+        pendingQuestionAutoplayTimerReset = false;
       }
     }, 250);
   } else if (waitingListeningAnsGate) {
@@ -6641,6 +7021,30 @@ function releaseListeningAnsGate() {
     startStopwatch();
   }
   updateNavAnswerButton();
+}
+
+/**
+ * 出題読みの自動再生が終わったら計測をゼロから再開（Qボタン聞き直しは対象外）
+ */
+function resetStopwatchAfterQuestionAutoplay() {
+  if (!pendingQuestionAutoplayTimerReset) return;
+  pendingQuestionAutoplayTimerReset = false;
+  if (isAnswerShown || isLearningCompleted) return;
+  resetStopwatch();
+  startStopwatch();
+}
+
+/**
+ * 出題音声の終了／失敗／中断時。リスニングの Ans 解錠と、出題読みONの計測リセットをまとめる
+ * @param {'ended'|'fail'|'abort'} reason
+ */
+function onQuestionAudioSettled(reason) {
+  releaseListeningAnsGate();
+  if (reason === 'abort') {
+    pendingQuestionAutoplayTimerReset = false;
+    return;
+  }
+  resetStopwatchAfterQuestionAutoplay();
 }
 
 // ストップウォッチを開始
@@ -6700,10 +7104,12 @@ function showAnswer() {
   if (isAnswerShown) return;
   if (waitingListeningAnsGate) return;
   
+  pendingQuestionAutoplayTimerReset = false;
   waitingListeningAnsGate = false;
   stopStopwatch();
   
-  var item = currentCategoryData[currentQuestionIndex];
+  var item = getCurrentLearningItem();
+  if (!item) return;
   var effectiveQuestion = getEffectiveQuestion(item);
   var effectiveAnswer = getEffectiveAnswer(item);
   var isListeningQuestion = isListeningModeEnabled() && effectiveQuestion && !isImageUrl(effectiveQuestion);
@@ -6827,7 +7233,7 @@ function toggleLearningNoteExpanded() {
   if (!isAnswerShown) {
     return;
   }
-  var item = currentCategoryData[currentQuestionIndex];
+  var item = getCurrentLearningItem();
   if (!item || !String(item.note || '').trim()) {
     return;
   }
@@ -6878,7 +7284,7 @@ function handleNoteClick(e) {
   if (isUpdateMode || !isAnswerShown) {
     return;
   }
-  var item = currentCategoryData[currentQuestionIndex];
+  var item = getCurrentLearningItem();
   if (!item || !String(item.note || '').trim()) {
     return;
   }
@@ -6897,7 +7303,7 @@ function handleNoteDoubleClick(e) {
   if (!isNoteExpanded) {
     return;
   }
-  var item = currentCategoryData[currentQuestionIndex];
+  var item = getCurrentLearningItem();
   if (!item || !String(item.note || '').trim()) {
     return;
   }
@@ -6908,7 +7314,7 @@ function handleNoteKeydown(e) {
   if (e.key !== 'Enter' && e.key !== ' ') {
     return;
   }
-  var item = currentCategoryData[currentQuestionIndex];
+  var item = getCurrentLearningItem();
   if (!item || !String(item.note || '').trim()) {
     return;
   }
@@ -7218,13 +7624,16 @@ function formatStudyCountForList(item) {
  * @param {Object} item
  * @returns {string}
  */
-function buildLearningMetaText(item) {
+function buildLearningMetaText(item, variant) {
   var m = getRetryCountNumber(item ? item.retry_count : 0);
   var n = getRetryCountNumber(item ? item.total_study_count : 0);
   var durationOldText = formatDurationForDisplay(item ? item.duration_old : '');
   var durationText = formatDurationForDisplay(item ? item.duration : '');
   var lastDateText = formatYmdForDisplay(item ? item.last_date : '');
-  return '学習回数：' + m + '／' + n + '回　平均(前回)：' + durationOldText + '　平均(最新)：' + durationText + '　最終学習日時：' + lastDateText;
+  if (variant === 'list') {
+    return '学習回数：' + m + '／' + n + '回　平均(前回)：' + durationOldText + '　平均(最新)：' + durationText + '　最終学習日時：' + lastDateText;
+  }
+  return '回数：' + m + '／' + n + '回　平均：' + durationOldText + '⇒' + durationText + '　日時：' + lastDateText;
 }
 
 /**
@@ -7235,7 +7644,8 @@ function buildLearningMetaText(item) {
 function updateLearningMetaDisplay(item, elementId) {
   var el = document.getElementById(elementId);
   if (!el) return;
-  el.textContent = buildLearningMetaText(item);
+  var variant = (elementId === 'modalLearningMeta') ? 'list' : 'learning';
+  el.textContent = buildLearningMetaText(item, variant);
 }
 
 /**
@@ -7437,6 +7847,7 @@ function persistAnsStudyStatsAsync(item, elapsedMs, options) {
   item.duration_old = previousDuration;
 
   var currentMs = Math.max(0, Number(elapsedMs) || 0);
+  currentMs = Math.round(currentMs * getSessionRetryDurationMultiplier(item));
   var previousMs = parseDurationToMs(previousDuration);
   var averagedMs = (previousMs === null) ? currentMs : Math.round((previousMs + currentMs) / 2);
   var duration = formatDurationForSheet(averagedMs);
@@ -7522,6 +7933,7 @@ function updateDurationAsync(item, elapsedMs) {
   item.duration_old = previousDuration;
   
   var currentMs = Math.max(0, Number(elapsedMs) || 0);
+  currentMs = Math.round(currentMs * getSessionRetryDurationMultiplier(item));
   var previousMs = parseDurationToMs(previousDuration);
   var averagedMs = (previousMs === null) ? currentMs : Math.round((previousMs + currentMs) / 2);
   var duration = formatDurationForSheet(averagedMs);
@@ -7553,11 +7965,39 @@ function updateLastDateIfNeededAsync(item) {
  */
 function incrementRetryCountAsync(item) {
   if (!item) return;
+
+  incrementSessionRetryPressCount(item);
   
   var nextCount = getRetryCountNumber(item.retry_count) + 1;
   item.retry_count = nextCount;
   
   updateItemFieldAsync(item, 'retry_count', nextCount);
+}
+
+/**
+ * このSTART以降の、当該問題へのリトライ押下を1加算
+ * @param {Object} item
+ */
+function incrementSessionRetryPressCount(item) {
+  if (!item || item.id == null) return;
+  var key = String(item.id);
+  sessionRetryPressCountById[key] = (Number(sessionRetryPressCountById[key]) || 0) + 1;
+}
+
+/**
+ * リトライ再出題時の今回時間倍率。最初の周は常に1
+ * @param {Object} item
+ * @returns {number}
+ */
+function getSessionRetryDurationMultiplier(item) {
+  if (!isInRetryMode || !item || item.id == null) {
+    return 1;
+  }
+  var n = Number(sessionRetryPressCountById[String(item.id)]) || 0;
+  if (n <= 0) return 1;
+  if (n === 1) return 1.5;
+  if (n === 2) return 2;
+  return 2.5;
 }
 
 /**
@@ -7834,7 +8274,7 @@ function bindFieldPlayButton(button, fieldType) {
  * 出題再生＝下ナビ（リトライとHOMEの間）、解答再生＝下ナビ左。無効時も枠維持し薄い表示（is-inactive）
  */
 function updateFieldPlayButtons() {
-  var item = currentCategoryData[currentQuestionIndex];
+  var item = getCurrentLearningItem();
   var qBtn = getFieldPlayButton('question');
   var aBtn = getFieldPlayButton('answer');
   var questionPlaySlot = document.getElementById('navQuestionPlaySlot');
@@ -8008,17 +8448,115 @@ function decodeBase64ToUint8Array(base64) {
 }
 
 /**
- * base64 mp3 から Blob URL 付き Audio を生成する（モバイルの data URI ノイズ回避）
- * @param {string} audioContent - base64
+ * メモリ上の audioData に mp3 Blob を載せ、再利用する（再生ごとの base64 再デコードを避ける）
+ * @param {Object} audioData
+ * @returns {Blob|null}
+ */
+function ensureMp3BlobOnAudioData(audioData) {
+  if (!audioData) {
+    return null;
+  }
+  if (audioData.blob instanceof Blob && audioData.blob.size > 0) {
+    return audioData.blob;
+  }
+  if (!audioData.audioContent) {
+    return null;
+  }
+  var bytes = decodeBase64ToUint8Array(audioData.audioContent);
+  audioData.blob = new Blob([bytes], { type: 'audio/mpeg' });
+  return audioData.blob;
+}
+
+/**
+ * キャッシュ用に Blob を除いたオブジェクトを返す
+ * @param {Object} audioData
+ * @returns {Object}
+ */
+function serializeAudioCacheData(audioData) {
+  return {
+    audioContent: audioData.audioContent,
+    timestamp: audioData.timestamp,
+    textHash: audioData.textHash
+  };
+}
+
+/**
+ * audioData の Blob から Object URL 付き Audio を生成する
+ * @param {Object} audioData
  * @returns {HTMLAudioElement}
  */
-function createMp3AudioFromBase64(audioContent) {
-  var bytes = decodeBase64ToUint8Array(audioContent);
-  var blob = new Blob([bytes], { type: 'audio/mpeg' });
+function createMp3AudioFromAudioData(audioData) {
+  var blob = ensureMp3BlobOnAudioData(audioData);
+  if (!blob) {
+    throw new Error('empty audio');
+  }
   var objectUrl = URL.createObjectURL(blob);
-  var audio = new Audio(objectUrl);
+  var audio = new Audio();
+  audio.preload = 'auto';
   audio._objectUrl = objectUrl;
+  audio.src = objectUrl;
   return audio;
+}
+
+/**
+ * canplay 後（または短時間タイムアウト後）に再生する
+ * @param {HTMLAudioElement} audio
+ * @returns {Promise}
+ */
+function playAudioElementWhenReady(audio) {
+  return new Promise(function(resolve, reject) {
+    var settled = false;
+    var timer = null;
+
+    function cleanup() {
+      audio.removeEventListener('canplay', onReady);
+      audio.removeEventListener('canplaythrough', onReady);
+      audio.removeEventListener('error', onError);
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    }
+
+    function finishReady() {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve();
+    }
+
+    function onReady() {
+      finishReady();
+    }
+
+    function onError() {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(audio.error || new Error('audio error'));
+    }
+
+    if (audio.readyState >= 3) {
+      finishReady();
+      return;
+    }
+
+    audio.addEventListener('canplay', onReady);
+    audio.addEventListener('canplaythrough', onReady);
+    audio.addEventListener('error', onError);
+    timer = setTimeout(finishReady, AUDIO_PLAY_CANPLAY_TIMEOUT_MS);
+  }).then(function() {
+    if (currentAudio !== audio) {
+      var abortErr = new Error('interrupted by a call to pause');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
+    return audio.play();
+  });
 }
 
 /**
@@ -8097,7 +8635,7 @@ function handleAudioFetchAbortOrTimeout(fieldType, isTimeout) {
     showError('音声の取得に失敗しました。再生ボタンで再試行してください。');
   }
   if (fieldType === 'question') {
-    releaseListeningAnsGate();
+    onQuestionAudioSettled(isTimeout ? 'fail' : 'abort');
   }
 }
 
@@ -8107,7 +8645,14 @@ function handleAudioFetchAbortOrTimeout(fieldType, isTimeout) {
  * @returns {boolean}
  */
 function isAbortError(error) {
-  return !!(error && (error.name === 'AbortError' || error.code === 20));
+  if (!error) {
+    return false;
+  }
+  if (error.name === 'AbortError' || error.code === 20) {
+    return true;
+  }
+  var msg = String(error.message || error);
+  return /interrupted by a call to pause/i.test(msg);
 }
 
 /**
@@ -8280,6 +8825,12 @@ function deleteDriveAudioAsync(item, sheetField) {
  * @param {{onSettled?: function(): void}} [options] - ネット取得不要または完了時（キャッシュヒット含む）
  */
 function playFieldAudio(fieldType, forceRefresh, options) {
+  if (uiClickSfxPlaying) {
+    runAfterUiClickSfx(function() {
+      playFieldAudio(fieldType, forceRefresh, options);
+    });
+    return;
+  }
   options = options || {};
   var onSettled = typeof options.onSettled === 'function' ? options.onSettled : null;
   var settled = false;
@@ -8297,9 +8848,9 @@ function playFieldAudio(fieldType, forceRefresh, options) {
     }
   }
 
-  var item = currentCategoryData[currentQuestionIndex];
+  var item = getCurrentLearningItem();
   if (!item || isLearningCompleted) {
-    if (fieldType === 'question') releaseListeningAnsGate();
+    if (fieldType === 'question') onQuestionAudioSettled('fail');
     settleAudioNetwork();
     return;
   }
@@ -8311,14 +8862,14 @@ function playFieldAudio(fieldType, forceRefresh, options) {
   
   var text = fieldType === 'answer' ? getEffectiveAnswer(item) : getEffectiveQuestion(item);
   if (!text || isImageUrl(text)) {
-    if (fieldType === 'question') releaseListeningAnsGate();
+    if (fieldType === 'question') onQuestionAudioSettled('fail');
     settleAudioNetwork();
     return;
   }
   
   if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
     showError('音声読み上げの設定が完了していません。WebアプリURLを設定してください。');
-    if (fieldType === 'question') releaseListeningAnsGate();
+    if (fieldType === 'question') onQuestionAudioSettled('fail');
     settleAudioNetwork();
     return;
   }
@@ -8378,7 +8929,7 @@ function playFieldAudio(fieldType, forceRefresh, options) {
  * @param {string} fieldType - 'question' | 'answer'
  */
 function recreateFieldAudio(fieldType) {
-  var item = currentCategoryData[currentQuestionIndex];
+  var item = getCurrentLearningItem();
   if (!item || isLearningCompleted) return;
   if (fieldType === 'answer' && !isAnswerShown) return;
   
@@ -8508,6 +9059,7 @@ function getCachedAudio(text, voiceGender, speed) {
  * @param {string} audioContent - 音声データ（base64）
  * @param {string} voiceGender - 音声の性別（'male' または 'female'）
  * @param {string} speed - 読み上げの速さ（'fast', 'medium', 'slow'）
+ * @returns {Object} メモリ上の audioData（blob 付き）
  */
 function saveAudioToCache(text, audioContent, voiceGender, speed) {
   // テキストを正規化（キャッシュキーは正規化後のテキストで生成）
@@ -8521,14 +9073,15 @@ function saveAudioToCache(text, audioContent, voiceGender, speed) {
     timestamp: Date.now(),
     textHash: hashText(cacheKey)  // メモリキャッシュ削除時の照合用
   };
+  ensureMp3BlobOnAudioData(audioData);
   
   // メモリキャッシュに保存（設定情報を含むキーで保存）
   audioCache[cacheKey] = audioData;
   
-  // localStorageに保存（サイズ制限を考慮）
+  // localStorageに保存（サイズ制限を考慮。Blobは保存しない）
   try {
     var storageKey = CACHE_PREFIX + hashText(cacheKey);
-    var dataToStore = JSON.stringify(audioData);
+    var dataToStore = JSON.stringify(serializeAudioCacheData(audioData));
     
     // キャッシュサイズをチェック
     if (getCacheSize() + dataToStore.length > MAX_CACHE_SIZE) {
@@ -8544,12 +9097,13 @@ function saveAudioToCache(text, audioContent, voiceGender, speed) {
     try {
       clearOldCacheEntries();
       var storageKey = CACHE_PREFIX + hashText(cacheKey);
-      localStorage.setItem(storageKey, JSON.stringify(audioData));
+      localStorage.setItem(storageKey, JSON.stringify(serializeAudioCacheData(audioData)));
     } catch (e2) {
       // それでも失敗した場合はメモリキャッシュのみ使用
       console.warn('Cache save retry failed:', e2);
     }
   }
+  return audioData;
 }
 
 /**
@@ -8698,7 +9252,7 @@ function clearOldCacheEntries() {
  */
 function playAudioFromCache(audioData, fieldType, source) {
   if (!audioData || !audioData.audioContent) {
-    if (fieldType === 'question') releaseListeningAnsGate();
+    if (fieldType === 'question') onQuestionAudioSettled('fail');
     return;
   }
 
@@ -8709,7 +9263,7 @@ function playAudioFromCache(audioData, fieldType, source) {
   try {
     releaseCurrentAudioElement();
     
-    var audio = createMp3AudioFromBase64(audioData.audioContent);
+    var audio = createMp3AudioFromAudioData(audioData);
     currentAudio = audio;
     activePlayField = fieldType || null;
     updateFieldPlayButtons();
@@ -8719,7 +9273,7 @@ function playAudioFromCache(audioData, fieldType, source) {
       activePlayField = null;
       releaseCurrentAudioElement();
       updateFieldPlayButtons();
-      if (fieldType === 'question') releaseListeningAnsGate();
+      if (fieldType === 'question') onQuestionAudioSettled('ended');
     });
     
     audio.addEventListener('error', function() {
@@ -8727,24 +9281,33 @@ function playAudioFromCache(audioData, fieldType, source) {
       activePlayField = null;
       releaseCurrentAudioElement();
       updateFieldPlayButtons();
-      if (fieldType === 'question') releaseListeningAnsGate();
+      if (fieldType === 'question') onQuestionAudioSettled('fail');
     });
     
-    audio.play().catch(function(error) {
+    playAudioElementWhenReady(audio).catch(function(error) {
+      if (isAbortError(error)) {
+        if (currentAudio === audio) {
+          activePlayField = null;
+          releaseCurrentAudioElement();
+          updateFieldPlayButtons();
+        }
+        if (fieldType === 'question') onQuestionAudioSettled('abort');
+        return;
+      }
       showError('音声の再生に失敗しました: ' + error.toString());
       if (currentAudio === audio) {
         activePlayField = null;
         releaseCurrentAudioElement();
         updateFieldPlayButtons();
       }
-      if (fieldType === 'question') releaseListeningAnsGate();
+      if (fieldType === 'question') onQuestionAudioSettled('fail');
     });
   } catch (error) {
     showError('音声の再生に失敗しました: ' + error.toString());
     activePlayField = null;
     releaseCurrentAudioElement();
     updateFieldPlayButtons();
-    if (fieldType === 'question') releaseListeningAnsGate();
+    if (fieldType === 'question') onQuestionAudioSettled('fail');
   }
 }
 
@@ -8849,7 +9412,7 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
       }
       if (data && data.success && data.found && data.audioContent) {
         hidePlayButtonLoading(fieldType);
-        saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+        var cachedData = saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
         finishLoadDiag('run', 'OK', {
           ok: true,
           bytes: String(data.audioContent).length
@@ -8857,7 +9420,7 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
         done();
         setTimeout(function() {
           if (generation !== activeAudioFetchGeneration) return;
-          playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'Drive');
+          playAudioFromCache(cachedData, fieldType, 'Drive');
         }, 0);
         return;
       }
@@ -8941,7 +9504,7 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
     activePlayField = null;
     updateFieldPlayButtons();
     showError(errorText);
-    if (fieldType === 'question') releaseListeningAnsGate();
+    if (fieldType === 'question') onQuestionAudioSettled('fail');
     finish();
   }
 
@@ -8994,7 +9557,7 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
 
       if (data && data.success && data.audioContent) {
         hidePlayButtonLoading(fieldType);
-        saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+        var cachedData = saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
         if (item && sheetField) {
           saveDriveAudioAsync(item, sheetField, voiceGender || 'female', speed || 'fast', data.audioContent);
         }
@@ -9005,7 +9568,7 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
         finish();
         setTimeout(function() {
           if (gen !== activeAudioFetchGeneration) return;
-          playAudioFromCache({ audioContent: data.audioContent }, fieldType, 'TTS');
+          playAudioFromCache(cachedData, fieldType, 'TTS');
         }, 0);
         return;
       }
@@ -9096,7 +9659,7 @@ function preloadAudioForCurrentAndNext() {
   
   // 現在の問題（最初の問題）をプリロード
   if (currentQuestionIndex >= 0 && currentQuestionIndex < currentCategoryData.length) {
-    var currentItem = currentCategoryData[currentQuestionIndex];
+    var currentItem = getCurrentLearningItem() || currentCategoryData[currentQuestionIndex];
     if (currentItem) {
       var effectiveQuestion = getEffectiveQuestion(currentItem);
       var effectiveAnswer = getEffectiveAnswer(currentItem);
@@ -9356,7 +9919,7 @@ function handlePlusButtonClick() {
   flushPendingAnsSheetPersist();
   
   // RetryCount を非同期で +1（学習フローは止めない）
-  var plusTargetItem = currentCategoryData[currentQuestionIndex];
+  var plusTargetItem = getCurrentLearningItem();
   incrementRetryCountAsync(plusTargetItem);
     
     if (isInRetryMode) {
@@ -9476,7 +10039,7 @@ function updateQuestionInfoDisplay() {
   // 現在の問題が元のデータのどのインデックスに対応するかを取得
   var originalCurrentIndex = -1;
   if (currentQuestionIndex >= 0 && currentQuestionIndex < currentCategoryData.length) {
-    var currentItem = currentCategoryData[currentQuestionIndex];
+    var currentItem = getCurrentLearningItem() || currentCategoryData[currentQuestionIndex];
     // 元のデータから同じ問題を検索
     for (var idx = 0; idx < originalCategoryData.length; idx++) {
       if (originalCategoryData[idx] === currentItem || 
@@ -9629,19 +10192,21 @@ function handleNavAnswerButtonClick() {
   if (navAnswerButton && navAnswerButton.disabled) return;
   
   if (isLearningCompleted) {
-    if (shouldShowCompletionStartButton()) {
-      startLearningFromCompletion();
-    } else {
-      navigateCompletionCategory(1);
-    }
+    playUiClickSfxThen(function() {
+      if (shouldShowCompletionStartButton()) {
+        startLearningFromCompletion();
+      } else {
+        navigateCompletionCategory(1);
+      }
+    });
     return;
   }
   if (isAnswerShown) {
     if (isAdvanceNavBlockedByAudio()) return;
-    goToNextQuestion();
+    playUiClickSfxThen(goToNextQuestion);
     return;
   }
-  showAnswer();
+  playUiClickSfxThen(showAnswer);
 }
 
 /**
@@ -10521,8 +11086,177 @@ function scrollLearningContentToCompletionView() {
   });
 }
 
-// 学習完了メッセージを表示
+/**
+ * 学習完了効果音を止める
+ */
+function stopCompletionSfx() {
+  stopStaticSfxList(completionSfxAudios);
+  completionSfxAudios = [];
+}
+
+/**
+ * 学習完了効果音を1回再生する（ボタン効果音の終了後）
+ */
+function playCompletionSfx() {
+  runAfterUiClickSfx(function() {
+    playStaticSfx(COMPLETION_SFX_URL, completionSfxAudios, 1);
+  });
+}
+
+/**
+ * 静的効果音の再生を止める
+ * @param {HTMLAudioElement[]} list
+ */
+function stopStaticSfxList(list) {
+  if (!list || !list.length) return;
+  for (var i = 0; i < list.length; i++) {
+    var audio = list[i];
+    audio.onended = null;
+    audio.onerror = null;
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+    } catch (e) {}
+  }
+}
+
+/**
+ * 静的mp3を1回再生する（TTSとは別）
+ * @param {string} url
+ * @param {HTMLAudioElement[]} bucket
+ * @param {number} volume
+ */
+function playStaticSfx(url, bucket, volume) {
+  stopStaticSfxList(bucket);
+  bucket.length = 0;
+  var audio = new Audio(buildStaticSfxUrl(url));
+  audio.volume = (typeof volume === 'number') ? volume : 1;
+  bucket.push(audio);
+  audio.onerror = function() {};
+  var playPromise = audio.play();
+  if (playPromise && typeof playPromise.catch === 'function') {
+    playPromise.catch(function() {});
+  }
+}
+
+/**
+ * 静的効果音URL（版クエリ付き。ブラウザキャッシュ対象）
+ * @param {string} url
+ * @returns {string}
+ */
+function buildStaticSfxUrl(url) {
+  var ver = (typeof window.APP_FRONT_VERSION === 'string' && window.APP_FRONT_VERSION)
+    ? window.APP_FRONT_VERSION
+    : '';
+  return url + (ver ? ('?v=' + ver) : '');
+}
+
+function isUiClickSfxPlaying() {
+  return uiClickSfxPlaying;
+}
+
+function flushUiClickSfxWaiters() {
+  var list = uiClickSfxWaiters;
+  uiClickSfxWaiters = [];
+  for (var i = 0; i < list.length; i++) {
+    try {
+      list[i]();
+    } catch (e) {}
+  }
+}
+
+function runAfterUiClickSfx(fn) {
+  if (typeof fn !== 'function') return;
+  if (!uiClickSfxPlaying) {
+    fn();
+    return;
+  }
+  uiClickSfxWaiters.push(fn);
+}
+
+/**
+ * ボタン効果音を止める（待ち処理は実行しない）
+ */
+function stopUiClickSfx() {
+  uiClickSfxPlaying = false;
+  uiClickSfxWaiters = [];
+  if (!uiClickSfxAudio) return;
+  uiClickSfxAudio.onended = null;
+  uiClickSfxAudio.onerror = null;
+  try {
+    uiClickSfxAudio.pause();
+    uiClickSfxAudio.currentTime = 0;
+  } catch (e) {}
+}
+
+/**
+ * ボタン効果音用 Audio を用意する（未作成なら生成）
+ * @returns {HTMLAudioElement}
+ */
+function ensureUiClickSfxAudio() {
+  if (uiClickSfxAudio) {
+    return uiClickSfxAudio;
+  }
+  uiClickSfxAudio = new Audio(buildStaticSfxUrl(UI_CLICK_SFX_URL));
+  uiClickSfxAudio.preload = 'auto';
+  uiClickSfxAudio.volume = UI_CLICK_SFX_VOLUME;
+  return uiClickSfxAudio;
+}
+
+/**
+ * 起動時にボタン効果音を先読みする
+ */
+function preloadUiClickSfx() {
+  try {
+    var audio = ensureUiClickSfxAudio();
+    audio.load();
+  } catch (e) {}
+}
+
+/**
+ * 効果音開始を優先し、画面遷移などは次ティックへ回す
+ * @param {function(): void} fn
+ */
+function playUiClickSfxThen(fn) {
+  playUiClickSfx();
+  if (typeof fn !== 'function') {
+    return;
+  }
+  setTimeout(fn, 0);
+}
+
+/**
+ * Ans / Next / Start / トップSTART の効果音
+ */
+function playUiClickSfx() {
+  stopCompletionSfx();
+  stopCurrentAudioPlayback({ skipButtonUpdate: true, keepAudioQueue: false });
+  uiClickSfxWaiters = [];
+  var audio = ensureUiClickSfxAudio();
+  try {
+    audio.pause();
+    audio.currentTime = 0;
+  } catch (e) {}
+  uiClickSfxPlaying = true;
+  audio.onended = function() {
+    uiClickSfxPlaying = false;
+    flushUiClickSfxWaiters();
+  };
+  audio.onerror = function() {
+    uiClickSfxPlaying = false;
+    flushUiClickSfxWaiters();
+  };
+  var playPromise = audio.play();
+  if (playPromise && typeof playPromise.catch === 'function') {
+    playPromise.catch(function() {
+      uiClickSfxPlaying = false;
+      flushUiClickSfxWaiters();
+    });
+  }
+}
+
 function showCompletionMessage() {
+  playCompletionSfx();
   // 完了直後は出題ブロックを再表示（カテゴリ切替で畳んでいた場合の復帰）
   restoreCompletionStudyFields();
 
@@ -10640,6 +11374,7 @@ function hideCompletionCongratsMessage() {
 
 // 学習完了メッセージを非表示（HOME／再学習開始時など、領域ごと閉じる）
 function hideCompletionMessage() {
+  stopCompletionSfx();
   if (completionMessageIconRevealTimeoutId !== null) {
     clearTimeout(completionMessageIconRevealTimeoutId);
     completionMessageIconRevealTimeoutId = null;
@@ -10675,10 +11410,12 @@ function goToHome() {
   // 万一の抜け対策：再生中音声を停止してから遷移する
   flushPendingAnsSheetPersist();
   stopCurrentAudioPlayback();
+  stopUiClickSfx();
   clearAudioSourceDebug();
   
   // ストップウォッチを停止
   stopStopwatch();
+  displayedLearningItem = null;
   
   // 完了時カテゴリナビ用アイコンを通常に戻す
   setLearningNavIconsNormal();
@@ -10698,9 +11435,13 @@ function goToHome() {
   var container = document.querySelector('.container');
   if (container) container.classList.remove('learning-mode');
   
-  // 学習中に絞り込んだデータを全問に戻し、更新済み回数・日付をListへ反映
-  if (originalCategoryData.length > 0 && !isCrossCategoryQuestionMethod()) {
+  // 出題画面HOMEは今回学習分を維持。完了後HOMEはカテゴリ全問へ戻す
+  var homeFromIncompleteLearning = !isLearningCompleted;
+  var incompleteSessionItems = homeFromIncompleteLearning ? currentCategoryData.slice() : [];
+  if (!homeFromIncompleteLearning && originalCategoryData.length > 0 && !isCrossCategoryQuestionMethod()) {
     currentCategoryData = originalCategoryData.slice();
+  } else if (homeFromIncompleteLearning) {
+    currentCategoryData = incompleteSessionItems;
   }
   selectedQuestionIndices = [];
   originalCategoryData = [];
@@ -10714,12 +11455,33 @@ function goToHome() {
   isLearningCompleted = false;
   syncLearningCompletedScreenClass();
   
-  if (isDurationQuestionMethod()) {
+  if (homeFromIncompleteLearning) {
+    applyQuestionMethodModeUi();
+    if (isLastDateNormalQuestionMethod()) {
+      lastDateModeNeedsResortBeforePaging = false;
+      if (lastDateModeAllItems.length > 0) {
+        regenerateLastDateModeList();
+      } else {
+        loadLastDateModeData({ regenerate: true, forceFetch: false });
+      }
+    } else {
+      if (isDurationQuestionMethod() && durationModeSortedItems.length > 0) {
+        sortItemsForDurationMode(durationModeSortedItems);
+      }
+      if (currentCategoryData.length > 0) {
+        displayList();
+        if (!isCrossCategoryQuestionMethod()) {
+          syncCategoryLastDateFromList();
+        }
+        updateListNavButtons();
+      }
+    }
+  } else if (isDurationQuestionMethod()) {
     applyQuestionMethodModeUi();
     loadDurationModeData({ resetPage: true, resort: true, forceFetch: false });
   } else if (isLastDateQuestionMethod()) {
     applyQuestionMethodModeUi();
-    loadLastDateModeData({ regenerate: false, forceFetch: false });
+    loadLastDateModeData({ regenerate: true, forceFetch: false });
   } else if (currentCategoryData.length > 0) {
     // Listを再描画（メモリ上の retry_count / total_study_count / duration / last_date を反映）
     displayList();
@@ -10967,7 +11729,7 @@ function startUpdateMode(displayTarget) {
   if (isLearningCompleted) return;
   if (!isAnswerShown) return;
   
-  var item = currentCategoryData[currentQuestionIndex];
+  var item = getCurrentLearningItem();
   if (!item) return;
   
   var ui = getUpdateUiConfig(displayTarget);
@@ -11054,7 +11816,7 @@ function endUpdateMode(restoreOriginal) {
   if (!isUpdateMode) return;
   
   var ui = getUpdateUiConfig(updateDisplayTarget);
-  var item = currentCategoryData[currentQuestionIndex];
+  var item = getCurrentLearningItem();
   
   isUpdateMode = false;
   
@@ -11231,7 +11993,7 @@ function saveItemField() {
   var editEl = document.getElementById(ui.editId);
   if (!editEl) return;
   
-  var item = currentCategoryData[currentQuestionIndex];
+  var item = getCurrentLearningItem();
   if (!item || !item.id) {
     showError('IDが見つかりません。');
     closeUpdateConfirmModal();
