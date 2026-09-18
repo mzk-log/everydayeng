@@ -107,7 +107,9 @@ var AUDIO_IDB_VERSION = 1;
 var MAX_AUDIO_IDB_BYTES = 300 * 1024 * 1024; // IndexedDB 目安上限 300MB
 var ENABLE_AUDIO_PREFETCH = true; // アプリ起動中の Drive 先読み
 var AUDIO_PREFETCH_TIMEOUT_MS = 20000; // 先読み1本の打ち切り
-var AUDIO_PREFETCH_FAIL_STOP = 2; // 連続失敗／打ち切りで先読み停止
+var AUDIO_PREFETCH_RECHECK_MS = 30000; // 未取得が残るときの再確認
+var AUDIO_PREFETCH_FAIL_BACKOFF_MS = 10000; // 失敗後の再開（倍増の起点）
+var AUDIO_PREFETCH_FAIL_BACKOFF_MAX_MS = 60000;
 var AUTH_REFRESH_MARGIN_MS = 5 * 60 * 1000; // トークン残存がこれ未満なら静かに再取得
 // 旧名互換。先読みは ENABLE_AUDIO_PREFETCH を使う
 var ENABLE_TTS_PRELOAD = false;
@@ -125,6 +127,8 @@ var isAudioPrefetchJobRunning = false;
 var audioPrefetchStopped = false;
 var audioPrefetchFailStreak = 0;
 var audioPrefetchPlayBlocked = false;
+var audioPrefetchRecheckTimer = null;
+var audioIdbHaveIds = {};
 var idbAudioReadyCount = 0;
 var idbAudioTargetCount = 0;
 var idbAudioBytes = 0;
@@ -3420,6 +3424,7 @@ function setupEventListeners() {
   });
   
   document.getElementById('startButton').addEventListener('click', function() {
+    if (this.disabled) return;
     playStartSfxThen(startLearning);
   });
   
@@ -5105,11 +5110,7 @@ function applyDurationModePageToList() {
   displayList();
   
   if (!isLearningCompleted) {
-    var startButton = document.getElementById('startButton');
     setStartButtonVisible(true);
-    if (startButton) {
-      startButton.disabled = false;
-    }
     showListNavButtons();
   }
   updateListNavButtons();
@@ -5853,7 +5854,7 @@ function loadCategoryData(categoryNo) {
         var selectEl = document.getElementById('categorySelect');
         if (selectEl && String(selectEl.value) !== categoryKey) {
           hideCategoryLoadingSpinner();
-          if (startButton) startButton.disabled = false;
+          updateStartButtonEnabled();
           if (listContainer) listContainer.style.pointerEvents = 'auto';
           updateListNavButtons();
           return;
@@ -5866,7 +5867,7 @@ function loadCategoryData(categoryNo) {
           displayList();
           syncCategoryLastDateFromList();
           updateListNavButtons();
-          if (startButton) startButton.disabled = false;
+          updateStartButtonEnabled();
           if (listContainer) listContainer.style.pointerEvents = 'auto';
         } else {
           applyLoadedCategoryData(categoryNo, data.items);
@@ -5879,7 +5880,7 @@ function loadCategoryData(categoryNo) {
         }
         hideCategoryLoadingSpinner();
         updateListNavButtons();
-        if (startButton) startButton.disabled = false;
+        updateStartButtonEnabled();
         if (listContainer) listContainer.style.pointerEvents = 'auto';
       }
     })
@@ -5889,7 +5890,7 @@ function loadCategoryData(categoryNo) {
       }
       hideCategoryLoadingSpinner();
       updateListNavButtons();
-      if (startButton) startButton.disabled = false;
+      updateStartButtonEnabled();
       if (listContainer) listContainer.style.pointerEvents = 'auto';
     });
 }
@@ -5942,8 +5943,7 @@ function applyLoadedCategoryData(categoryNo, items) {
   syncCategoryLastDateFromList();
   updateListNavButtons();
   
-  var startButton = document.getElementById('startButton');
-  if (startButton) startButton.disabled = false;
+  updateStartButtonEnabled();
   
   var listContainer = document.getElementById('listContainer');
   if (listContainer) listContainer.style.pointerEvents = 'auto';
@@ -6556,7 +6556,27 @@ function setStartButtonVisible(visible) {
   }
   if (startButton && !visible) {
     startButton.disabled = false;
+  } else if (visible) {
+    updateStartButtonEnabled();
   }
+}
+
+/**
+ * TOP の START を効果音／本問音声中は無効化する
+ */
+function updateStartButtonEnabled() {
+  var startButton = document.getElementById('startButton');
+  if (!startButton) {
+    return;
+  }
+  var dock = document.getElementById('startButtonDock');
+  var hidden = !dock || dock.style.display === 'none';
+  if (hidden) {
+    return;
+  }
+  var spinner = document.getElementById('categoryLoadingSpinner');
+  var loading = !!(spinner && spinner.style.display === 'block');
+  startButton.disabled = loading || isNavActionLockedByAudio();
 }
 
 // リスト表示をリセット
@@ -8584,11 +8604,19 @@ function isFieldAudioBusy() {
 }
 
 /**
+ * 効果音または本問音声のあいだ、START／Ans／Next／End を止めるか
+ * @returns {boolean}
+ */
+function isNavActionLockedByAudio() {
+  return uiClickSfxPlaying || isFieldAudioBusy();
+}
+
+/**
  * Ans 後の次へ系操作が音声処理中にブロックされるか
  * @returns {boolean}
  */
 function isAdvanceNavBlockedByAudio() {
-  return !isLearningCompleted && isAnswerShown && isFieldAudioBusy();
+  return !isLearningCompleted && isAnswerShown && isNavActionLockedByAudio();
 }
 
 /**
@@ -8915,6 +8943,13 @@ function processGasAudioFetchQueue() {
     if (!isPrefetch && gasAudioFetchQueue.length === 0 && !isFieldAudioBusy()) {
       audioPrefetchPlayBlocked = false;
       scheduleAudioPrefetch();
+    } else if (
+      isPrefetch &&
+      gasAudioPrefetchQueue.length === 0 &&
+      gasAudioFetchQueue.length === 0 &&
+      !isFieldAudioBusy()
+    ) {
+      onAudioPrefetchQueueIdle_();
     }
   }
 
@@ -9562,14 +9597,17 @@ function evictAudioIdbIfNeeded(incomingBytes, onReady) {
   });
 }
 
-function refreshAudioIdbStats() {
+function refreshAudioIdbStats(onDone) {
+  var done = typeof onDone === 'function' ? onDone : function() {};
   var targets = collectAudioPrefetchJobs();
   idbAudioTargetCount = targets.length;
   openAudioIdb().then(function(db) {
     if (!db) {
+      audioIdbHaveIds = {};
       idbAudioReadyCount = 0;
       idbAudioBytes = 0;
       refreshLoadDiagUi();
+      done();
       return;
     }
     try {
@@ -9591,12 +9629,19 @@ function refreshAudioIdbStats() {
             ready++;
           }
         });
+        audioIdbHaveIds = have;
         idbAudioBytes = bytes;
         idbAudioReadyCount = ready;
         refreshLoadDiagUi();
+        done();
+      };
+      req.onerror = function() {
+        refreshLoadDiagUi();
+        done();
       };
     } catch (e) {
       refreshLoadDiagUi();
+      done();
     }
   });
 }
@@ -10300,6 +10345,65 @@ function collectAudioPrefetchJobs() {
 }
 
 /**
+ * 先読みの再確認タイマーを止める
+ */
+function clearAudioPrefetchRecheck_() {
+  if (audioPrefetchRecheckTimer) {
+    clearTimeout(audioPrefetchRecheckTimer);
+    audioPrefetchRecheckTimer = null;
+  }
+}
+
+/**
+ * 先読み失敗後の再開間隔
+ * @returns {number}
+ */
+function audioPrefetchBackoffMs_() {
+  var exp = Math.max(0, audioPrefetchFailStreak - 1);
+  var ms = AUDIO_PREFETCH_FAIL_BACKOFF_MS * Math.pow(2, exp);
+  return Math.min(AUDIO_PREFETCH_FAIL_BACKOFF_MAX_MS, ms);
+}
+
+/**
+ * 未取得が残るとき、間隔後に先読みを組み直す
+ * @param {number} delayMs
+ */
+function armAudioPrefetchRecheck_(delayMs) {
+  clearAudioPrefetchRecheck_();
+  if (!ENABLE_AUDIO_PREFETCH || audioPrefetchStopped) {
+    return;
+  }
+  audioPrefetchRecheckTimer = setTimeout(function() {
+    audioPrefetchRecheckTimer = null;
+    scheduleAudioPrefetch();
+  }, delayMs);
+}
+
+/**
+ * 先読みキューが空になったあと、未取得が残れば再確認する
+ */
+function onAudioPrefetchQueueIdle_() {
+  refreshAudioIdbStats(function() {
+    if (audioPrefetchStopped) {
+      return;
+    }
+    if (idbAudioTargetCount > 0 && idbAudioReadyCount >= idbAudioTargetCount) {
+      return;
+    }
+    armAudioPrefetchRecheck_(AUDIO_PREFETCH_RECHECK_MS);
+  });
+}
+
+/**
+ * 先読みの通信失敗。完全停止せず間隔を空けて再開する
+ */
+function noteAudioPrefetchFailure_() {
+  audioPrefetchFailStreak += 1;
+  gasAudioPrefetchQueue = [];
+  armAudioPrefetchRecheck_(audioPrefetchBackoffMs_());
+}
+
+/**
  * 先読みキューを組み直す（Driveのみ。TTSしない）
  */
 function scheduleAudioPrefetch() {
@@ -10315,17 +10419,31 @@ function scheduleAudioPrefetch() {
   if (gasAudioPrefetchQueue.length > 0 || isAudioPrefetchJobRunning) {
     return;
   }
+  if (isFieldAudioBusy() || audioPrefetchPlayBlocked) {
+    armAudioPrefetchRecheck_(AUDIO_PREFETCH_RECHECK_MS);
+    return;
+  }
+  clearAudioPrefetchRecheck_();
   var jobs = collectAudioPrefetchJobs();
   idbAudioTargetCount = jobs.length;
-  refreshAudioIdbStats();
+  var queued = 0;
   jobs.forEach(function(job) {
     if (getCachedAudio(job.text, job.voice, job.speed)) {
       return;
     }
+    if (audioIdbHaveIds[job.idbId]) {
+      return;
+    }
+    queued += 1;
     enqueueGasAudioFetch(function(signal, generation, done) {
       prefetchOneDriveAudio(job, signal, generation, done);
     }, { prefetch: true });
   });
+  if (queued === 0) {
+    onAudioPrefetchQueueIdle_();
+    return;
+  }
+  refreshAudioIdbStats();
   processGasAudioFetchQueue();
 }
 
@@ -10438,26 +10556,19 @@ function prefetchOneDriveAudio(job, signal, generation, done) {
           if (generation !== activeAudioFetchGeneration || isAbortError(error)) {
             if (timedOut) {
               finishLoadDiag('run', 'timeout', { ok: false });
-              audioPrefetchFailStreak += 1;
-              if (audioPrefetchFailStreak >= AUDIO_PREFETCH_FAIL_STOP) {
-                audioPrefetchStopped = true;
-                gasAudioPrefetchQueue = [];
-              }
+              noteAudioPrefetchFailure_();
             }
             done();
             return;
           }
           finishLoadDiag('run', loadDiagStatusFromError(error), { ok: false });
-          audioPrefetchFailStreak += 1;
-          if (audioPrefetchFailStreak >= AUDIO_PREFETCH_FAIL_STOP) {
-            audioPrefetchStopped = true;
-            gasAudioPrefetchQueue = [];
-          }
+          noteAudioPrefetchFailure_();
           done();
         });
     }, function() {
       audioPrefetchStopped = true;
       gasAudioPrefetchQueue = [];
+      clearAudioPrefetchRecheck_();
       done();
     });
   });
@@ -10894,6 +11005,7 @@ function setNextButtonAsUnusedSpacer() {
 function handleNavAnswerButtonClick() {
   var navAnswerButton = document.getElementById('navAnswerButton');
   if (navAnswerButton && navAnswerButton.disabled) return;
+  if (isNavActionLockedByAudio()) return;
   
   if (isLearningCompleted) {
     var afterCompletionNavClick = function() {
@@ -10930,9 +11042,11 @@ function updateNavAnswerButton() {
   if (isLearningCompleted) {
     if (shouldShowCompletionStartButton()) {
       navAnswerText.textContent = 'Start';
-      navAnswerButton.disabled = isCategoryTransitionInProgress;
+      navAnswerButton.disabled = isCategoryTransitionInProgress || isNavActionLockedByAudio();
       if (isCategoryTransitionInProgress) {
         navAnswerButton.title = 'カテゴリの切り替え中です';
+      } else if (isNavActionLockedByAudio()) {
+        navAnswerButton.title = '音声の再生が終わるまでお待ちください';
       } else {
         navAnswerButton.removeAttribute('title');
       }
@@ -10953,9 +11067,11 @@ function updateNavAnswerButton() {
         var idx = getCurrentCategoryIndex();
         blocked = (idx < 0 || findSelectableCategoryIndex(idx, 1) < 0) || isCategoryTransitionInProgress;
       }
-      navAnswerButton.disabled = blocked;
+      navAnswerButton.disabled = blocked || isNavActionLockedByAudio();
       if (isCategoryTransitionInProgress) {
         navAnswerButton.title = 'カテゴリの切り替え中です';
+      } else if (isNavActionLockedByAudio()) {
+        navAnswerButton.title = '音声の再生が終わるまでお待ちください';
       } else if (blocked) {
         if (isDurationQuestionMethod()) {
           navAnswerButton.title = '次のページがありません';
@@ -10977,7 +11093,7 @@ function updateNavAnswerButton() {
     navAnswerText.classList.remove('blinking');
     if (isAdvanceNavBlockedByAudio()) {
       navAnswerButton.disabled = true;
-      navAnswerButton.title = '音声の読み上げが終わるまでお待ちください';
+      navAnswerButton.title = '音声の再生が終わるまでお待ちください';
     } else {
       navAnswerButton.disabled = false;
       navAnswerButton.removeAttribute('title');
@@ -10986,10 +11102,10 @@ function updateNavAnswerButton() {
   }
   
   navAnswerText.textContent = 'Ans';
-  if (waitingListeningAnsGate) {
+  if (waitingListeningAnsGate || isNavActionLockedByAudio()) {
     navAnswerText.classList.remove('blinking');
     navAnswerButton.disabled = true;
-    navAnswerButton.title = '質問の読み上げが終わるまでお待ちください';
+    navAnswerButton.title = '音声の再生が終わるまでお待ちください';
   } else {
     navAnswerText.classList.add('blinking');
     navAnswerButton.disabled = false;
@@ -11907,6 +12023,7 @@ function stopUiClickSfx() {
   uiClickSfxWaiters = [];
   stopSfxAudioElement_(uiClickSfxAudio);
   stopSfxAudioElement_(startSfxAudio);
+  refreshAudioLockControls_();
 }
 
 /**
@@ -11996,21 +12113,33 @@ function playButtonSfxAudio_(audio) {
     audio.currentTime = 0;
   } catch (e) {}
   uiClickSfxPlaying = true;
+  refreshAudioLockControls_();
   audio.onended = function() {
     uiClickSfxPlaying = false;
     flushUiClickSfxWaiters();
+    refreshAudioLockControls_();
   };
   audio.onerror = function() {
     uiClickSfxPlaying = false;
     flushUiClickSfxWaiters();
+    refreshAudioLockControls_();
   };
   var playPromise = audio.play();
   if (playPromise && typeof playPromise.catch === 'function') {
     playPromise.catch(function() {
       uiClickSfxPlaying = false;
       flushUiClickSfxWaiters();
+      refreshAudioLockControls_();
     });
   }
+}
+
+/**
+ * 効果音／本問音声ロックに合わせて START と中央ボタンを更新する
+ */
+function refreshAudioLockControls_() {
+  updateNavAnswerButton();
+  updateStartButtonEnabled();
 }
 
 /**
@@ -12031,6 +12160,7 @@ function showCompletionMessage() {
   playCompletionSfx();
   // 完了直後は出題ブロックを再表示（カテゴリ切替で畳んでいた場合の復帰）
   restoreCompletionStudyFields();
+  scheduleAudioPrefetch();
 
   var completionSection = document.getElementById('completionMessageSection');
   var completionMessageText = document.querySelector('#completionMessage .completion-message-text');
@@ -12271,6 +12401,7 @@ function goToHome() {
   }
   
   updateLearningLockedSideMenuControls();
+  ensureAudioPrefetchInventory();
   
   // 学習時間はリセットしない（継続）
 }
