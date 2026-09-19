@@ -57,9 +57,11 @@ var completionSfxAudios = []; // 学習完了効果音（出題／解答音声�
 var COMPLETION_SFX_URL = 'audio/pirorin.mp3';
 var UI_CLICK_SFX_URL = 'audio/buho.mp3';
 var START_SFX_URL = 'audio/start.mp3';
+var RETRY_SFX_URL = 'audio/retry.mp3';
 var UI_CLICK_SFX_VOLUME = 1.0;
 var uiClickSfxAudio = null; // ボタン効果音（使い回し。Pages静的ファイル）
 var startSfxAudio = null; // START効果音（使い回し。Pages静的ファイル）
+var retrySfxAudio = null; // リトライ効果音（使い回し。Pages静的ファイル）
 var uiClickSfxPlaying = false;
 var uiClickSfxWaiters = [];
 var activePlayField = null; // 再生／取得中の欄 'question' | 'answer' | null
@@ -115,7 +117,8 @@ var AUTH_REFRESH_MARGIN_MS = 5 * 60 * 1000; // トークン残存がこれ未満
 var ENABLE_TTS_PRELOAD = false;
 var ENABLE_AUDIO_SOURCE_DEBUG = true;
 var ENABLE_LOAD_DIAG = true;
-var FIELD_PLAY_LONG_PRESS_MS = 700; // 再生ボタン長押しで音声再作成
+var FIELD_PLAY_LONG_PRESS_MS = 700; // 再生ボタン長押しで音声再作成／本文長押しでリトライ
+var LEARNING_GESTURE_MOVE_PX = 12; // 本文タップ／長押しをスクロールと区別
 var GAS_UPDATE_MAX_ATTEMPTS = 5; // シート更新の最大試行回数（初回含む）
 var GAS_UPDATE_BASE_DELAY_MS = 700; // リトライの基本待機（指数バックオフ）
 var gasSheetUpdateQueue = []; // シート更新ジョブの直列キュー
@@ -160,10 +163,7 @@ var loadDiagLastAllSuccessSec = null;
 var sheetUpdateOkCount = 0; // セッション内：シート更新ジョブ成功数
 var sheetUpdateFailCount = 0; // セッション内：シート更新ジョブ最終失敗数
 var LOAD_DIAG_HISTORY_MAX = 8; // 直近完了ログ（スクショ1画面向け）
-var LOAD_DIAG_COPY_LONG_PRESS_MS = 700;
 var loadDiagHistory = []; // 古い→新しい。表示は新しい順
-var loadDiagCopyFeedbackUntil = 0;
-var loadDiagCopyFeedbackTimer = null;
 var loadDiagBoot = {
   phase: '',
   attempt: 0,
@@ -283,9 +283,6 @@ function pushLoadDiagHistory(line) {
  */
 function getLoadDiagBlockText(liveSlot) {
   var lines = [];
-  if (Date.now() < loadDiagCopyFeedbackUntil) {
-    lines.push('コピーしました');
-  }
   lines.push(formatLoadDiagLine(liveSlot));
   for (var i = loadDiagHistory.length - 1; i >= 0; i--) {
     lines.push(loadDiagHistory[i]);
@@ -293,125 +290,6 @@ function getLoadDiagBlockText(liveSlot) {
   return lines.join('\n');
 }
 
-/**
- * 診断テキストをクリップボードへコピー
- * @param {string} text
- * @param {function(): void} [onDone]
- */
-function copyLoadDiagText(text, onDone) {
-  function doneOk() {
-    if (typeof onDone === 'function') {
-      onDone();
-    }
-  }
-  function fallbackCopy() {
-    var ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', 'readonly');
-    ta.style.position = 'fixed';
-    ta.style.left = '-9999px';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    var ok = false;
-    try {
-      ok = document.execCommand('copy');
-    } catch (eCopy) {
-      ok = false;
-    }
-    document.body.removeChild(ta);
-    if (ok) {
-      doneOk();
-    } else {
-      showError('診断ログをコピーできませんでした。');
-    }
-  }
-  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-    navigator.clipboard.writeText(text).then(doneOk).catch(function() {
-      fallbackCopy();
-    });
-    return;
-  }
-  fallbackCopy();
-}
-
-function showLoadDiagCopiedFeedback() {
-  loadDiagCopyFeedbackUntil = Date.now() + 1500;
-  if (loadDiagCopyFeedbackTimer) {
-    clearTimeout(loadDiagCopyFeedbackTimer);
-  }
-  refreshLoadDiagUi();
-  loadDiagCopyFeedbackTimer = setTimeout(function() {
-    loadDiagCopyFeedbackTimer = null;
-    loadDiagCopyFeedbackUntil = 0;
-    refreshLoadDiagUi();
-  }, 1500);
-}
-
-/**
- * 診断ブロック長押しで表示中テキストをコピー
- * @param {HTMLElement|null} el
- */
-function bindLoadDiagCopyPress(el) {
-  if (!el || el.getAttribute('data-diag-copy-bound') === '1') {
-    return;
-  }
-  el.setAttribute('data-diag-copy-bound', '1');
-  el.setAttribute('title', '長押しで診断ログをコピー');
-
-  var pressTimer = null;
-  var pressActive = false;
-
-  function clearPressTimer() {
-    if (pressTimer) {
-      clearTimeout(pressTimer);
-      pressTimer = null;
-    }
-  }
-
-  el.addEventListener('pointerdown', function(e) {
-    if (typeof e.button === 'number' && e.button !== 0) {
-      return;
-    }
-    pressActive = true;
-    clearPressTimer();
-    pressTimer = setTimeout(function() {
-      pressTimer = null;
-      if (!pressActive) {
-        return;
-      }
-      var text = el.textContent || '';
-      if (!text) {
-        return;
-      }
-      copyLoadDiagText(text, showLoadDiagCopiedFeedback);
-    }, LOAD_DIAG_COPY_LONG_PRESS_MS);
-  });
-
-  function endPress() {
-    pressActive = false;
-    clearPressTimer();
-  }
-
-  el.addEventListener('pointerup', endPress);
-  el.addEventListener('pointercancel', endPress);
-  el.addEventListener('pointerleave', endPress);
-  el.addEventListener('contextmenu', function(e) {
-    e.preventDefault();
-  });
-}
-
-function bindAllLoadDiagCopyPress() {
-  bindLoadDiagCopyPress(document.getElementById('pageLoadingDiag'));
-  bindLoadDiagCopyPress(document.getElementById('netLoadDiag'));
-  bindLoadDiagCopyPress(document.getElementById('learningLoadDiag'));
-}
-
-/**
- * エラーから短い状態ラベルを作る
- * @param {*} error
- * @returns {string}
- */
 function loadDiagStatusFromError(error) {
   var msg = String(error && (error.message || error) || '');
   var m = msg.match(/(?:ネットワークエラー|drive fetch failed):\s*(\d{3})\b/i);
@@ -464,7 +342,6 @@ function refreshLoadDiagUi() {
   if (bootEl) {
     bootEl.style.display = 'block';
     bootEl.textContent = getLoadDiagBlockText(loadDiagBoot);
-    bindLoadDiagCopyPress(bootEl);
   }
 
   var netEl = document.getElementById('netLoadDiag');
@@ -483,7 +360,6 @@ function refreshLoadDiagUi() {
         ? loadDiagBoot
         : loadDiagRun;
       netEl.textContent = getLoadDiagBlockText(netSlot);
-      bindLoadDiagCopyPress(netEl);
     }
   }
 
@@ -494,7 +370,6 @@ function refreshLoadDiagUi() {
     runEl.style.display = onLearning ? 'block' : 'none';
     if (onLearning) {
       runEl.textContent = getLoadDiagBlockText(loadDiagRun);
-      bindLoadDiagCopyPress(runEl);
     }
   }
   if (typeof syncAppHeaderHeight === 'function') {
@@ -1170,7 +1045,6 @@ window.onload = function() {
   
   setupEventListeners();
   refreshLoadDiagUi();
-  bindAllLoadDiagCopyPress();
   
   // 画像は後から読み込む（優先度：低）
   // 背景画像とボタン画像を並列で読み込む
@@ -3443,8 +3317,26 @@ function setupEventListeners() {
   });
   
   document.getElementById('plusButton').addEventListener('click', function() {
-    handlePlusButtonClick();
+    if (this.disabled) return;
+    playRetrySfxThen(handlePlusButtonClick);
   });
+  var questionEditPencil = document.getElementById('questionEditPencil');
+  if (questionEditPencil) {
+    questionEditPencil.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      startUpdateMode('question');
+    });
+  }
+  var answerEditPencil = document.getElementById('answerEditPencil');
+  if (answerEditPencil) {
+    answerEditPencil.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      startUpdateMode('answer');
+    });
+  }
+  bindLearningBodyGestures();
   
   // 出題読みトグルボタン
   document.getElementById('questionToggleButton').addEventListener('click', function() {
@@ -5964,6 +5856,7 @@ function getListUiConfig() {
       selectionCountId: 'completionSelectionCount',
       clearButtonId: 'completionClearSelectionButton',
       allowPreviewModal: false,
+      allowRowSelect: false,
       showStartButton: false
     };
   }
@@ -5975,6 +5868,7 @@ function getListUiConfig() {
     selectionCountId: 'selectionCount',
     clearButtonId: 'clearSelectionButton',
     allowPreviewModal: true,
+    allowRowSelect: true,
     showStartButton: true
   };
 }
@@ -6054,15 +5948,15 @@ function displayList() {
     var row = document.createElement('tr');
     var isSelected = selectedQuestionIndices.indexOf(index) !== -1;
     
-    // 選択状態に応じてクラスを追加
-    if (isSelected) {
+    // 選択状態に応じてクラスを追加（TOPのみ）
+    if (ui.allowRowSelect && isSelected) {
       row.classList.add('selected-row');
     }
     
     var noCell = document.createElement('td');
     noCell.textContent = item.no || '';
     // 選択状態に応じてNo列にクラスを追加
-    if (isSelected) {
+    if (ui.allowRowSelect && isSelected) {
       noCell.classList.add('selected-no');
     }
     var questionCell = document.createElement('td');
@@ -6117,29 +6011,27 @@ function displayList() {
     row.appendChild(durationCell);
     row.appendChild(lastDateCell);
     
-    // シングルクリックで選択/解除（トグル）
-    var clickTimer = null;
-    row.addEventListener('click', function(e) {
-      if (clickTimer === null) {
-        clickTimer = setTimeout(function() {
-          clickTimer = null;
-          // シングルクリック：選択/解除
-          toggleQuestionSelection(index, row);
-        }, 300);
-      }
-    });
-    
-    // ダブルクリックでモーダル表示（学習完了画面では無効）
-    if (ui.allowPreviewModal) {
-      row.addEventListener('dblclick', function(e) {
-        e.preventDefault();
-        if (clickTimer) {
-          clearTimeout(clickTimer);
-          clickTimer = null;
+    if (ui.allowRowSelect) {
+      var clickTimer = null;
+      row.addEventListener('click', function(e) {
+        if (clickTimer === null) {
+          clickTimer = setTimeout(function() {
+            clickTimer = null;
+            toggleQuestionSelection(index, row);
+          }, 300);
         }
-        var itemIndex = currentCategoryData.indexOf(item);
-        showModal(item, itemIndex);
       });
+      if (ui.allowPreviewModal) {
+        row.addEventListener('dblclick', function(e) {
+          e.preventDefault();
+          if (clickTimer) {
+            clearTimeout(clickTimer);
+            clickTimer = null;
+          }
+          var itemIndex = currentCategoryData.indexOf(item);
+          showModal(item, itemIndex);
+        });
+      }
     }
     
     tableBody.appendChild(row);
@@ -6174,6 +6066,9 @@ function displayList() {
 
 // 問題の選択/解除をトグル
 function toggleQuestionSelection(index, row) {
+  if (isLearningCompleted) {
+    return;
+  }
   var selectedIndex = selectedQuestionIndices.indexOf(index);
   var noCell = row.querySelector('td:first-child'); // No列を取得
   if (selectedIndex === -1) {
@@ -6515,6 +6410,10 @@ function updateSelectionCount() {
   var ui = getListUiConfig();
   var selectionCount = document.getElementById(ui.selectionCountId);
   if (!selectionCount) return;
+  if (isLearningCompleted || ui.allowRowSelect === false) {
+    selectionCount.style.display = 'none';
+    return;
+  }
   
   var totalCount = currentCategoryData.length;
   var selectedCount = selectedQuestionIndices.length;
@@ -6709,11 +6608,6 @@ function clearAppSessionDataAfterAuthFailure() {
   sheetUpdateOkCount = 0;
   sheetUpdateFailCount = 0;
   loadDiagHistory = [];
-  loadDiagCopyFeedbackUntil = 0;
-  if (loadDiagCopyFeedbackTimer) {
-    clearTimeout(loadDiagCopyFeedbackTimer);
-    loadDiagCopyFeedbackTimer = null;
-  }
   pendingAnsSheetPersist = null;
   if (ansSheetPersistTimer) {
     clearTimeout(ansSheetPersistTimer);
@@ -7281,6 +7175,7 @@ function displayQuestion() {
   }
   
   // 次の問題をプリロード（バックグラウンドで非同期実行）
+  updateFieldEditPencils();
   preloadNextQuestions();
 }
 
@@ -7516,20 +7411,20 @@ function toggleLearningNoteExpanded() {
 
 // 学習画面の項目編集用ダブルクリックを設定
 function setupFieldEditDoubleClick() {
-  if (isUpdateMode) return;
-  
+  if (isUpdateMode) {
+    updateFieldEditPencils();
+    return;
+  }
+
   var questionText = document.getElementById('questionText');
   if (questionText) {
     questionText.removeEventListener('dblclick', handleQuestionDoubleClick);
-    questionText.addEventListener('dblclick', handleQuestionDoubleClick);
   }
-  
   var answerTextDisplay = document.getElementById('answerTextDisplay');
   if (answerTextDisplay) {
     answerTextDisplay.removeEventListener('dblclick', handleAnswerDoubleClick);
-    answerTextDisplay.addEventListener('dblclick', handleAnswerDoubleClick);
   }
-  
+
   var noteText = document.getElementById('noteText');
   if (noteText) {
     noteText.removeEventListener('click', handleNoteClick);
@@ -7539,6 +7434,7 @@ function setupFieldEditDoubleClick() {
     noteText.addEventListener('dblclick', handleNoteDoubleClick);
     noteText.addEventListener('keydown', handleNoteKeydown);
   }
+  updateFieldEditPencils();
 }
 
 function handleQuestionDoubleClick(e) {
@@ -8610,6 +8506,154 @@ function isFieldAudioBusy() {
  */
 function isNavActionLockedByAudio() {
   return uiClickSfxPlaying || isFieldAudioBusy();
+}
+
+function getEventElement_(target) {
+  if (!target) {
+    return null;
+  }
+  if (target.nodeType === 1) {
+    return target;
+  }
+  return target.parentElement || null;
+}
+
+function isLearningBodyGestureIgnoreTarget_(el) {
+  if (!el || typeof el.closest !== 'function') {
+    return true;
+  }
+  if (el.closest('#learningCategorySection')) {
+    return true;
+  }
+  if (el.closest('#noteSection')) {
+    return true;
+  }
+  if (el.closest('.field-edit-pencil')) {
+    return true;
+  }
+  if (el.closest('.field-text-edit')) {
+    return true;
+  }
+  if (el.closest('.field-update-controls')) {
+    return true;
+  }
+  if (el.closest('.navigation-bar')) {
+    return true;
+  }
+  return false;
+}
+
+function bindLearningBodyGestures() {
+  var root = document.getElementById('screen2');
+  if (!root || root.getAttribute('data-learn-gesture-bound') === '1') {
+    return;
+  }
+  root.setAttribute('data-learn-gesture-bound', '1');
+
+  var pressTimer = null;
+  var pressActive = false;
+  var longPressFired = false;
+  var startX = 0;
+  var startY = 0;
+  var moved = false;
+
+  function clearPressTimer() {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  }
+
+  function isLearningScreenActive() {
+    var s2 = document.getElementById('screen2');
+    return !!(s2 && s2.classList.contains('active'));
+  }
+
+  root.addEventListener('pointerdown', function(e) {
+    if (typeof e.button === 'number' && e.button !== 0) {
+      return;
+    }
+    if (!isLearningScreenActive() || isUpdateMode) {
+      return;
+    }
+    var el = getEventElement_(e.target);
+    if (isLearningBodyGestureIgnoreTarget_(el)) {
+      return;
+    }
+    pressActive = true;
+    longPressFired = false;
+    moved = false;
+    startX = e.clientX;
+    startY = e.clientY;
+    clearPressTimer();
+    pressTimer = setTimeout(function() {
+      pressTimer = null;
+      if (!pressActive || moved || isUpdateMode) {
+        return;
+      }
+      var plus = document.getElementById('plusButton');
+      if (!plus || plus.disabled) {
+        return;
+      }
+      longPressFired = true;
+      playRetrySfxThen(handlePlusButtonClick);
+    }, FIELD_PLAY_LONG_PRESS_MS);
+  });
+
+  root.addEventListener('pointermove', function(e) {
+    if (!pressActive) {
+      return;
+    }
+    var dx = e.clientX - startX;
+    var dy = e.clientY - startY;
+    if ((dx * dx + dy * dy) > (LEARNING_GESTURE_MOVE_PX * LEARNING_GESTURE_MOVE_PX)) {
+      moved = true;
+      clearPressTimer();
+    }
+  });
+
+  function endPress(e) {
+    var wasActive = pressActive;
+    var wasLong = longPressFired;
+    var wasMoved = moved;
+    pressActive = false;
+    clearPressTimer();
+    if (!wasActive || wasLong || wasMoved || isUpdateMode) {
+      return;
+    }
+    if (!isLearningScreenActive()) {
+      return;
+    }
+    var el = getEventElement_(e && e.target);
+    if (isLearningBodyGestureIgnoreTarget_(el)) {
+      return;
+    }
+    handleNavAnswerButtonClick();
+  }
+
+  root.addEventListener('pointerup', endPress);
+  root.addEventListener('pointercancel', function() {
+    pressActive = false;
+    clearPressTimer();
+  });
+  root.addEventListener('contextmenu', function(e) {
+    if (longPressFired) {
+      e.preventDefault();
+    }
+  });
+}
+
+function updateFieldEditPencils() {
+  var show = !isUpdateMode && !isLearningCompleted && isAnswerShown;
+  var q = document.getElementById('questionEditPencil');
+  var a = document.getElementById('answerEditPencil');
+  if (q) {
+    q.hidden = !show;
+  }
+  if (a) {
+    var ans = document.getElementById('answerTextDisplay');
+    a.hidden = !show || !ans || ans.style.display === 'none';
+  }
 }
 
 /**
@@ -11618,11 +11662,10 @@ function updatePlusButton() {
   }
   
   if (isLearningCompleted) {
-    // 学習完了：同じカテゴリ／セッション再学習（「1」バッジは学習中と同様に表示）
-    plusButton.disabled = isCategoryTransitionInProgress;
+    plusButton.disabled = isCategoryTransitionInProgress || isNavActionLockedByAudio();
     plusButton.setAttribute('aria-label', '同じカテゴリをもう一度');
     plusButton.title = isCategoryTransitionInProgress ? 'カテゴリの切り替え中です' : '同じカテゴリをもう一度';
-    setRetrySlotInactive(isCategoryTransitionInProgress);
+    setRetrySlotInactive(plusButton.disabled);
     if (badge) badge.style.display = '';
     return;
   }
@@ -11636,9 +11679,9 @@ function updatePlusButton() {
     return;
   }
   
-  if (isAdvanceNavBlockedByAudio()) {
+  if (isAdvanceNavBlockedByAudio() || isNavActionLockedByAudio()) {
     plusButton.disabled = true;
-    plusButton.title = '音声の読み上げが終わるまでお待ちください';
+    plusButton.title = '音声の再生が終わるまでお待ちください';
     setRetrySlotInactive(true);
   } else {
     plusButton.disabled = false;
@@ -12032,6 +12075,7 @@ function stopUiClickSfx() {
   uiClickSfxWaiters = [];
   stopSfxAudioElement_(uiClickSfxAudio);
   stopSfxAudioElement_(startSfxAudio);
+  stopSfxAudioElement_(retrySfxAudio);
   refreshAudioLockControls_();
 }
 
@@ -12069,6 +12113,11 @@ function ensureStartSfxAudio() {
   return startSfxAudio;
 }
 
+function ensureRetrySfxAudio() {
+  retrySfxAudio = ensureStaticSfxAudio_(retrySfxAudio, RETRY_SFX_URL);
+  return retrySfxAudio;
+}
+
 /**
  * 起動時にボタン効果音を先読みする
  */
@@ -12076,6 +12125,7 @@ function preloadUiClickSfx() {
   try {
     ensureUiClickSfxAudio().load();
     ensureStartSfxAudio().load();
+    ensureRetrySfxAudio().load();
   } catch (e) {}
 }
 
@@ -12103,6 +12153,14 @@ function playStartSfxThen(fn) {
   setTimeout(fn, 0);
 }
 
+function playRetrySfxThen(fn) {
+  playRetrySfx();
+  if (typeof fn !== 'function') {
+    return;
+  }
+  setTimeout(fn, 0);
+}
+
 /**
  * 指定 Audio をボタン効果音として再生する
  * @param {HTMLAudioElement} audio
@@ -12116,6 +12174,9 @@ function playButtonSfxAudio_(audio) {
   }
   if (audio !== startSfxAudio) {
     stopSfxAudioElement_(startSfxAudio);
+  }
+  if (audio !== retrySfxAudio) {
+    stopSfxAudioElement_(retrySfxAudio);
   }
   try {
     audio.pause();
@@ -12149,6 +12210,7 @@ function playButtonSfxAudio_(audio) {
 function refreshAudioLockControls_() {
   updateNavAnswerButton();
   updateStartButtonEnabled();
+  updatePlusButton();
 }
 
 /**
@@ -12165,10 +12227,15 @@ function playStartSfx() {
   playButtonSfxAudio_(ensureStartSfxAudio());
 }
 
+function playRetrySfx() {
+  playButtonSfxAudio_(ensureRetrySfxAudio());
+}
+
 function showCompletionMessage() {
   playCompletionSfx();
   // 完了直後は出題ブロックを再表示（カテゴリ切替で畳んでいた場合の復帰）
   restoreCompletionStudyFields();
+  updateFieldEditPencils();
   scheduleAudioPrefetch();
 
   var completionSection = document.getElementById('completionMessageSection');
@@ -12652,6 +12719,7 @@ function startUpdateMode(displayTarget) {
   originalEditText = item[updateStorageField] || '';
   
   isUpdateMode = true;
+  updateFieldEditPencils();
   
   var displayEl = document.getElementById(ui.displayId);
   if (displayEl) {
