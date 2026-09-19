@@ -1441,6 +1441,37 @@ tr:last-child td {
   margin: 5px 0;
 }
 
+.field-text-wrap {
+  position: relative;
+}
+
+.field-edit-pencil {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #333;
+  font-size: 16px;
+  line-height: 28px;
+  text-align: center;
+  cursor: pointer;
+  z-index: 2;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.field-edit-pencil[hidden] {
+  display: none !important;
+}
+
+.completion-list-container .clear-button {
+  display: none;
+}
+
 /* 質問テキスト */
 .question-text {
   font-size: 18px;
@@ -2747,9 +2778,11 @@ body:has(#screen2.active) .login-button {
   width: 100%;
 }
 
-/* 学習画面表示時 */
+/* 学習画面表示時（ログ〜下ナビ直前の空きもヒット領域に含める） */
 #screen2.active {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - var(--app-header-height) - 10px - var(--app-nav-height) - 12px);
 }
 
 /* 学習画面のコンテンツエリア（縦スクロールはページ＝body に任せる） */
@@ -2759,6 +2792,7 @@ body:has(#screen2.active) .login-button {
   min-height: 0;
   max-height: none;
   overflow: visible;
+  flex: 1 1 auto;
 }
 
 /* 学習完了時のList（note下）※TOPと同様、内側スクロールせずページ全体で見る */
