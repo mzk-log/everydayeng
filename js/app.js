@@ -1353,6 +1353,7 @@ function hideCategoryLoadingSpinner() {
   if (loadingSpinner) {
     loadingSpinner.style.display = 'none';
   }
+  updateStartButtonEnabled();
 }
 
 // メール／Googleログイン状態を確認し、必要に応じてログイン画面を表示
@@ -8616,7 +8617,7 @@ function isNavActionLockedByAudio() {
  * @returns {boolean}
  */
 function isAdvanceNavBlockedByAudio() {
-  return !isLearningCompleted && isAnswerShown && isNavActionLockedByAudio();
+  return !isLearningCompleted && isAnswerShown && isFieldAudioBusy();
 }
 
 /**
@@ -11024,6 +11025,14 @@ function handleNavAnswerButtonClick() {
   }
   if (isAnswerShown) {
     if (isAdvanceNavBlockedByAudio()) return;
+    if (isLastQuestionInCurrentFlow()) {
+      if (navAnswerButton) {
+        navAnswerButton.disabled = true;
+      }
+      stopCurrentAudioPlayback({ skipButtonUpdate: true, keepAudioQueue: false });
+      goToNextQuestion();
+      return;
+    }
     playUiClickSfxThen(goToNextQuestion);
     return;
   }
