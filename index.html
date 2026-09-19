@@ -10,7 +10,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202609192020';
+    var FRONT_VERSION = '202609192234';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -49,7 +49,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202609192020">
+  <link rel="stylesheet" href="style.css?v=202609192234">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -106,31 +106,31 @@
             <div class="side-menu-submenu-item side-menu-brightness-item">
               <span class="side-menu-brightness-label">出題音声</span>
               <div class="side-menu-brightness-controls">
-                <button class="audio-voice-button" data-voice-type="question" data-voice-gender="male" type="button">男性</button>
-                <button class="audio-voice-button audio-voice-button-active" data-voice-type="question" data-voice-gender="female" type="button">女性</button>
+                <button class="audio-voice-button audio-voice-button-active" data-voice-type="question" data-voice-gender="male" type="button">男性</button>
+                <button class="audio-voice-button" data-voice-type="question" data-voice-gender="female" type="button">女性</button>
               </div>
             </div>
             <div class="side-menu-submenu-item side-menu-brightness-item">
               <span class="side-menu-brightness-label">出題読みの速さ</span>
               <div class="side-menu-brightness-controls">
-                <button class="audio-speed-button audio-speed-button-active" data-speed-type="question" data-speed-value="fast" type="button">速い</button>
-                <button class="audio-speed-button" data-speed-type="question" data-speed-value="medium" type="button">中</button>
-                <button class="audio-speed-button" data-speed-type="question" data-speed-value="slow" type="button">遅い</button>
+                <button class="audio-speed-button" data-speed-type="question" data-speed-value="fast" type="button" disabled>速い</button>
+                <button class="audio-speed-button audio-speed-button-active" data-speed-type="question" data-speed-value="medium" type="button">中</button>
+                <button class="audio-speed-button" data-speed-type="question" data-speed-value="slow" type="button" disabled>遅い</button>
               </div>
             </div>
             <div class="side-menu-submenu-item side-menu-brightness-item">
               <span class="side-menu-brightness-label">解答音声</span>
               <div class="side-menu-brightness-controls">
-                <button class="audio-voice-button" data-voice-type="answer" data-voice-gender="male" type="button">男性</button>
-                <button class="audio-voice-button audio-voice-button-active" data-voice-type="answer" data-voice-gender="female" type="button">女性</button>
+                <button class="audio-voice-button audio-voice-button-active" data-voice-type="answer" data-voice-gender="male" type="button">男性</button>
+                <button class="audio-voice-button" data-voice-type="answer" data-voice-gender="female" type="button">女性</button>
               </div>
             </div>
             <div class="side-menu-submenu-item side-menu-brightness-item">
               <span class="side-menu-brightness-label">解答読みの速さ</span>
               <div class="side-menu-brightness-controls">
-                <button class="audio-speed-button audio-speed-button-active" data-speed-type="answer" data-speed-value="fast" type="button">速い</button>
-                <button class="audio-speed-button" data-speed-type="answer" data-speed-value="medium" type="button">中</button>
-                <button class="audio-speed-button" data-speed-type="answer" data-speed-value="slow" type="button">遅い</button>
+                <button class="audio-speed-button" data-speed-type="answer" data-speed-value="fast" type="button" disabled>速い</button>
+                <button class="audio-speed-button audio-speed-button-active" data-speed-type="answer" data-speed-value="medium" type="button">中</button>
+                <button class="audio-speed-button" data-speed-type="answer" data-speed-value="slow" type="button" disabled>遅い</button>
               </div>
             </div>
           </div>
@@ -558,7 +558,7 @@
     </div>
   </div>
 
-  <script src="js/app.js?v=202609192020"></script>
+  <script src="js/app.js?v=202609192234"></script>
 </body>
 </html>
 

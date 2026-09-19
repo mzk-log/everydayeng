@@ -428,6 +428,19 @@
   border-color: #45a049 !important;
 }
 
+.audio-speed-button:disabled:not(.audio-speed-button-active) {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background-color: #eee;
+  color: #999;
+  pointer-events: none;
+}
+
+.audio-speed-button-active:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
 /* 出題設定（入替え・リスニング）ボタン */
 .practice-setting-button {
   min-width: 48px;

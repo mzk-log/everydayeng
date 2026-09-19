@@ -107,6 +107,8 @@ var AUDIO_IDB_NAME = 'everyday-english-audio';
 var AUDIO_IDB_STORE = 'clips';
 var AUDIO_IDB_VERSION = 1;
 var MAX_AUDIO_IDB_BYTES = 300 * 1024 * 1024; // IndexedDB 目安上限 300MB
+var AUDIO_VOICE_DEFAULT = 'male';
+var AUDIO_SPEED_FIXED = 'medium';
 var ENABLE_AUDIO_PREFETCH = true; // アプリ起動中の Drive 先読み
 var AUDIO_PREFETCH_TIMEOUT_MS = 20000; // 先読み1本の打ち切り
 var AUDIO_PREFETCH_RECHECK_MS = 30000; // 未取得が残るときの再確認
@@ -747,8 +749,7 @@ function applyUserSettingsFromServerBody_(settings, imageContent, mimeType) {
     try {
       if (settings.audio.voice_question) localStorage.setItem('audioVoice_question', settings.audio.voice_question);
       if (settings.audio.voice_answer) localStorage.setItem('audioVoice_answer', settings.audio.voice_answer);
-      if (settings.audio.speed_question) localStorage.setItem('audioSpeed_question', settings.audio.speed_question);
-      if (settings.audio.speed_answer) localStorage.setItem('audioSpeed_answer', settings.audio.speed_answer);
+      persistFixedAudioSpeed_();
     } catch (e5) {
       // ignore
     }
@@ -3552,16 +3553,7 @@ function setupEventListeners() {
     });
   });
   
-  // 速さボタン（出題読みの速さ・解答読みの速さ）
-  var audioSpeedButtons = document.querySelectorAll('.audio-speed-button');
-  audioSpeedButtons.forEach(function(button) {
-    button.addEventListener('click', function() {
-      var speedType = this.dataset.speedType; // 'question' または 'answer'
-      var speedValue = this.dataset.speedValue; // 'fast', 'medium', 'slow'
-      updateAudioSpeedButtons(speedType, speedValue);
-      setAudioSpeed(speedType, speedValue);
-    });
-  });
+  // 速さは中固定。速い／遅いは disabled。クリックでは変えない
   
   // 出題設定ボタン（入替え・リスニング）
   var practiceSettingButtons = document.querySelectorAll('.practice-setting-button');
@@ -3795,7 +3787,7 @@ function setAudioVoice(voiceType, gender) {
 function setAudioSpeed(speedType, speed) {
   try {
     var key = 'audioSpeed_' + speedType; // 'audioSpeed_question' または 'audioSpeed_answer'
-    localStorage.setItem(key, speed);
+    localStorage.setItem(key, AUDIO_SPEED_FIXED);
     // 設定変更時にキャッシュをクリア
     clearAudioCache();
     scheduleUserSettingsSync();
@@ -3804,25 +3796,46 @@ function setAudioSpeed(speedType, speed) {
   }
 }
 
-// 音声設定を取得（localStorage、デフォルト値：女性）
+// 音声設定を取得（localStorage、デフォルト値：男性）
 function getAudioVoice(voiceType) {
   try {
     var key = 'audioVoice_' + voiceType;
     var saved = localStorage.getItem(key);
-    return saved || 'female'; // デフォルト値：女性
+    return saved || AUDIO_VOICE_DEFAULT;
   } catch (e) {
-    return 'female'; // デフォルト値：女性
+    return AUDIO_VOICE_DEFAULT;
   }
 }
 
-// 速さ設定を取得（localStorage、デフォルト値：fast）
+// 速さ設定を取得（中固定）
 function getAudioSpeed(speedType) {
+  return AUDIO_SPEED_FIXED;
+}
+
+function persistFixedAudioSpeed_() {
   try {
-    var key = 'audioSpeed_' + speedType;
-    var saved = localStorage.getItem(key);
-    return saved || 'fast'; // デフォルト値：fast
+    localStorage.setItem('audioSpeed_question', AUDIO_SPEED_FIXED);
+    localStorage.setItem('audioSpeed_answer', AUDIO_SPEED_FIXED);
   } catch (e) {
-    return 'fast'; // デフォルト値：fast
+    // ignore
+  }
+}
+
+function syncAudioSpeedButtonsLocked_() {
+  var types = ['question', 'answer'];
+  for (var t = 0; t < types.length; t++) {
+    updateAudioSpeedButtons(types[t], AUDIO_SPEED_FIXED);
+  }
+  var buttons = document.querySelectorAll('.audio-speed-button');
+  for (var i = 0; i < buttons.length; i++) {
+    var button = buttons[i];
+    var isMedium = button.dataset.speedValue === AUDIO_SPEED_FIXED;
+    button.disabled = !isMedium;
+    if (isMedium) {
+      button.removeAttribute('aria-disabled');
+    } else {
+      button.setAttribute('aria-disabled', 'true');
+    }
   }
 }
 
@@ -3833,7 +3846,7 @@ function getSpeakingRate(speed) {
     'medium': 1.0,
     'slow': 0.9
   };
-  return speedMap[speed] || 1.25; // デフォルト値：1.25
+  return speedMap[speed] || 1.20; // デフォルト値：中
 }
 
 // 音声設定を読み込み（localStorageから）
@@ -3842,17 +3855,12 @@ function loadAudioSettings() {
   var questionVoice = getAudioVoice('question');
   updateAudioVoiceButtons('question', questionVoice);
   
-  // 出題読みの速さ
-  var questionSpeed = getAudioSpeed('question');
-  updateAudioSpeedButtons('question', questionSpeed);
-  
+  persistFixedAudioSpeed_();
+  syncAudioSpeedButtonsLocked_();
+
   // 解答音声
   var answerVoice = getAudioVoice('answer');
   updateAudioVoiceButtons('answer', answerVoice);
-  
-  // 解答読みの速さ
-  var answerSpeed = getAudioSpeed('answer');
-  updateAudioSpeedButtons('answer', answerSpeed);
 }
 
 // ========================================
@@ -9150,8 +9158,8 @@ function saveDriveAudioAsync(item, sheetField, voiceGender, speed, audioContent)
     params.append('categoryNo', String(resolveItemCategoryNo(item)));
     params.append('no', String(item.no));
     params.append('field', sheetField);
-    params.append('voiceGender', voiceGender || 'female');
-    params.append('speed', speed || 'fast');
+    params.append('voiceGender', voiceGender || AUDIO_VOICE_DEFAULT);
+    params.append('speed', speed || AUDIO_SPEED_FIXED);
     params.append('audioContent', audioContent);
     appendAuthParams(params);
     params.append('referer', window.location.origin);
@@ -9374,7 +9382,7 @@ function recreateFieldAudio(fieldType) {
  */
 function removeCachedAudio(text, voiceGender, speed) {
   var normalizedText = normalizeTextForTTS(text);
-  var cacheKey = normalizedText + '_' + (voiceGender || 'female') + '_' + (speed || 'fast');
+  var cacheKey = normalizedText + '_' + (voiceGender || AUDIO_VOICE_DEFAULT) + '_' + (speed || AUDIO_SPEED_FIXED);
   if (audioCache[cacheKey]) {
     delete audioCache[cacheKey];
   }
@@ -9696,7 +9704,7 @@ function refreshAudioIdbStats(onDone) {
  */
 function getCachedAudio(text, voiceGender, speed) {
   var normalizedText = normalizeTextForTTS(text);
-  var cacheKey = normalizedText + '_' + (voiceGender || 'female') + '_' + (speed || 'fast');
+  var cacheKey = normalizedText + '_' + (voiceGender || AUDIO_VOICE_DEFAULT) + '_' + (speed || AUDIO_SPEED_FIXED);
   if (audioCache[cacheKey]) {
     return { audioData: audioCache[cacheKey], source: 'memory' };
   }
@@ -9709,7 +9717,7 @@ function getCachedAudio(text, voiceGender, speed) {
  */
 function getCachedAudioFromIdb(text, voiceGender, speed, onDone) {
   var normalizedText = normalizeTextForTTS(text);
-  var cacheKey = normalizedText + '_' + (voiceGender || 'female') + '_' + (speed || 'fast');
+  var cacheKey = normalizedText + '_' + (voiceGender || AUDIO_VOICE_DEFAULT) + '_' + (speed || AUDIO_SPEED_FIXED);
   var mem = getCachedAudio(text, voiceGender, speed);
   if (mem) {
     onDone(mem);
@@ -9736,7 +9744,7 @@ function getCachedAudioFromIdb(text, voiceGender, speed, onDone) {
  */
 function saveAudioToCache(text, audioContent, voiceGender, speed) {
   var normalizedText = normalizeTextForTTS(text);
-  var cacheKey = normalizedText + '_' + (voiceGender || 'female') + '_' + (speed || 'fast');
+  var cacheKey = normalizedText + '_' + (voiceGender || AUDIO_VOICE_DEFAULT) + '_' + (speed || AUDIO_SPEED_FIXED);
   var audioData = {
     audioContent: audioContent,
     timestamp: Date.now(),
@@ -10033,8 +10041,8 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
     params.append('categoryNo', String(resolveItemCategoryNo(item)));
     params.append('no', String(item.no));
     params.append('field', sheetField);
-    params.append('voiceGender', voiceGender || 'female');
-    params.append('speed', speed || 'fast');
+    params.append('voiceGender', voiceGender || AUDIO_VOICE_DEFAULT);
+    params.append('speed', speed || AUDIO_SPEED_FIXED);
     appendAuthParams(params);
     params.append('referer', window.location.origin);
 
@@ -10064,7 +10072,7 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
       }
       if (data && data.success && data.found && data.audioContent) {
         hidePlayButtonLoading(fieldType);
-        var cachedData = saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+        var cachedData = saveAudioToCache(text, data.audioContent, voiceGender || AUDIO_VOICE_DEFAULT, speed || AUDIO_SPEED_FIXED);
         finishLoadDiag('run', 'OK', {
           ok: true,
           bytes: String(data.audioContent).length
@@ -10179,8 +10187,8 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
 
     var params = new URLSearchParams();
     params.append('text', text);
-    params.append('voiceGender', voiceGender || 'female');
-    params.append('speed', speed || 'fast');
+    params.append('voiceGender', voiceGender || AUDIO_VOICE_DEFAULT);
+    params.append('speed', speed || AUDIO_SPEED_FIXED);
     appendAuthParams(params);
     params.append('referer', window.location.origin);
 
@@ -10213,9 +10221,9 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
 
       if (data && data.success && data.audioContent) {
         hidePlayButtonLoading(fieldType);
-        var cachedData = saveAudioToCache(text, data.audioContent, voiceGender || 'female', speed || 'fast');
+        var cachedData = saveAudioToCache(text, data.audioContent, voiceGender || AUDIO_VOICE_DEFAULT, speed || AUDIO_SPEED_FIXED);
         if (item && sheetField) {
-          saveDriveAudioAsync(item, sheetField, voiceGender || 'female', speed || 'fast', data.audioContent);
+          saveDriveAudioAsync(item, sheetField, voiceGender || AUDIO_VOICE_DEFAULT, speed || AUDIO_SPEED_FIXED, data.audioContent);
         }
         finishLoadDiag('run', 'OK', {
           ok: true,
@@ -10671,10 +10679,10 @@ function preloadAudio(text, voiceGender, speed, item, sheetField) {
     prefetchOneDriveAudio({
       item: item,
       text: text,
-      voice: voiceGender || 'female',
-      speed: speed || 'fast',
+      voice: voiceGender || AUDIO_VOICE_DEFAULT,
+      speed: speed || AUDIO_SPEED_FIXED,
       field: sheetField || 'question',
-      idbId: audioIdbRecordId(normalizeTextForTTS(text) + '_' + (voiceGender || 'female') + '_' + (speed || 'fast'))
+      idbId: audioIdbRecordId(normalizeTextForTTS(text) + '_' + (voiceGender || AUDIO_VOICE_DEFAULT) + '_' + (speed || AUDIO_SPEED_FIXED))
     }, signal, generation, done);
   }, { prefetch: true });
 }
