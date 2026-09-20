@@ -2832,6 +2832,23 @@ body:has(#screen2.active) .login-button {
   -webkit-overflow-scrolling: auto;
 }
 
+/* 学習画面List：行選択UIではないのでホバー／指差しを出さない（TOPは従来どおり） */
+#screen2 .list-table tbody tr {
+  cursor: default;
+}
+
+#screen2 .list-table tbody tr:hover {
+  background-color: transparent;
+}
+
+#screen2 .list-table tbody tr:hover td:first-child {
+  background-color: transparent;
+}
+
+#screen2 .list-table tbody tr:hover td.selected-no {
+  background-color: #c8e6c9;
+}
+
 /* 学習画面のカテゴリ表示（全文折り返し） */
 #screen2 #currentCategory {
   display: block;
