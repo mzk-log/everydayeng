@@ -29,6 +29,11 @@ var GOOGLE_ID_TOKEN_STORAGE_KEY = 'googleIdToken';
 var GOOGLE_ACCESS_TOKEN_STORAGE_KEY = 'googleAccessToken';
 var GOOGLE_ACCESS_TOKEN_EXPIRES_KEY = 'googleAccessTokenExpiresAt';
 var googleAccessTokenExpiresAt = 0;
+var appSessionToken = null;
+var APP_SESSION_STORAGE_PREFIX = 'appSessionToken_v1:';
+var memoryAllStudyItems = null;
+var lastLocalStudyPersistOk = true;
+var dataGenerationCheckInFlight = false;
 var googleSignInInitialized = false;
 var googleLoginDialogCancellable = false;
 var googleLoginForceAccountSelect = false; // ヘッダー「ログイン」からの切替時 true
@@ -550,6 +555,88 @@ function buildGasPostUrl() {
 }
 
 /**
+ * GAS JSON 応答から sessionToken を保存する
+ * @param {*} data
+ * @returns {*}
+ */
+function applyGasAuthPayload(data) {
+  if (data && data.sessionToken) {
+    setAppSessionToken(data.sessionToken);
+  }
+  return data;
+}
+
+/**
+ * HTTP 成功時に JSON を読み、sessionToken を取り込む
+ * @param {Response} response
+ * @returns {Promise<Object>}
+ */
+function parseGasResponseJson(response) {
+  if (!response.ok) {
+    throw new Error('ネットワークエラー: ' + response.status);
+  }
+  return response.json().then(function(data) {
+    applyGasAuthPayload(data);
+    return data;
+  });
+}
+
+/**
+ * @returns {string}
+ */
+function getAppSessionStorageKey(email) {
+  var keyEmail = email != null ? String(email).trim() : resolveAuthEmail();
+  return APP_SESSION_STORAGE_PREFIX + String(keyEmail || '').toLowerCase();
+}
+
+/**
+ * @returns {string}
+ */
+function getAppSessionToken() {
+  if (appSessionToken) {
+    return appSessionToken;
+  }
+  try {
+    var stored = localStorage.getItem(getAppSessionStorageKey());
+    if (stored) {
+      appSessionToken = stored;
+      return stored;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return '';
+}
+
+/**
+ * @param {string} token
+ */
+function setAppSessionToken(token) {
+  appSessionToken = token || null;
+  try {
+    var key = getAppSessionStorageKey();
+    if (token) {
+      localStorage.setItem(key, token);
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+function clearAppSessionToken() {
+  setAppSessionToken('');
+}
+
+/**
+ * @returns {boolean}
+ */
+function hasUsableAuth() {
+  return !!resolveAuthEmail() && (!!getAppSessionToken() || hasValidGoogleAuthToken());
+}
+
+/**
  * 音声取得の一時的なネットワーク失敗か
  * @param {*} error
  * @returns {boolean}
@@ -856,6 +943,7 @@ function pushUserSettingsToServer(onDone) {
     if (data.settings && data.settings.background) {
       setStoredSettingsBgDriveFileId(data.settings.background.driveFileId || '');
     }
+    applyGasAuthPayload(data);
     if (typeof onDone === 'function') onDone(null, data);
   })
   .catch(function(error) {
@@ -922,13 +1010,12 @@ function syncUserSettingsWithServer(onDone) {
     params.append('referer', window.location.origin || '');
     params.append('knownDriveFileId', getStoredSettingsBgDriveFileId());
 
-    fetch(WEB_APP_URL + '?' + params.toString())
-    .then(function(response) {
-      if (!response.ok) {
-        throw new Error('ネットワークエラー: ' + response.status);
-      }
-      return response.json();
+    fetch(buildGasPostUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params
     })
+    .then(parseGasResponseJson)
     .then(function(data) {
       if (!data || !data.success) {
         throw new Error((data && data.error) || '設定の取得に失敗しました');
@@ -945,7 +1032,7 @@ function syncUserSettingsWithServer(onDone) {
         );
         userSettingsInitialSyncDone = true;
         finishLoadDiag('boot', 'OK', { ok: true, bytes: approxJsonBytes(data), keepTickerMs: 0 });
-        if (typeof onDone === 'function') onDone();
+        if (typeof onDone === 'function') onDone(null, data);
         return;
       }
       // サーバ未登録：端末設定をブートストラップ
@@ -959,10 +1046,10 @@ function syncUserSettingsWithServer(onDone) {
         userSettingsBgUploadPending = true;
       }
       updateLoadDiag('boot', { phase: '設定保存', status: '取得中' });
-      pushUserSettingsToServer(function() {
+      pushUserSettingsToServer(function(saveErr, saveData) {
         userSettingsInitialSyncDone = true;
         finishLoadDiag('boot', 'OK', { ok: true, keepTickerMs: 0 });
-        if (typeof onDone === 'function') onDone();
+        if (typeof onDone === 'function') onDone(saveErr || null, saveData || data);
       });
     })
     .catch(function(error) {
@@ -990,7 +1077,7 @@ function syncUserSettingsWithServer(onDone) {
       userSettingsInitialSyncDone = true;
       console.warn('設定同期を諦め、端末の設定で続行します。');
       finishLoadDiag('boot', loadDiagStatusFromError(error), { ok: false, keepTickerMs: 0 });
-      if (typeof onDone === 'function') onDone(error);
+      if (typeof onDone === 'function') onDone(error, null);
     });
   }
 
@@ -1086,6 +1173,7 @@ function getPageLoadingOverlayHtml() {
     '<p class="page-loading-percent" id="pageLoadingPercent">0%</p>' +
     '<div class="page-loading-bar" aria-hidden="true"><div class="page-loading-bar-fill" id="pageLoadingBarFill"></div></div>' +
     '<p class="page-loading-status" id="pageLoadingStatus">読み込み中...</p>' +
+    '<button type="button" id="pageLoadingRetryButton" class="page-loading-retry" style="display:none">再試行</button>' +
     '<p class="page-loading-diag" id="pageLoadingDiag" title="長押しで診断ログをコピー"></p>' +
     '</div>';
 }
@@ -1121,9 +1209,13 @@ function setPageLoadingProgress(percent, label) {
 }
 
 function finishPageLoadingAndUnlock() {
+  var retryBtn = document.getElementById('pageLoadingRetryButton');
+  if (retryBtn) {
+    retryBtn.style.display = 'none';
+  }
   setPageLoadingProgress(100, '完了');
   hidePageLoading();
-  if (hasValidGoogleAuthToken()) {
+  if (hasUsableAuth()) {
     setAppAuthUiLocked(false);
   }
 }
@@ -1234,23 +1326,118 @@ function hideCategoryLoadingSpinner() {
 // メール／Googleログイン状態を確認し、必要に応じてログイン画面を表示
 function checkUserEmail() {
   restoreGoogleAuthFromStorage();
-  if (!userEmail || !hasValidGoogleAuthToken()) {
+  if (!userEmail || !hasUsableAuth()) {
     setAppAuthUiLocked(true);
     tryGoogleResumeSignIn(function() {
       showGoogleLoginDialog({ cancellable: true });
     });
     return;
   }
-  // トークンありでもカテゴリ取得成功までロック維持
+  startAuthenticatedBoot();
+}
+
+/**
+ * ログイン済み：設定同期のあと、世代一致なら全問取得を省略する
+ */
+function startAuthenticatedBoot() {
   setAppAuthUiLocked(true);
-  // 設定同期〜カテゴリ取得までローディングを維持（ログイン後の空白待ちを防ぐ）
   showPageLoading();
-  syncUserSettingsWithServer(function(err) {
+  var retryBtn = document.getElementById('pageLoadingRetryButton');
+  if (retryBtn) {
+    retryBtn.style.display = 'none';
+  }
+  syncUserSettingsWithServer(function(err, data) {
     if (err && isGoogleAuthFailureMessage(String(err.message || err))) {
       return;
     }
-    loadCategories();
+    continueBootWithStudyItems(err, data);
   });
+}
+
+/**
+ * 設定同期後の表ロード（省略／1本取得／再試行）
+ * @param {*} settingsErr
+ * @param {Object|null} settingsData
+ */
+function continueBootWithStudyItems(settingsErr, settingsData) {
+  var local = readLocalStudyBundle();
+  var localOk = hasCompleteLocalStudyData(local);
+  var serverGen = (settingsData && settingsData.dataGeneration != null)
+    ? Number(settingsData.dataGeneration)
+    : null;
+  var canSkip = localOk && (
+    settingsErr
+      ? true
+      : (serverGen != null && !isNaN(serverGen) && serverGen === Number(local.dataGeneration))
+  );
+  if (canSkip) {
+    applyStudyItemsToApp(local.items, { isBoot: true });
+    finishPageLoadingAndUnlock();
+    fetchDriveAudioCoverage();
+    ensureAudioPrefetchInventory();
+    return;
+  }
+  setPageLoadingProgress(50, '全問データ');
+  fetchAllStudyItemsFromServer(function(fetchErr, items, meta) {
+    if (fetchErr) {
+      if (isGoogleAuthFailureMessage(String(fetchErr.message || fetchErr))) {
+        showError(String(fetchErr.message || fetchErr));
+        return;
+      }
+      if (localOk) {
+        applyStudyItemsToApp(local.items, { isBoot: true });
+        finishPageLoadingAndUnlock();
+        fetchDriveAudioCoverage();
+        ensureAudioPrefetchInventory();
+        return;
+      }
+      showBootDataRetry(fetchErr);
+      return;
+    }
+    if (!items || !items.length) {
+      if (localOk) {
+        applyStudyItemsToApp(local.items, { isBoot: true });
+        finishPageLoadingAndUnlock();
+        fetchDriveAudioCoverage();
+        ensureAudioPrefetchInventory();
+        return;
+      }
+      showBootDataRetry(new Error('データがありません'));
+      return;
+    }
+    var gen = (meta && meta.dataGeneration != null) ? meta.dataGeneration : serverGen;
+    writeLocalStudyBundle(items || [], gen);
+    applyStudyItemsToApp(items || [], { isBoot: true });
+    finishPageLoadingAndUnlock();
+    fetchDriveAudioCoverage();
+    ensureAudioPrefetchInventory();
+  });
+}
+
+/**
+ * 初回端末に表が無いときの再試行
+ * @param {*} error
+ */
+function showBootDataRetry(error) {
+  setAppAuthUiLocked(true);
+  showPageLoading();
+  var statusEl = document.getElementById('pageLoadingStatus');
+  if (statusEl) {
+    statusEl.textContent = 'データの取得に失敗しました。再試行してください。';
+  }
+  var percentEl = document.getElementById('pageLoadingPercent');
+  if (percentEl) {
+    percentEl.textContent = '';
+  }
+  var btn = document.getElementById('pageLoadingRetryButton');
+  if (btn) {
+    btn.style.display = 'inline-block';
+    btn.onclick = function() {
+      btn.style.display = 'none';
+      startAuthenticatedBoot();
+    };
+  }
+  finishLoadDiag('boot', loadDiagStatusFromError(error), { ok: false, keepTickerMs: 0 });
 }
 
 /**
@@ -1319,6 +1506,15 @@ function restoreGoogleAuthFromStorage() {
   if (googleAccessToken && googleAccessTokenExpiresAt && Date.now() >= googleAccessTokenExpiresAt) {
     clearGoogleAccessToken();
   }
+  appSessionToken = null;
+  try {
+    var storedSession = localStorage.getItem(getAppSessionStorageKey());
+    if (storedSession) {
+      appSessionToken = storedSession;
+    }
+  } catch (e2) {
+    appSessionToken = null;
+  }
 }
 
 /**
@@ -1367,7 +1563,7 @@ function writePersistedAuthValue(key, value) {
 }
 
 /**
- * GAS リクエストへ email と idToken を付与
+ * GAS リクエストへ email と sessionToken（無ければ Google トークン）を付与
  * @param {URLSearchParams} params
  */
 function appendAuthParams(params) {
@@ -1377,6 +1573,11 @@ function appendAuthParams(params) {
   var email = resolveAuthEmail();
   if (email) {
     params.append('email', email);
+  }
+  var sessionToken = getAppSessionToken();
+  if (sessionToken) {
+    params.append('sessionToken', sessionToken);
+    return;
   }
   var token = getGoogleIdToken();
   if (token) {
@@ -1522,6 +1723,10 @@ function isGoogleAuthTokenNearExpiry() {
 function ensureFreshGoogleAuthToken(onDone, onFail) {
   var done = typeof onDone === 'function' ? onDone : function() {};
   var fail = typeof onFail === 'function' ? onFail : done;
+  if (getAppSessionToken()) {
+    done();
+    return;
+  }
   if (hasValidGoogleAuthToken() && !isGoogleAuthTokenNearExpiry()) {
     done();
     return;
@@ -1983,19 +2188,12 @@ function completeGoogleLoginWithEmail(email) {
     // ignore
   }
   userSettingsInitialSyncDone = false;
+  clearAppSessionToken();
   clearErrorMessages();
   clearAppSessionDataAfterAuthFailure();
   syncDailyStudyStatsDisplay();
   hideGoogleLoginDialog();
-  setAppAuthUiLocked(true);
-  // 設定同期〜カテゴリ取得までローディング表示（ログイン画面閉鎖後の空白を防ぐ）
-  showPageLoading();
-  syncUserSettingsWithServer(function(err) {
-    if (err && isGoogleAuthFailureMessage(String(err.message || err))) {
-      return;
-    }
-    loadCategories();
-  });
+  startAuthenticatedBoot();
 }
 
 /**
@@ -2061,7 +2259,7 @@ function cancelGoogleLoginDialogIfAllowed() {
   }
   hideGoogleLoginDialog();
   setGoogleLoginError('');
-  if (!hasValidGoogleAuthToken()) {
+  if (!hasUsableAuth()) {
     clearAppSessionDataAfterAuthFailure();
     hidePageLoading();
   }
@@ -2234,7 +2432,287 @@ function updateBrightnessButtons(activeLevel) {
   });
 }
 
-// カテゴリ一覧を読み込む（最優先）
+/**
+ * 端末全問からカテゴリ一覧と今日の A/B を作る
+ * @param {Array} items
+ * @param {string} todayYmd
+ * @returns {{categories: Array, today_ymd: string, today_item_count: number, today_ans_count: number}}
+ */
+function buildCategoriesAndTodayStatsFromItems(items, todayYmd) {
+  var today = todayYmd || getTodayYmdLocal();
+  var categoryMap = {};
+  var categoriesList = [];
+  var todayItemCount = 0;
+  var todayAnsCount = 0;
+  (items || []).forEach(function(item) {
+    if (!item) return;
+    var categoryNo = item.category_no != null ? String(item.category_no) : '';
+    var categoryName = item.category != null ? String(item.category) : categoryNo;
+    if (!categoryNo) return;
+    var retryNum = Number(item.retry_count);
+    var totalNum = Number(item.total_study_count);
+    var dailyNum = Number(item.daily_study_count);
+    if (isNaN(retryNum) || retryNum < 0) retryNum = 0;
+    if (isNaN(totalNum) || totalNum < 0) totalNum = 0;
+    if (isNaN(dailyNum) || dailyNum < 0) dailyNum = 0;
+    var lastDateYmd = item.last_date ? String(item.last_date) : '';
+    if (lastDateYmd && lastDateYmd.substring(0, 10) === today) {
+      todayItemCount += 1;
+      todayAnsCount += (dailyNum < 1) ? 1 : dailyNum;
+    }
+    if (!categoryMap[categoryNo]) {
+      categoryMap[categoryNo] = {
+        name: categoryName,
+        count: 0,
+        hasEmptyLastDate: false,
+        latestLastDate: '',
+        maxRetryCount: retryNum,
+        minTotalStudyCount: totalNum
+      };
+      categoriesList.push({ no: categoryNo });
+    } else {
+      if (!categoryMap[categoryNo].name && categoryName) {
+        categoryMap[categoryNo].name = categoryName;
+      }
+      if (retryNum > categoryMap[categoryNo].maxRetryCount) {
+        categoryMap[categoryNo].maxRetryCount = retryNum;
+      }
+      if (totalNum < categoryMap[categoryNo].minTotalStudyCount) {
+        categoryMap[categoryNo].minTotalStudyCount = totalNum;
+      }
+    }
+    categoryMap[categoryNo].count += 1;
+    if (!lastDateYmd) {
+      categoryMap[categoryNo].hasEmptyLastDate = true;
+    } else if (!categoryMap[categoryNo].hasEmptyLastDate) {
+      if (!categoryMap[categoryNo].latestLastDate || lastDateYmd > categoryMap[categoryNo].latestLastDate) {
+        categoryMap[categoryNo].latestLastDate = lastDateYmd;
+      }
+    }
+  });
+  var out = [];
+  for (var i = 0; i < categoriesList.length; i++) {
+    var no = categoriesList[i].no;
+    var info = categoryMap[no];
+    out.push({
+      no: no,
+      name: info.name,
+      count: info.count,
+      last_date: info.hasEmptyLastDate ? '' : (info.latestLastDate || ''),
+      max_retry_count: info.maxRetryCount,
+      min_total_study_count: info.minTotalStudyCount
+    });
+  }
+  return {
+    categories: out,
+    today_ymd: today,
+    today_item_count: todayItemCount,
+    today_ans_count: todayAnsCount
+  };
+}
+
+function getMemoryAllStudyItems() {
+  if (memoryAllStudyItems && memoryAllStudyItems.length) {
+    return memoryAllStudyItems;
+  }
+  var bundle = readLocalStudyBundle();
+  memoryAllStudyItems = (bundle && bundle.items) ? bundle.items : [];
+  return memoryAllStudyItems;
+}
+
+function setMemoryAllStudyItems(items) {
+  memoryAllStudyItems = items || [];
+}
+
+function getItemsForCategoryFromLocal(categoryNo) {
+  var key = String(categoryNo);
+  return getMemoryAllStudyItems().filter(function(it) {
+    return it && String(it.category_no) === key;
+  });
+}
+
+function rebuildCategoryDataByNoFromItems(items) {
+  categoryDataByNo = {};
+  (items || []).forEach(function(it) {
+    if (!it || it.category_no == null || it.category_no === '') return;
+    var key = String(it.category_no);
+    if (!categoryDataByNo[key]) {
+      categoryDataByNo[key] = [];
+    }
+    categoryDataByNo[key].push(it);
+  });
+}
+
+function recountTodayStudyStatsFromLocalItems() {
+  var built = buildCategoriesAndTodayStatsFromItems(getMemoryAllStudyItems(), getTodayYmdLocal());
+  applyTodayStudiedItemCount(built.today_item_count, built.today_ymd);
+  applyTodayStudiedAnsCount(built.today_ans_count, built.today_ymd);
+}
+
+/**
+ * 端末全問を画面へ反映（カテゴリ一覧・今日件数・List）
+ * @param {Array} items
+ * @param {{preserveValue?: string, skipLearningArrays?: boolean, isBoot?: boolean}} [options]
+ */
+function applyStudyItemsToApp(items, options) {
+  options = options || {};
+  var skipLearningArrays = !!options.skipLearningArrays;
+  setMemoryAllStudyItems(items || []);
+  rebuildCategoryDataByNoFromItems(items || []);
+  var built = buildCategoriesAndTodayStatsFromItems(items || [], getTodayYmdLocal());
+  categories = built.categories;
+  applyTodayStudiedItemCount(built.today_item_count, built.today_ymd);
+  applyTodayStudiedAnsCount(built.today_ans_count, built.today_ymd);
+  reconcileVisibleCategorySetting();
+
+  var select = document.getElementById('categorySelect');
+  var preserveValue = options.preserveValue != null && options.preserveValue !== ''
+    ? String(options.preserveValue)
+    : ((select && select.value) || (currentCategoryNo != null ? String(currentCategoryNo) : ''));
+  if (select) {
+    var valueToRestore = preserveValue || '';
+    if (valueToRestore && !isCategoryNoVisible(valueToRestore)) {
+      valueToRestore = '';
+      if (!skipLearningArrays && !isDurationQuestionMethod() && !isLastDateQuestionMethod()) {
+        currentCategoryNo = null;
+        currentCategoryData = [];
+        selectedQuestionIndices = [];
+        resetListDisplay();
+      }
+    }
+    select.disabled = false;
+    populateCategorySelectOptions(select, valueToRestore);
+  }
+  var learningSelectContainer = document.getElementById('learningCategorySelectContainer');
+  if (learningSelectContainer && learningSelectContainer.style.display !== 'none' && isLearningCompleted) {
+    var learningSelectEl = document.getElementById('learningCategorySelect');
+    var learningValueToRestore = '';
+    if (learningSelectEl && learningSelectEl.value) {
+      learningValueToRestore = String(learningSelectEl.value);
+    } else if (currentCategoryNo != null && currentCategoryNo !== '') {
+      learningValueToRestore = String(currentCategoryNo);
+    }
+    if (learningValueToRestore && !isCategoryNoVisible(learningValueToRestore)) {
+      learningValueToRestore = (currentCategoryNo != null && isCategoryNoVisible(currentCategoryNo))
+        ? String(currentCategoryNo)
+        : '';
+    }
+    populateCategorySelectOptions(learningSelectEl, learningValueToRestore);
+  }
+
+  if (!skipLearningArrays) {
+    if (isDurationQuestionMethod()) {
+      applyQuestionMethodModeUi();
+      durationModeSortedItems = filterItemsByVisibleCategories((items || []).slice());
+      sortItemsForDurationMode(durationModeSortedItems);
+      if (!isActiveLearningSession()) {
+        durationModePageIndex = 0;
+        applyDurationModePageToList();
+      }
+    } else if (isLastDateQuestionMethod()) {
+      applyQuestionMethodModeUi();
+      lastDateModeAllItems = filterItemsByVisibleCategories((items || []).slice());
+      sortItemsForLastDatePriorityMode(lastDateModeAllItems);
+      if (!isActiveLearningSession()) {
+        regenerateLastDateModeList();
+      }
+    } else if (currentCategoryNo != null && currentCategoryNo !== '') {
+      var catItems = getItemsForCategoryFromLocal(currentCategoryNo);
+      if (isCategoryShuffleQuestionMethod() && currentCategoryData.length > 0) {
+        currentCategoryData = mergeCategoryItemsPreserveOrder(currentCategoryData, catItems);
+        displayList();
+        syncCategoryLastDateFromList();
+        updateListNavButtons();
+        updateStartButtonEnabled();
+      } else {
+        applyLoadedCategoryData(currentCategoryNo, catItems);
+      }
+    }
+  } else if (isLearningCompleted && currentCategoryNo != null && currentCategoryNo !== '') {
+    var listItems = getItemsForCategoryFromLocal(currentCategoryNo);
+    currentCategoryData = mergeCategoryItemsPreserveOrder(currentCategoryData, listItems);
+    displayList();
+    syncCategoryLastDateFromList();
+  }
+
+  hideCategoryLoadingSpinner();
+  updateListNavButtons();
+  if (isLearningCompleted) {
+    if (isCompletionStudyFieldsCollapsed) {
+      maintainCompletionScrollAtTop();
+    } else {
+      maintainCompletionScrollAtBottom();
+    }
+  }
+  syncDailyStudyStatsDisplay();
+}
+
+/**
+ * 裏で世代だけ確認し、違えば全問1本で差し替える
+ * @param {{preserveValue?: string, source?: string}} [options]
+ */
+function maybeRefreshStudyItemsFromGeneration(options) {
+  options = options || {};
+  if (dataGenerationCheckInFlight) {
+    return;
+  }
+  dataGenerationCheckInFlight = true;
+  fetchDataGeneration(function(err, gen) {
+    dataGenerationCheckInFlight = false;
+    if (err) {
+      if (isGoogleAuthFailureMessage(String(err.message || err))) {
+        showError(String(err.message || err));
+      }
+      return;
+    }
+    var local = readLocalStudyBundle();
+    if (hasCompleteLocalStudyData(local) && Number(local.dataGeneration) === Number(gen)) {
+      return;
+    }
+    fetchAllStudyItemsFromServer(function(fetchErr, items, meta) {
+      if (fetchErr) {
+        if (isGoogleAuthFailureMessage(String(fetchErr.message || fetchErr))) {
+          showError(String(fetchErr.message || fetchErr));
+        }
+        return;
+      }
+      var nextGen = (meta && meta.dataGeneration != null) ? meta.dataGeneration : gen;
+      writeLocalStudyBundle(items || [], nextGen);
+      applyStudyItemsToApp(items || [], {
+        preserveValue: options.preserveValue,
+        skipLearningArrays: isActiveLearningSession()
+      });
+    });
+  });
+}
+
+function fetchDataGeneration(onDone) {
+  var params = new URLSearchParams();
+  params.append('action', 'getDataGeneration');
+  appendAuthParams(params);
+  params.append('referer', window.location.origin || '');
+  fetch(buildGasPostUrl(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params
+  })
+    .then(parseGasResponseJson)
+    .then(function(data) {
+      if (!data || !data.success) {
+        throw new Error((data && data.error) || '世代の取得に失敗しました');
+      }
+      if (typeof onDone === 'function') {
+        onDone(null, data.dataGeneration);
+      }
+    })
+    .catch(function(error) {
+      if (typeof onDone === 'function') {
+        onDone(error, null);
+      }
+    });
+}
+
+// カテゴリ一覧を読み込む（端末全問から。通信は世代確認のみ）
 // options.preserveValue: 再取得後に選択を復元する値
 // options.quiet: 読み込み中表示を出さず、裏で更新する（HOME復帰時など）
 function loadCategories(options) {
@@ -2242,197 +2720,33 @@ function loadCategories(options) {
   var preserveValue = options.preserveValue != null && options.preserveValue !== ''
     ? String(options.preserveValue)
     : null;
-  var quiet = !!options.quiet;
-  
-  // userEmailが設定されていない場合は、再度確認
   if (!userEmail) {
-    userEmail = localStorage.getItem('userEmail');
+    try {
+      userEmail = localStorage.getItem('userEmail');
+    } catch (e) {
+      userEmail = userEmail || null;
+    }
   }
-  
   if (!userEmail) {
     showError('メールアドレスが設定されていません。');
     checkUserEmail();
     return;
   }
-  
-  // ローディング表示
-  var select = document.getElementById('categorySelect');
-  var loadingSpinner = document.getElementById('categoryLoadingSpinner');
-  if (!quiet) {
-    if (select) {
-      select.innerHTML = '<option value="">読み込み中...</option>';
-      select.disabled = true;
-      syncCustomCategorySelect(select);
-    }
-    if (loadingSpinner) {
-      loadingSpinner.style.display = 'block';
-    }
-    beginLoadDiag('boot', 'カテゴリ', 0);
-    setPageLoadingProgress(30, 'カテゴリ');
-  }
-  
-  // Google Apps Script経由でデータを取得
-  var params = new URLSearchParams();
-  params.append('action', 'getCategories');
-  appendAuthParams(params);
-  params.append('referer', window.location.origin);
-  params.append('today', getTodayYmdLocal());
-  
-  // GETリクエストで送信
-  var requestUrl = WEB_APP_URL + '?' + params.toString();
-  
-  fetch(requestUrl)
-    .then(function(response) {
-      if (!response.ok) {
-        throw new Error('ネットワークエラー: ' + response.status);
-      }
-      return response.json();
-    })
-    .then(function(data) {
-      try {
-        if (!data.success) {
-          throw new Error(data.error || 'データの取得に失敗しました');
-        }
-        
-        if (!data.categories || data.categories.length === 0) {
-          throw new Error('カテゴリが見つかりません');
-        }
-
-        if (!quiet) {
-          updateLoadDiag('boot', {
-            status: 'OK',
-            bytes: approxJsonBytes(data)
-          });
-        }
-        categories = data.categories;
-        applyTodayStudiedItemCount(data.today_item_count, data.today_ymd || getTodayYmdLocal());
-        applyTodayStudiedAnsCount(data.today_ans_count, data.today_ymd || getTodayYmdLocal());
-        // HOME直後など、表示中Listの学習日が新しい場合はそちらを優先して上書き
-        if (quiet && currentCategoryNo != null && currentCategoryNo !== '' &&
-            currentCategoryData && currentCategoryData.length > 0) {
-          var listLastDate = computeCategoryLastDateFromItems(currentCategoryData);
-          var listStudyCounts = computeCategoryStudyCountsFromItems(currentCategoryData);
-          for (var ci = 0; ci < categories.length; ci++) {
-            if (String(categories[ci].no) === String(currentCategoryNo)) {
-              categories[ci].last_date = listLastDate;
-              categories[ci].count = currentCategoryData.length;
-              categories[ci].max_retry_count = listStudyCounts.max_retry_count;
-              categories[ci].min_total_study_count = listStudyCounts.min_total_study_count;
-              break;
-            }
-          }
-        }
-        reconcileVisibleCategorySetting();
-        if (select) {
-          var valueToRestore = preserveValue || select.value || '';
-          if (valueToRestore && !isCategoryNoVisible(valueToRestore)) {
-            valueToRestore = '';
-            if (!isDurationQuestionMethod() && !isLastDateQuestionMethod()) {
-              currentCategoryNo = null;
-              currentCategoryData = [];
-              selectedQuestionIndices = [];
-              resetListDisplay();
-            }
-          }
-          select.disabled = false;
-          populateCategorySelectOptions(select, valueToRestore);
-        }
-        // 学習完了中なら学習画面のドロップダウンも同期
-        // 中央Next等で既に進んでいる場合は select.value を優先（currentCategoryNo 固定で巻き戻さない）
-        var learningSelectContainer = document.getElementById('learningCategorySelectContainer');
-        if (learningSelectContainer && learningSelectContainer.style.display !== 'none' && isLearningCompleted) {
-          var learningSelectEl = document.getElementById('learningCategorySelect');
-          var learningValueToRestore = '';
-          if (learningSelectEl && learningSelectEl.value) {
-            learningValueToRestore = String(learningSelectEl.value);
-          } else if (currentCategoryNo != null && currentCategoryNo !== '') {
-            learningValueToRestore = String(currentCategoryNo);
-          }
-          if (learningValueToRestore && !isCategoryNoVisible(learningValueToRestore)) {
-            if (currentCategoryNo != null && currentCategoryNo !== '' &&
-                isCategoryNoVisible(currentCategoryNo)) {
-              learningValueToRestore = String(currentCategoryNo);
-            } else {
-              learningValueToRestore = '';
-            }
-          }
-          populateCategorySelectOptions(learningSelectEl, learningValueToRestore);
-        }
-        if (loadingSpinner) {
-          loadingSpinner.style.display = 'none';
-        }
-        // ボタンの状態を更新
-        updateListNavButtons();
-        if (isLearningCompleted) {
-          if (isCompletionStudyFieldsCollapsed) {
-            maintainCompletionScrollAtTop();
-          } else {
-            maintainCompletionScrollAtBottom();
-          }
-        }
-        syncDailyStudyStatsDisplay();
-        // 学習日／解答時間優先は全問取得完了まで全画面ローディングを維持
-        if (isDurationQuestionMethod()) {
-          applyQuestionMethodModeUi();
-          setPageLoadingProgress(50, '全問データ');
-          loadDurationModeData({ resetPage: true, resort: true, forceFetch: true, pageLoading: !quiet });
-          if (quiet) {
-            hidePageLoading();
-            setAppAuthUiLocked(false);
-          }
-        } else if (isLastDateQuestionMethod()) {
-          applyQuestionMethodModeUi();
-          setPageLoadingProgress(50, '全問データ');
-          loadLastDateModeData({ regenerate: true, forceFetch: true, pageLoading: !quiet });
-          if (quiet) {
-            hidePageLoading();
-            setAppAuthUiLocked(false);
-          }
-        } else {
-          hidePageLoading();
-          setAppAuthUiLocked(false);
-        }
-        fetchDriveAudioCoverage();
-        ensureAudioPrefetchInventory();
-      } catch (e) {
-        var loadErr = e && e.message ? e.message : String(e);
-        if (!quiet) {
-          finishLoadDiag('boot', loadDiagStatusFromError(e), { ok: false, keepTickerMs: 0 });
-        }
-        showError('データ読み込みエラー: ' + loadErr);
-        if (select && !isGoogleAuthFailureMessage(loadErr)) {
-          select.disabled = false;
-          syncCustomCategorySelect(select);
-        }
-        if (loadingSpinner) {
-          loadingSpinner.style.display = 'none';
-        }
-        // ページローディングを非表示（エラー時も非表示）
-        hidePageLoading();
-        if (!isGoogleAuthFailureMessage(loadErr) && hasValidGoogleAuthToken()) {
-          setAppAuthUiLocked(false);
-        }
-      }
-    })
-    .catch(function(error) {
-      var accessErr = error && error.message ? error.message : String(error);
-      if (!quiet) {
-        finishLoadDiag('boot', loadDiagStatusFromError(error), { ok: false, keepTickerMs: 0 });
-      }
-      showError('アクセスエラー: ' + accessErr);
-      if (select && !isGoogleAuthFailureMessage(accessErr)) {
-        select.disabled = false;
-        syncCustomCategorySelect(select);
-      }
-      if (loadingSpinner) {
-        loadingSpinner.style.display = 'none';
-      }
-      // ページローディングを非表示（エラー時も非表示）
-      hidePageLoading();
-      if (!isGoogleAuthFailureMessage(accessErr) && hasValidGoogleAuthToken()) {
-        setAppAuthUiLocked(false);
-      }
+  var items = getMemoryAllStudyItems();
+  if (items.length) {
+    applyStudyItemsToApp(items, {
+      preserveValue: preserveValue,
+      skipLearningArrays: isActiveLearningSession() || !!options.quiet
     });
+    hideCategoryLoadingSpinner();
+    if (!options.quiet && hasUsableAuth() && !isPageLoadingVisible()) {
+      setAppAuthUiLocked(false);
+    }
+  }
+  maybeRefreshStudyItemsFromGeneration({
+    preserveValue: preserveValue,
+    source: options.quiet ? 'home' : 'loadCategories'
+  });
 }
 
 /**
@@ -4401,6 +4715,7 @@ function mergeAllStudyItemsWithMemory(items, extraItems, options) {
     return {
       id: it.id,
       category_no: it.category_no != null ? it.category_no : mem.category_no,
+      category: it.category != null ? it.category : mem.category,
       no: it.no,
       q_title: it.q_title,
       question: mem.question != null ? mem.question : it.question,
@@ -4426,10 +4741,10 @@ function getAllStudyItemsLocalStorageKey() {
 }
 
 /**
- * 端末に保存した全問データを読む
- * @returns {Array|null}
+ * 端末に保存した全問＋世代を読む
+ * @returns {{items: Array, dataGeneration: number|null}|null}
  */
-function readLocalAllStudyItems() {
+function readLocalStudyBundle() {
   try {
     var raw = localStorage.getItem(getAllStudyItemsLocalStorageKey());
     if (!raw) {
@@ -4439,24 +4754,101 @@ function readLocalAllStudyItems() {
     if (!parsed || !Array.isArray(parsed.items) || parsed.items.length === 0) {
       return null;
     }
-    return parsed.items;
+    var gen = parsed.dataGeneration;
+    if (gen == null || gen === '') {
+      return { items: parsed.items, dataGeneration: null };
+    }
+    var n = Number(gen);
+    return {
+      items: parsed.items,
+      dataGeneration: (isFinite(n) ? n : null)
+    };
   } catch (e) {
     return null;
   }
 }
 
 /**
- * 全問データを端末へ保存（容量超過時は静かに失敗）
- * @param {Array} items
+ * 全問と世代が揃っているか（省略判定用。容量不足で書けなかった世代なしは不可）
+ * @param {{items?: Array, dataGeneration?: number|null}|null} bundle
+ * @returns {boolean}
  */
-function writeLocalAllStudyItems(items) {
+function hasCompleteLocalStudyData(bundle) {
+  return !!(bundle && bundle.items && bundle.items.length &&
+    bundle.dataGeneration != null && isFinite(Number(bundle.dataGeneration)));
+}
+
+/**
+ * 端末に保存した全問データを読む
+ * @returns {Array|null}
+ */
+function readLocalAllStudyItems() {
+  var bundle = readLocalStudyBundle();
+  return bundle && bundle.items && bundle.items.length ? bundle.items : null;
+}
+
+/**
+ * 全問データを端末へ保存（容量超過時は静かに失敗し、次回は省略しない）
+ * @param {Array} items
+ * @param {number|null} [dataGeneration]
+ */
+function writeLocalStudyBundle(items, dataGeneration) {
+  var gen = dataGeneration;
+  if (gen == null) {
+    var prev = readLocalStudyBundle();
+    gen = prev ? prev.dataGeneration : null;
+  }
   try {
     localStorage.setItem(getAllStudyItemsLocalStorageKey(), JSON.stringify({
       savedAt: Date.now(),
+      dataGeneration: gen,
       items: items || []
     }));
+    lastLocalStudyPersistOk = true;
+    setMemoryAllStudyItems(items || []);
   } catch (e) {
+    lastLocalStudyPersistOk = false;
     console.warn('全問データの端末キャッシュ保存に失敗:', e);
+  }
+}
+
+/**
+ * @param {Array} items
+ */
+function writeLocalAllStudyItems(items) {
+  writeLocalStudyBundle(items);
+}
+
+/**
+ * Ans／編集後：端末全問の当該行と世代を更新する
+ * @param {string} id
+ * @param {Object} fields
+ * @param {number} [dataGeneration]
+ */
+function patchLocalStudyItemFields(id, fields, dataGeneration) {
+  if (!id || !fields) {
+    return;
+  }
+  var items = getMemoryAllStudyItems().slice();
+  var found = false;
+  for (var i = 0; i < items.length; i++) {
+    if (String(items[i].id) === String(id)) {
+      var keys = Object.keys(fields);
+      for (var k = 0; k < keys.length; k++) {
+        items[i][keys[k]] = fields[keys[k]];
+      }
+      found = true;
+      break;
+    }
+  }
+  if (found) {
+    writeLocalStudyBundle(items, dataGeneration);
+    rebuildCategoryDataByNoFromItems(items);
+  } else if (dataGeneration != null) {
+    var bundle = readLocalStudyBundle();
+    if (bundle && bundle.items) {
+      writeLocalStudyBundle(bundle.items, dataGeneration);
+    }
   }
 }
 
@@ -4568,12 +4960,16 @@ function fetchAllStudyItemsFromServer(onDone) {
     appendAuthParams(params);
     params.append('referer', window.location.origin);
 
-    var fetchOptions = {};
+    var fetchOptions = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params
+    };
     if (controller) {
       fetchOptions.signal = controller.signal;
     }
 
-    fetch(WEB_APP_URL + '?' + params.toString(), fetchOptions)
+    fetch(buildGasPostUrl(), fetchOptions)
       .then(function(response) {
         if (!response.ok) {
           throw new Error('ネットワークエラー: ' + response.status);
@@ -4584,13 +4980,16 @@ function fetchAllStudyItemsFromServer(onDone) {
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
+        applyGasAuthPayload(data);
         if (!data || !data.success) {
           throw new Error((data && data.error) || 'データの取得に失敗しました');
         }
         var bytes = approxJsonBytes(data);
         finishLoadDiag('run', 'OK', { ok: true, bytes: bytes, kind: 'all' });
         if (typeof onDone === 'function') {
-          onDone(null, data.items || []);
+          onDone(null, data.items || [], {
+            dataGeneration: data.dataGeneration
+          });
         }
       })
       .catch(function(error) {
@@ -4795,8 +5194,6 @@ function loadLastDateModeData(options) {
   lastDateModeLoadRequestId++;
   var requestId = lastDateModeLoadRequestId;
   var holdOverlay = shouldHoldPageLoadingForAllStudy(options);
-  var localItems = readLocalAllStudyItems();
-  var usedLocal = !!(localItems && localItems.length);
 
   function applyLastDateItems(rawItems, fromServer) {
     var extra = fromServer ? [] : lastDateModeAllItems;
@@ -4811,9 +5208,17 @@ function loadLastDateModeData(options) {
     regenerateLastDateModeList();
   }
 
+  var localItems = getMemoryAllStudyItems();
+  if (localItems.length) {
+    applyLastDateItems(localItems, false);
+    if (holdOverlay) finishPageLoadingAndUnlock();
+    return;
+  }
+
+  var usedLocal = false;
   beginAllStudyItemsNetworkWait(holdOverlay);
 
-  fetchAllStudyItemsFromServer(function(error, items) {
+  fetchAllStudyItemsFromServer(function(error, items, meta) {
     if (requestId !== lastDateModeLoadRequestId) return;
     if (!isLastDateQuestionMethod()) {
       clearAllStudyItemsLoadingUi();
@@ -4821,18 +5226,12 @@ function loadLastDateModeData(options) {
       return;
     }
     if (error) {
-      if (usedLocal) {
-        applyLastDateItems(localItems, false);
-        clearAllStudyItemsLoadingUi();
-        console.warn('全問データ更新失敗（端末キャッシュで継続）:', error);
-      } else {
-        clearAllStudyItemsLoadingUi('データの取得に失敗しました。再読み込みしてください。');
-        showError('アクセスエラー: ' + error.toString());
-      }
+      clearAllStudyItemsLoadingUi('データの取得に失敗しました。再読み込みしてください。');
+      showError('アクセスエラー: ' + error.toString());
       if (holdOverlay) finishPageLoadingAndUnlock();
       return;
     }
-    writeLocalAllStudyItems(items || []);
+    writeLocalStudyBundle(items || [], meta && meta.dataGeneration);
     setTimeout(function() {
       if (requestId !== lastDateModeLoadRequestId) return;
       if (!isLastDateQuestionMethod()) {
@@ -5058,8 +5457,6 @@ function loadDurationModeData(options) {
   durationModeLoadRequestId++;
   var requestId = durationModeLoadRequestId;
   var holdOverlay = shouldHoldPageLoadingForAllStudy(options);
-  var localItems = readLocalAllStudyItems();
-  var usedLocal = !!(localItems && localItems.length);
 
   function applyDurationItems(rawItems, fromServer) {
     var extra = fromServer ? [] : durationModeSortedItems;
@@ -5075,9 +5472,16 @@ function loadDurationModeData(options) {
     applyDurationModePageToList();
   }
 
+  var localItems = getMemoryAllStudyItems();
+  if (localItems.length) {
+    applyDurationItems(localItems, false);
+    if (holdOverlay) finishPageLoadingAndUnlock();
+    return;
+  }
+
   beginAllStudyItemsNetworkWait(holdOverlay);
 
-  fetchAllStudyItemsFromServer(function(error, items) {
+  fetchAllStudyItemsFromServer(function(error, items, meta) {
     if (requestId !== durationModeLoadRequestId) return;
     if (!isDurationQuestionMethod()) {
       clearAllStudyItemsLoadingUi();
@@ -5085,18 +5489,12 @@ function loadDurationModeData(options) {
       return;
     }
     if (error) {
-      if (usedLocal) {
-        applyDurationItems(localItems, false);
-        clearAllStudyItemsLoadingUi();
-        console.warn('全問データ更新失敗（端末キャッシュで継続）:', error);
-      } else {
-        clearAllStudyItemsLoadingUi('データの取得に失敗しました。再読み込みしてください。');
-        showError('アクセスエラー: ' + error.toString());
-      }
+      clearAllStudyItemsLoadingUi('データの取得に失敗しました。再読み込みしてください。');
+      showError('アクセスエラー: ' + error.toString());
       if (holdOverlay) finishPageLoadingAndUnlock();
       return;
     }
-    writeLocalAllStudyItems(items || []);
+    writeLocalStudyBundle(items || [], meta && meta.dataGeneration);
     setTimeout(function() {
       if (requestId !== durationModeLoadRequestId) return;
       if (!isDurationQuestionMethod()) {
@@ -5694,106 +6092,32 @@ function compressImageToDataURL(dataUrl, maxSizeKB, callback) {
 
 // カテゴリデータを読み込む
 function loadCategoryData(categoryNo) {
-  // userEmailが設定されていない場合は、再度確認
   if (!userEmail) {
-    userEmail = localStorage.getItem('userEmail');
+    try {
+      userEmail = localStorage.getItem('userEmail');
+    } catch (e) {
+      userEmail = userEmail || null;
+    }
   }
-  
   if (!userEmail) {
     showError('メールアドレスが設定されていません。');
     checkUserEmail();
     return;
   }
-  
-  var categoryKey = String(categoryNo);
-  var loadingSpinner = document.getElementById('categoryLoadingSpinner');
-  var prevButton = document.getElementById('listPrevButton');
-  var nextButton = document.getElementById('listNextButton');
-  var startButton = document.getElementById('startButton');
+  var items = getItemsForCategoryFromLocal(categoryNo);
   var listContainer = document.getElementById('listContainer');
-  
-  // セッション内キャッシュがあれば即表示（体感待ちを短縮）
-  var localCached = categoryDataByNo[categoryKey];
-  if (localCached && localCached.length > 0) {
-    applyLoadedCategoryData(categoryNo, localCached);
-    if (loadingSpinner) loadingSpinner.style.display = 'none';
+  if (items && items.length) {
+    categoryDataByNo[String(categoryNo)] = items;
+    applyLoadedCategoryData(categoryNo, items);
   } else {
-    if (loadingSpinner) loadingSpinner.style.display = 'block';
-    if (prevButton) prevButton.disabled = true;
-    if (nextButton) nextButton.disabled = true;
-    if (startButton) startButton.disabled = true;
-    if (listContainer) listContainer.style.pointerEvents = 'none';
+    applyLoadedCategoryData(categoryNo, []);
   }
-  
-  // Google Apps Script経由でデータを取得（裏で最新化）
-  var params = new URLSearchParams();
-  params.append('action', 'getCategoryData');
-  params.append('categoryNo', categoryNo);
-  appendAuthParams(params);
-  params.append('referer', window.location.origin);
-  
-  var requestUrl = WEB_APP_URL + '?' + params.toString();
-  
-  fetch(requestUrl)
-    .then(function(response) {
-      if (!response.ok) {
-        throw new Error('ネットワークエラー: ' + response.status);
-      }
-      return response.json();
-    })
-    .then(function(data) {
-      try {
-        if (!data.success) {
-          throw new Error(data.error || 'データの取得に失敗しました');
-        }
-        
-        if (!data.items) {
-          throw new Error('データがありません');
-        }
-        
-        // 切替が速いと古い応答が後着するため、現在選択中のカテゴリのみ反映
-        var selectEl = document.getElementById('categorySelect');
-        if (selectEl && String(selectEl.value) !== categoryKey) {
-          hideCategoryLoadingSpinner();
-          updateStartButtonEnabled();
-          if (listContainer) listContainer.style.pointerEvents = 'auto';
-          updateListNavButtons();
-          return;
-        }
-        
-        categoryDataByNo[categoryKey] = data.items;
-        if (localCached && isCategoryShuffleQuestionMethod() && String(currentCategoryNo) === categoryKey && currentCategoryData.length > 0) {
-          // 初回表示後の裏取得：並びは維持し、オブジェクト参照だけ最新化
-          currentCategoryData = mergeCategoryItemsPreserveOrder(currentCategoryData, data.items);
-          displayList();
-          syncCategoryLastDateFromList();
-          updateListNavButtons();
-          updateStartButtonEnabled();
-          if (listContainer) listContainer.style.pointerEvents = 'auto';
-        } else {
-          applyLoadedCategoryData(categoryNo, data.items);
-        }
-        
-        hideCategoryLoadingSpinner();
-      } catch (e) {
-        if (!localCached) {
-          showError('データ読み込みエラー: ' + e.toString());
-        }
-        hideCategoryLoadingSpinner();
-        updateListNavButtons();
-        updateStartButtonEnabled();
-        if (listContainer) listContainer.style.pointerEvents = 'auto';
-      }
-    })
-    .catch(function(error) {
-      if (!localCached) {
-        showError('アクセスエラー: ' + error.toString());
-      }
-      hideCategoryLoadingSpinner();
-      updateListNavButtons();
-      updateStartButtonEnabled();
-      if (listContainer) listContainer.style.pointerEvents = 'auto';
-    });
+  hideCategoryLoadingSpinner();
+  if (listContainer) listContainer.style.pointerEvents = 'auto';
+  maybeRefreshStudyItemsFromGeneration({
+    preserveValue: String(categoryNo),
+    source: 'categorySwitch'
+  });
 }
 
 /**
@@ -6548,6 +6872,8 @@ function isGoogleAuthFailureMessage(message) {
   var msg = String(message || '');
   return msg.indexOf('idToken') >= 0 ||
     msg.indexOf('accessToken') >= 0 ||
+    msg.indexOf('sessionToken') >= 0 ||
+    msg.indexOf('Session expired') >= 0 ||
     msg.indexOf('Google token') >= 0 ||
     msg.indexOf('sign in with Google') >= 0 ||
     msg.indexOf('sign in again') >= 0 ||
@@ -6566,6 +6892,7 @@ function enforceGoogleAuthFailureLock(rawMessage) {
   googleAuthLockInProgress = true;
   try {
     clearAllGoogleAuthTokens();
+    clearAppSessionToken();
     clearAppSessionDataAfterAuthFailure();
     hidePageLoading();
     // 未許可アカウントの自動再ログインを防ぐ
@@ -6635,6 +6962,7 @@ function clearAppSessionDataAfterAuthFailure() {
   isCompletionStudyFieldsCollapsed = false;
   durationModeSortedItems = [];
   lastDateModeAllItems = [];
+  memoryAllStudyItems = null;
   durationModeSessionItems = [];
   lastDateModeSessionItems = [];
   durationModePageIndex = 0;
@@ -6994,16 +7322,7 @@ function updateDailyStudyStatsDisplay() {
 function syncDailyStudyStatsDisplay() {
   var today = getTodayYmdLocal();
   if (todayStudiedCountDate && todayStudiedCountDate !== today) {
-    todayStudiedItemCount = 0;
-    todayStudiedAnsCount = 0;
-    todayStudiedCountDate = today;
-    updateDailyStudyStatsDisplay();
-    if (userEmail) {
-      loadCategories({
-        quiet: true,
-        preserveValue: currentCategoryNo
-      });
-    }
+    recountTodayStudyStatsFromLocalItems();
     return;
   }
   updateDailyStudyStatsDisplay();
@@ -7904,12 +8223,7 @@ function runGasSheetUpdateJob(job, attemptIndex) {
     },
     body: params
   })
-  .then(function(response) {
-    if (!response.ok) {
-      throw new Error('ネットワークエラー: ' + response.status);
-    }
-    return response.json();
-  })
+  .then(parseGasResponseJson)
   .then(function(data) {
     if (!data.success) {
       throw new Error(data.error || 'Unknown error');
@@ -7921,6 +8235,13 @@ function runGasSheetUpdateJob(job, attemptIndex) {
     });
     sheetUpdateOkCount += 1;
     refreshLoadDiagUi();
+    var fields = job.fields || {};
+    if (job.field) {
+      fields[job.field] = job.value;
+    }
+    if (job.id && fields && Object.keys(fields).length) {
+      patchLocalStudyItemFields(job.id, fields, data.dataGeneration);
+    }
     if (typeof job.onSuccess === 'function') {
       job.onSuccess(data);
     }
@@ -10070,6 +10391,9 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
         done();
         return;
       }
+      if (data) {
+        applyGasAuthPayload(data);
+      }
       if (data && data.success && data.found && data.audioContent) {
         hidePlayButtonLoading(fieldType);
         var cachedData = saveAudioToCache(text, data.audioContent, voiceGender || AUDIO_VOICE_DEFAULT, speed || AUDIO_SPEED_FIXED);
@@ -10466,7 +10790,7 @@ function scheduleAudioPrefetch() {
   if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
     return;
   }
-  if (!userEmail || !hasValidGoogleAuthToken()) {
+  if (!userEmail || !hasUsableAuth()) {
     return;
   }
   if (gasAudioPrefetchQueue.length > 0 || isAudioPrefetchJobRunning) {
@@ -10501,17 +10825,13 @@ function scheduleAudioPrefetch() {
 }
 
 function ensureAudioPrefetchInventory() {
-  if (
-    (durationModeSortedItems && durationModeSortedItems.length) ||
-    (lastDateModeAllItems && lastDateModeAllItems.length) ||
-    readLocalAllStudyItems()
-  ) {
+  if (getMemoryAllStudyItems().length) {
     scheduleAudioPrefetch();
     return;
   }
-  fetchAllStudyItemsFromServer(function(err, items) {
+  fetchAllStudyItemsFromServer(function(err, items, meta) {
     if (items && items.length) {
-      writeLocalAllStudyItems(items);
+      writeLocalStudyBundle(items, meta && meta.dataGeneration);
     }
     scheduleAudioPrefetch();
   });
@@ -10628,7 +10948,7 @@ function prefetchOneDriveAudio(job, signal, generation, done) {
 }
 
 function fetchDriveAudioCoverage() {
-  if (!userEmail || !hasValidGoogleAuthToken()) {
+  if (!userEmail || !hasUsableAuth()) {
     return;
   }
   var nos = getSavedVisibleCategoryNos();
@@ -10653,12 +10973,7 @@ function fetchDriveAudioCoverage() {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: params
   })
-    .then(function(response) {
-      if (!response.ok) {
-        throw new Error('coverage ' + response.status);
-      }
-      return response.json();
-    })
+    .then(parseGasResponseJson)
     .then(function(data) {
       if (data && data.success) {
         driveAudioTargetCount = Number(data.target) || 0;
@@ -11410,68 +11725,28 @@ function loadCategoryDataForCompletionBrowseInner(categoryNo) {
   setCompletionListInteractionEnabled(false);
   refreshAdvanceNavControls();
   
-  var localCached = categoryDataByNo[categoryKey];
+  var localCached = getItemsForCategoryFromLocal(categoryNo);
   if (localCached && localCached.length > 0) {
-    applyLoadedCompletionCategoryData(categoryNo, localCached, true);
-  } else if (listMessage) {
-    // Listは表示したまま（高さを維持しスクロール位置を固定）
-    listMessage.style.display = 'block';
-    listMessage.textContent = '読み込み中...';
-    pinCompletionListMinHeightForLoading(listContainer);
-  }
-  
-  var params = new URLSearchParams();
-  params.append('action', 'getCategoryData');
-  params.append('categoryNo', categoryNo);
-  appendAuthParams(params);
-  params.append('referer', window.location.origin);
-  
-  fetch(WEB_APP_URL + '?' + params.toString())
-    .then(function(response) {
-      if (!response.ok) {
-        throw new Error('ネットワークエラー: ' + response.status);
-      }
-      return response.json();
-    })
-    .then(function(data) {
-      if (requestId !== completionBrowseRequestId) {
-        return;
-      }
-      if (!data.success) {
-        throw new Error(data.error || 'データの取得に失敗しました');
-      }
-      if (!data.items || data.items.length === 0) {
-        throw new Error('データがありません');
-      }
-      // 最新リクエストなのに select だけずれている場合（完了直後の裏 loadCategories 等）は
-      // 黙って破棄せず、取得対象へ戻して反映する（古いリクエストは requestId で既に除外）
-      if (learningSelect && String(learningSelect.value) !== categoryKey) {
-        learningSelect.value = categoryNo;
-        syncCustomCategorySelect(learningSelect);
-      }
-      categoryDataByNo[categoryKey] = data.items;
-      if (localCached && isCategoryShuffleQuestionMethod() && String(currentCategoryNo) === categoryKey && currentCategoryData.length > 0) {
-        currentCategoryData = mergeCategoryItemsPreserveOrder(currentCategoryData, data.items);
-        displayList();
-        syncCategoryLastDateFromList();
-        finishCompletionCategoryBrowse();
-      } else {
-        applyLoadedCompletionCategoryData(categoryNo, data.items, false);
-      }
-    })
-    .catch(function(error) {
-      if (requestId !== completionBrowseRequestId) {
-        return;
-      }
-      if (!localCached) {
-        showError('アクセスエラー: ' + error.toString());
-        if (listMessage) {
-          listMessage.style.display = 'block';
-          listMessage.textContent = 'データの取得に失敗しました。';
-        }
-      }
+    categoryDataByNo[categoryKey] = localCached;
+    if (isCategoryShuffleQuestionMethod() && String(currentCategoryNo) === categoryKey && currentCategoryData.length > 0) {
+      currentCategoryData = mergeCategoryItemsPreserveOrder(currentCategoryData, localCached);
+      displayList();
+      syncCategoryLastDateFromList();
       finishCompletionCategoryBrowse();
-    });
+    } else {
+      applyLoadedCompletionCategoryData(categoryNo, localCached, false);
+    }
+  } else {
+    if (listMessage) {
+      listMessage.style.display = 'block';
+      listMessage.textContent = '表示できる問題がありません。';
+    }
+    finishCompletionCategoryBrowse();
+  }
+  maybeRefreshStudyItemsFromGeneration({
+    preserveValue: categoryKey,
+    source: 'completionBrowse'
+  });
 }
 
 /**
@@ -11610,48 +11885,28 @@ function loadCategoryDataAndStartLearning(categoryNo, forceAllQuestions) {
     syncCustomCategorySelect(homeSelect);
   }
   
-  var params = new URLSearchParams();
-  params.append('action', 'getCategoryData');
-  params.append('categoryNo', categoryNo);
-  appendAuthParams(params);
-  params.append('referer', window.location.origin);
-  
-  fetch(WEB_APP_URL + '?' + params.toString())
-    .then(function(response) {
-      if (!response.ok) {
-        throw new Error('ネットワークエラー: ' + response.status);
-      }
-      return response.json();
-    })
-    .then(function(data) {
-      if (!data.success) {
-        throw new Error(data.error || 'データの取得に失敗しました');
-      }
-      if (!data.items || data.items.length === 0) {
-        throw new Error('データがありません');
-      }
-      
-      categoryDataByNo[String(categoryNo)] = data.items;
-      if (isCategoryShuffleQuestionMethod()) {
-        currentCategoryData = shuffleArray(data.items);
-      } else {
-        currentCategoryData = data.items;
-      }
-      currentCategoryNo = categoryNo;
-      if (forceAllQuestions) {
-        selectedQuestionIndices = [];
-      }
-      hideCompletionListSection();
-      justCompletedCategoryNo = null;
-      isDurationCompletionSessionView = false;
-      isLastDateCompletionSessionView = false;
-      isCategoryCompletionSessionView = false;
-      startLearning();
-    })
-    .catch(function(error) {
-      showError('アクセスエラー: ' + error.toString());
-      finishCompletionCategoryBrowse();
-    });
+  var items = getItemsForCategoryFromLocal(categoryNo);
+  if (!items.length) {
+    showError('データがありません');
+    finishCompletionCategoryBrowse();
+    return;
+  }
+  categoryDataByNo[String(categoryNo)] = items;
+  if (isCategoryShuffleQuestionMethod()) {
+    currentCategoryData = shuffleArray(items);
+  } else {
+    currentCategoryData = items;
+  }
+  currentCategoryNo = categoryNo;
+  if (forceAllQuestions) {
+    selectedQuestionIndices = [];
+  }
+  hideCompletionListSection();
+  justCompletedCategoryNo = null;
+  isDurationCompletionSessionView = false;
+  isLastDateCompletionSessionView = false;
+  isCategoryCompletionSessionView = false;
+  startLearning();
 }
 
 // プラスボタンの状態を更新
