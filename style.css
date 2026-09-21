@@ -2841,6 +2841,12 @@ body:has(#screen2.active) .login-button {
 }
 
 /* 学習画面List：行選択UIではないのでホバー／指差しを出さない（TOPは従来どおり） */
+#screen2 .list-table {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
 #screen2 .list-table tbody tr {
   cursor: default;
 }
