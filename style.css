@@ -2707,6 +2707,14 @@ body:has(#screen2.active) .login-button {
   border-radius: 6px;
 }
 
+/* 学習画面の出題／解答表示：タップ進行と誤選択を分ける。編集中の textarea は対象外 */
+#screen2 .question-text,
+#screen2 .answer-text {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
 #screen2 .learning-meta {
   font-size: 12px;
   margin: 0 0 8px;
