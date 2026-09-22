@@ -2232,6 +2232,20 @@ body:has(#screen2.active) .login-button {
   display: none;
 }
 
+/* 学習中：OS文字選択は鉛筆の編集欄のみ（誤選択で「Googleで検索」がナビを隠さない） */
+body:has(#screen2.active) {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+body:has(#screen2.active) .field-text-edit,
+body:has(#screen2.active) .answer-text-edit {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
 /* Googleアカウントログインオーバーレイ */
 .google-login-overlay {
   position: fixed;

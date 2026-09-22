@@ -153,6 +153,13 @@ var ALL_STUDY_ITEMS_FETCH_TIMEOUT_MS = 60000; // 全問取得1試行あたりの
 var ALL_STUDY_ITEMS_RETRY_BASE_DELAY_MS = 800; // 全問取得リトライ間隔
 var ANS_SHEET_PERSIST_MAX_DEFER_MS = 8000; // 解答音声優先時、シート更新開始の上限待ち
 var AUDIO_PLAY_CANPLAY_TIMEOUT_MS = 300; // Blob再生: canplay待ちの上限（超えたら再生開始）
+var AUDIO_PLAY_START_TIMEOUT_MS = 3000; // play() が成功しないときの打ち切り
+var AUDIO_PLAY_END_GRACE_MS = 2000; // 長さ既知の再生：残り＋この余裕で操作復帰
+var AUDIO_PLAY_UNKNOWN_DURATION_MS = 15000; // 長さ不明／再生開始不能時の操作復帰
+var AUDIO_PAUSE_STUCK_MS = 1000; // pause のまま終わらないときの操作復帰
+var audioBusyWatchdogTimer = null;
+var audioPauseStuckTimer = null;
+var audioPlayStartTimer = null;
 var USER_SETTINGS_SYNC_MAX_ATTEMPTS = 3; // 起動時設定同期の最大試行（初回含む）
 var USER_SETTINGS_SYNC_RETRY_DELAY_MS = 800; // 設定同期リトライ間隔
 
@@ -582,6 +589,121 @@ function parseGasResponseJson(response) {
 }
 
 /**
+ * セッション無効時に Google トークンで再送してよいか
+ * @param {*} message
+ * @returns {boolean}
+ */
+function isRecoverableSessionAuthFailure_(message) {
+  var msg = String(message || '');
+  if (!msg) {
+    return false;
+  }
+  if (msg.indexOf('Email not authorized') >= 0) {
+    return false;
+  }
+  if (msg.indexOf('Email does not match Google') >= 0) {
+    return false;
+  }
+  return msg.indexOf('Session expired') >= 0 ||
+    msg.indexOf('idToken or accessToken is required') >= 0 ||
+    msg.indexOf('Invalid or expired Google token') >= 0 ||
+    msg.indexOf('sign in with Google') >= 0 ||
+    msg.indexOf('sign in again') >= 0;
+}
+
+/**
+ * GAS POST の認証パラメータを現状の session／Google に差し替える
+ * @param {URLSearchParams} params
+ */
+function rebindGasAuthParams_(params) {
+  if (!params) {
+    return;
+  }
+  params.delete('email');
+  params.delete('sessionToken');
+  params.delete('idToken');
+  params.delete('accessToken');
+  appendAuthParams(params);
+}
+
+/**
+ * GAS POST。セッション無効なら学習を捨てず Google トークンで1回だけ再送する
+ * @param {URLSearchParams} params
+ * @param {{ signal?: AbortSignal, readJson?: function(Response): Promise<*>, httpErrorPrefix?: string }} [options]
+ * @returns {Promise<*>}
+ */
+function postGasJson(params, options) {
+  options = options || {};
+  var hadSession = !!getAppSessionToken();
+  var retried = false;
+
+  function send(bodyParams) {
+    var fetchOptions = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: bodyParams
+    };
+    if (options.signal) {
+      fetchOptions.signal = options.signal;
+    }
+    return fetch(buildGasPostUrl(), fetchOptions).then(function(response) {
+      if (!response.ok) {
+        throw new Error((options.httpErrorPrefix || 'ネットワークエラー: ') + response.status);
+      }
+      if (options.readJson) {
+        return options.readJson(response);
+      }
+      return response.json();
+    }).then(function(data) {
+      applyGasAuthPayload(data);
+      return data;
+    });
+  }
+
+  function retryWithGoogleAuth_(errorOrData) {
+    var msg = '';
+    if (errorOrData && typeof errorOrData === 'object' && errorOrData.error) {
+      msg = String(errorOrData.error);
+    } else if (errorOrData) {
+      msg = String(errorOrData.message || errorOrData);
+    }
+    if (retried || !hadSession || !isRecoverableSessionAuthFailure_(msg)) {
+      return null;
+    }
+    retried = true;
+    clearAppSessionToken();
+    return new Promise(function(resolve, reject) {
+      ensureFreshGoogleAuthToken(function() {
+        rebindGasAuthParams_(params);
+        send(params).then(resolve, reject);
+      }, function() {
+        if (errorOrData instanceof Error) {
+          reject(errorOrData);
+          return;
+        }
+        reject(new Error(msg || 'Access denied: Session expired. Please sign in with Google.'));
+      });
+    });
+  }
+
+  return send(params).then(function(data) {
+    if (data && data.success === false) {
+      var retryOk = retryWithGoogleAuth_(data);
+      if (retryOk) {
+        return retryOk;
+      }
+    }
+    return data;
+  }).catch(function(error) {
+    var retryErr = retryWithGoogleAuth_(error);
+    if (retryErr) {
+      return retryErr;
+    }
+    throw error;
+  });
+}
+
+/**
  * @returns {string}
  */
 function getAppSessionStorageKey(email) {
@@ -924,17 +1046,7 @@ function pushUserSettingsToServer(onDone) {
     }
   }
 
-  fetch(buildGasPostUrl(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params
-  })
-  .then(function(response) {
-    if (!response.ok) {
-      throw new Error('ネットワークエラー: ' + response.status);
-    }
-    return response.json();
-  })
+  postGasJson(params)
   .then(function(data) {
     if (!data || !data.success) {
       throw new Error((data && data.error) || '設定の同期に失敗しました');
@@ -943,7 +1055,6 @@ function pushUserSettingsToServer(onDone) {
     if (data.settings && data.settings.background) {
       setStoredSettingsBgDriveFileId(data.settings.background.driveFileId || '');
     }
-    applyGasAuthPayload(data);
     if (typeof onDone === 'function') onDone(null, data);
   })
   .catch(function(error) {
@@ -1010,12 +1121,7 @@ function syncUserSettingsWithServer(onDone) {
     params.append('referer', window.location.origin || '');
     params.append('knownDriveFileId', getStoredSettingsBgDriveFileId());
 
-    fetch(buildGasPostUrl(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params
-    })
-    .then(parseGasResponseJson)
+    postGasJson(params)
     .then(function(data) {
       if (!data || !data.success) {
         throw new Error((data && data.error) || '設定の取得に失敗しました');
@@ -2691,12 +2797,7 @@ function fetchDataGeneration(onDone) {
   params.append('action', 'getDataGeneration');
   appendAuthParams(params);
   params.append('referer', window.location.origin || '');
-  fetch(buildGasPostUrl(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params
-  })
-    .then(parseGasResponseJson)
+  postGasJson(params)
     .then(function(data) {
       if (!data || !data.success) {
         throw new Error((data && data.error) || '世代の取得に失敗しました');
@@ -4960,27 +5061,16 @@ function fetchAllStudyItemsFromServer(onDone) {
     appendAuthParams(params);
     params.append('referer', window.location.origin);
 
-    var fetchOptions = {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params
-    };
-    if (controller) {
-      fetchOptions.signal = controller.signal;
-    }
-
-    fetch(buildGasPostUrl(), fetchOptions)
-      .then(function(response) {
-        if (!response.ok) {
-          throw new Error('ネットワークエラー: ' + response.status);
-        }
+    postGasJson(params, {
+      signal: controller ? controller.signal : null,
+      readJson: function(response) {
         return parseJsonResponseWithProgress(response, updateAllStudyFetchProgress);
-      })
+      }
+    })
       .then(function(data) {
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
-        applyGasAuthPayload(data);
         if (!data || !data.success) {
           throw new Error((data && data.error) || 'データの取得に失敗しました');
         }
@@ -8216,14 +8306,7 @@ function runGasSheetUpdateJob(job, attemptIndex) {
     params.append('value', String(job.value));
   }
 
-  fetch(buildGasPostUrl(), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: params
-  })
-  .then(parseGasResponseJson)
+  postGasJson(params)
   .then(function(data) {
     if (!data.success) {
       throw new Error(data.error || 'Unknown error');
@@ -9061,6 +9144,77 @@ function revokeAudioObjectUrl(audio) {
   audio._objectUrl = null;
 }
 
+function clearAudioBusyWatchdogs_() {
+  if (audioBusyWatchdogTimer) {
+    clearTimeout(audioBusyWatchdogTimer);
+    audioBusyWatchdogTimer = null;
+  }
+  if (audioPauseStuckTimer) {
+    clearTimeout(audioPauseStuckTimer);
+    audioPauseStuckTimer = null;
+  }
+  if (audioPlayStartTimer) {
+    clearTimeout(audioPlayStartTimer);
+    audioPlayStartTimer = null;
+  }
+}
+
+/**
+ * 再生残り時間から操作復帰の期限を決める
+ * @param {HTMLAudioElement|null} audio
+ * @returns {number}
+ */
+function getAudioBusyDeadlineMs_(audio) {
+  var d = audio && audio.duration;
+  if (typeof d === 'number' && isFinite(d) && d > 0) {
+    var remain = d - (audio.currentTime || 0);
+    if (remain < 0) {
+      remain = 0;
+    }
+    return Math.ceil(remain * 1000) + AUDIO_PLAY_END_GRACE_MS;
+  }
+  return AUDIO_PLAY_UNKNOWN_DURATION_MS;
+}
+
+function armAudioBusyWatchdog_(audio) {
+  if (audioBusyWatchdogTimer) {
+    clearTimeout(audioBusyWatchdogTimer);
+    audioBusyWatchdogTimer = null;
+  }
+  var ms = getAudioBusyDeadlineMs_(audio);
+  audioBusyWatchdogTimer = setTimeout(function() {
+    audioBusyWatchdogTimer = null;
+    forceReleaseFieldAudioBusy_('fail');
+  }, ms);
+}
+
+/**
+ * 音声 busy を強制解除（エラーバナーは出さない）
+ * @param {string} [reason]
+ */
+function forceReleaseFieldAudioBusy_(reason) {
+  var field = activePlayField;
+  clearAudioBusyWatchdogs_();
+  if (field == null && !currentAudio) {
+    return;
+  }
+  activePlayField = null;
+  releaseCurrentAudioElement();
+  if (field) {
+    hidePlayButtonLoading(field);
+  } else {
+    hidePlayButtonLoading('question');
+    hidePlayButtonLoading('answer');
+  }
+  updateFieldPlayButtons();
+  if (field === 'question') {
+    onQuestionAudioSettled(reason || 'fail');
+  }
+  audioPrefetchPlayBlocked = false;
+  scheduleAudioPrefetch();
+  processGasAudioFetchQueue();
+}
+
 /**
  * 現在の Audio 要素を停止し、Object URL／src を解放する
  */
@@ -9375,6 +9529,7 @@ function isAbortError(error) {
 function stopCurrentAudioPlayback(options) {
   options = options || {};
   var prevField = activePlayField;
+  clearAudioBusyWatchdogs_();
   releaseCurrentAudioElement();
   if (!options.preserveBusy) {
     activePlayField = null;
@@ -9485,11 +9640,7 @@ function saveDriveAudioAsync(item, sheetField, voiceGender, speed, audioContent)
     appendAuthParams(params);
     params.append('referer', window.location.origin);
 
-    fetch(buildGasPostUrl(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params
-    }).catch(function() {
+    postGasJson(params).catch(function() {
       // Drive失敗は学習を止めない
     });
   } catch (e) {
@@ -9519,11 +9670,7 @@ function deleteDriveAudioAsync(item, sheetField) {
     appendAuthParams(params);
     params.append('referer', window.location.origin);
 
-    fetch(buildGasPostUrl(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params
-    }).catch(function() {
+    postGasJson(params).catch(function() {
       // ignore
     });
   } catch (e) {
@@ -9672,6 +9819,13 @@ function enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, 
     }, function() {
       done();
       settleAudioNetwork();
+      if (activePlayField === fieldType) {
+        hidePlayButtonLoading(fieldType);
+        clearAudioBusyWatchdogs_();
+        activePlayField = null;
+        updateFieldPlayButtons();
+        if (fieldType === 'question') onQuestionAudioSettled('fail');
+      }
     });
   });
 }
@@ -10231,6 +10385,11 @@ function clearOldCacheEntries() {
 function playAudioFromCache(audioData, fieldType, source) {
   if (!audioData || !audioData.audioContent) {
     if (fieldType === 'question') onQuestionAudioSettled('fail');
+    if (activePlayField === fieldType) {
+      clearAudioBusyWatchdogs_();
+      activePlayField = null;
+      updateFieldPlayButtons();
+    }
     return;
   }
 
@@ -10239,52 +10398,112 @@ function playAudioFromCache(audioData, fieldType, source) {
   }
   
   try {
+    clearAudioBusyWatchdogs_();
     releaseCurrentAudioElement();
     
     var audio = createMp3AudioFromAudioData(audioData);
     currentAudio = audio;
     activePlayField = fieldType || null;
     updateFieldPlayButtons();
+
+    var playbackStarted = false;
+
+    function isThisAudio_() {
+      return currentAudio === audio;
+    }
+
+    function settleThisPlay_(reason) {
+      clearAudioBusyWatchdogs_();
+      if (!isThisAudio_() && activePlayField !== fieldType) {
+        return;
+      }
+      if (isThisAudio_()) {
+        activePlayField = null;
+        releaseCurrentAudioElement();
+      } else if (activePlayField === fieldType) {
+        activePlayField = null;
+      }
+      updateFieldPlayButtons();
+      if (fieldType === 'question') {
+        onQuestionAudioSettled(reason);
+      }
+      if (reason === 'ended' || reason === 'fail') {
+        audioPrefetchPlayBlocked = false;
+        scheduleAudioPrefetch();
+        processGasAudioFetchQueue();
+      }
+    }
     
     audio.addEventListener('ended', function() {
-      if (currentAudio !== audio) return;
-      activePlayField = null;
-      releaseCurrentAudioElement();
-      updateFieldPlayButtons();
-      if (fieldType === 'question') onQuestionAudioSettled('ended');
-      audioPrefetchPlayBlocked = false;
-      scheduleAudioPrefetch();
-      processGasAudioFetchQueue();
+      if (!isThisAudio_()) return;
+      settleThisPlay_('ended');
     });
     
     audio.addEventListener('error', function() {
-      if (currentAudio !== audio) return;
-      activePlayField = null;
-      releaseCurrentAudioElement();
-      updateFieldPlayButtons();
-      if (fieldType === 'question') onQuestionAudioSettled('fail');
+      if (!isThisAudio_()) return;
+      settleThisPlay_('fail');
     });
+
+    audio.addEventListener('loadedmetadata', function() {
+      if (!isThisAudio_()) return;
+      if (audioBusyWatchdogTimer) {
+        armAudioBusyWatchdog_(audio);
+      }
+    });
+
+    audio.addEventListener('playing', function() {
+      if (!isThisAudio_()) return;
+      playbackStarted = true;
+      if (audioPauseStuckTimer) {
+        clearTimeout(audioPauseStuckTimer);
+        audioPauseStuckTimer = null;
+      }
+      if (audioPlayStartTimer) {
+        clearTimeout(audioPlayStartTimer);
+        audioPlayStartTimer = null;
+      }
+      armAudioBusyWatchdog_(audio);
+    });
+
+    audio.addEventListener('pause', function() {
+      if (!isThisAudio_()) return;
+      if (!playbackStarted) return;
+      if (audio.ended) return;
+      if (audioPauseStuckTimer) {
+        clearTimeout(audioPauseStuckTimer);
+      }
+      audioPauseStuckTimer = setTimeout(function() {
+        audioPauseStuckTimer = null;
+        if (!isThisAudio_()) return;
+        if (!audio.paused || audio.ended) return;
+        settleThisPlay_('fail');
+      }, AUDIO_PAUSE_STUCK_MS);
+    });
+
+    audioPlayStartTimer = setTimeout(function() {
+      audioPlayStartTimer = null;
+      if (!isThisAudio_()) return;
+      settleThisPlay_('fail');
+    }, AUDIO_PLAY_START_TIMEOUT_MS);
     
-    playAudioElementWhenReady(audio).catch(function(error) {
+    playAudioElementWhenReady(audio).then(function() {
+      if (audioPlayStartTimer) {
+        clearTimeout(audioPlayStartTimer);
+        audioPlayStartTimer = null;
+      }
+      if (!isThisAudio_()) return;
+      armAudioBusyWatchdog_(audio);
+    }).catch(function(error) {
       if (isAbortError(error)) {
-        if (currentAudio === audio) {
-          activePlayField = null;
-          releaseCurrentAudioElement();
-          updateFieldPlayButtons();
-        }
-        if (fieldType === 'question') onQuestionAudioSettled('abort');
+        settleThisPlay_('abort');
         return;
       }
       showError('音声の再生に失敗しました: ' + error.toString());
-      if (currentAudio === audio) {
-        activePlayField = null;
-        releaseCurrentAudioElement();
-        updateFieldPlayButtons();
-      }
-      if (fieldType === 'question') onQuestionAudioSettled('fail');
+      settleThisPlay_('fail');
     });
   } catch (error) {
     showError('音声の再生に失敗しました: ' + error.toString());
+    clearAudioBusyWatchdogs_();
     activePlayField = null;
     releaseCurrentAudioElement();
     updateFieldPlayButtons();
@@ -10367,32 +10586,14 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
     appendAuthParams(params);
     params.append('referer', window.location.origin);
 
-    var fetchOptions = {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params
-    };
-    if (signal) {
-      fetchOptions.signal = signal;
-    }
-
-    fetch(buildGasPostUrl(), fetchOptions)
-    .then(function(response) {
-      if (generation !== activeAudioFetchGeneration) {
-        return null;
-      }
-      if (!response.ok) {
-        throw new Error('drive fetch failed: ' + response.status);
-      }
-      return response.json();
+    postGasJson(params, {
+      signal: signal,
+      httpErrorPrefix: 'drive fetch failed: '
     })
     .then(function(data) {
       if (generation !== activeAudioFetchGeneration) {
         done();
         return;
-      }
-      if (data) {
-        applyGasAuthPayload(data);
       }
       if (data && data.success && data.found && data.audioContent) {
         hidePlayButtonLoading(fieldType);
@@ -10516,27 +10717,7 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
     appendAuthParams(params);
     params.append('referer', window.location.origin);
 
-    var fetchOptions = {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: params
-    };
-    if (signal) {
-      fetchOptions.signal = signal;
-    }
-
-    fetch(buildGasPostUrl(), fetchOptions)
-    .then(function(response) {
-      if (gen !== activeAudioFetchGeneration) {
-        return null;
-      }
-      if (!response.ok) {
-        throw new Error('ネットワークエラー: ' + response.status);
-      }
-      return response.json();
-    })
+    postGasJson(params, { signal: signal })
     .then(function(data) {
       if (gen !== activeAudioFetchGeneration) {
         finish();
@@ -10888,26 +11069,14 @@ function prefetchOneDriveAudio(job, signal, generation, done) {
       appendAuthParams(params);
       params.append('referer', window.location.origin);
 
-      var fetchOptions = {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: params
-      };
-      if (signal) {
-        fetchOptions.signal = signal;
-      }
-
-      fetch(buildGasPostUrl(), fetchOptions)
-        .then(function(response) {
+      postGasJson(params, {
+        signal: signal,
+        httpErrorPrefix: 'drive fetch failed: '
+      })
+        .then(function(data) {
           if (timedOut) {
             throw new Error('タイムアウト');
           }
-          if (!response.ok) {
-            throw new Error('drive fetch failed: ' + response.status);
-          }
-          return response.json();
-        })
-        .then(function(data) {
           clearTimeout(timeoutId);
           if (generation !== activeAudioFetchGeneration) {
             done();
@@ -10968,12 +11137,7 @@ function fetchDriveAudioCoverage() {
   params.append('speedAnswer', getAudioSpeed('answer'));
   appendAuthParams(params);
   params.append('referer', window.location.origin);
-  fetch(buildGasPostUrl(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params
-  })
-    .then(parseGasResponseJson)
+  postGasJson(params)
     .then(function(data) {
       if (data && data.success) {
         driveAudioTargetCount = Number(data.target) || 0;
@@ -13395,19 +13559,7 @@ function processRecordedAudio() {
       micButton.disabled = true;
     }
     
-    fetch(buildGasPostUrl(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: params
-    })
-    .then(function(response) {
-      if (!response.ok) {
-        throw new Error('ネットワークエラー: ' + response.status);
-      }
-      return response.json();
-    })
+    postGasJson(params)
     .then(function(data) {
       if (micButton) {
         micButton.disabled = false;
