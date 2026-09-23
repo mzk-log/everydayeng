@@ -10,7 +10,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202609240808';
+    var FRONT_VERSION = '202609240855';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -49,7 +49,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202609240808">
+  <link rel="stylesheet" href="style.css?v=202609240855">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -540,11 +540,14 @@
         <h2 id="addStudyItemTitle" class="add-study-title">問題の追加・編集</h2>
         <button type="button" id="addStudyItemCloseButton" class="add-study-close" aria-label="閉じる">×</button>
       </div>
-      <label class="add-study-label" for="addStudyItemCategoryTrigger">カテゴリ</label>
-      <div id="addStudyItemCategoryPicker" class="add-study-cat-picker">
-        <select id="addStudyItemCategorySelect" class="add-study-select add-study-select-native" tabindex="-1" aria-hidden="true"></select>
-        <button type="button" id="addStudyItemCategoryTrigger" class="add-study-cat-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="addStudyItemCategoryPanel">カテゴリを選択してください</button>
-        <div id="addStudyItemCategoryPanel" class="add-study-cat-panel" role="listbox" hidden></div>
+      <label class="add-study-label" for="addStudyItemCategorySelect">カテゴリ</label>
+      <select id="addStudyItemCategorySelect" class="add-study-select"></select>
+      <div id="addStudyItemRenameFields" class="add-study-rename" style="display: none;">
+        <label class="add-study-label" for="addStudyItemRenameName">カテゴリ名</label>
+        <div class="add-study-rename-row">
+          <input id="addStudyItemRenameName" class="add-study-input" type="text" autocomplete="off">
+          <button type="button" id="addStudyItemRenameButton" class="add-study-button add-study-button-save">名前を更新</button>
+        </div>
       </div>
       <div id="addStudyItemNewCategoryFields" class="add-study-new-cat" style="display: none;">
         <label class="add-study-label" for="addStudyItemCategoryName">新しいカテゴリ名</label>
@@ -609,7 +612,7 @@
     </div>
   </div>
 
-  <script src="js/app.js?v=202609240808"></script>
+  <script src="js/app.js?v=202609240855"></script>
 </body>
 </html>
 

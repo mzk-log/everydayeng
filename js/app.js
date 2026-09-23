@@ -3933,9 +3933,6 @@ function setupEventListeners() {
     if (e.key === 'Escape') {
       var addOverlay = document.getElementById('addStudyItemOverlay');
       if (addOverlay && addOverlay.style.display !== 'none') {
-        if (closeAddStudyItemCategoryPanel()) {
-          return;
-        }
         return;
       }
       closeSideMenu();
@@ -3979,36 +3976,9 @@ function setupEventListeners() {
       syncAddStudyItemInputLock();
       renderAddStudyItemList();
       setAddStudyItemStatus('', false);
+      syncAddStudyItemRenameFields(true);
     });
   }
-  var addStudyItemCategoryTrigger = document.getElementById('addStudyItemCategoryTrigger');
-  var addStudyItemCategoryPanel = document.getElementById('addStudyItemCategoryPanel');
-  if (addStudyItemCategoryTrigger && addStudyItemCategoryPanel) {
-    addStudyItemCategoryTrigger.addEventListener('click', function() {
-      if (addStudyItemCategoryTrigger.disabled) return;
-      var picker = document.getElementById('addStudyItemCategoryPicker');
-      if (picker && picker.classList.contains('is-open')) {
-        closeAddStudyItemCategoryPanel();
-        return;
-      }
-      if (picker) picker.classList.add('is-open');
-      addStudyItemCategoryPanel.hidden = false;
-      addStudyItemCategoryTrigger.setAttribute('aria-expanded', 'true');
-    });
-    addStudyItemCategoryPanel.addEventListener('click', function(e) {
-      var row = e.target && e.target.closest ? e.target.closest('.add-study-cat-option') : null;
-      if (!row) return;
-      var selectedText = window.getSelection ? String(window.getSelection()) : '';
-      if (selectedText) return;
-      chooseAddStudyItemCategory(row.getAttribute('data-value'));
-    });
-  }
-  document.addEventListener('click', function(e) {
-    var picker = document.getElementById('addStudyItemCategoryPicker');
-    if (!picker || !picker.classList.contains('is-open')) return;
-    if (picker.contains(e.target)) return;
-    closeAddStudyItemCategoryPanel();
-  });
   var addStudyItemBackToAddButton = document.getElementById('addStudyItemBackToAddButton');
   if (addStudyItemBackToAddButton) {
     addStudyItemBackToAddButton.addEventListener('click', function() {
@@ -4028,11 +3998,31 @@ function setupEventListeners() {
         return;
       }
       if (addStudyItemFormConfirming) {
+        if (addStudyItemConfirmKind === 'rename') {
+          return;
+        }
         submitAddStudyItemConfirm();
       } else {
         showAddStudyItemConfirm();
       }
     });
+  }
+  var addStudyItemRenameButton = document.getElementById('addStudyItemRenameButton');
+  if (addStudyItemRenameButton) {
+    addStudyItemRenameButton.addEventListener('click', function() {
+      if (addStudyItemFormBusy) {
+        return;
+      }
+      if (addStudyItemFormConfirming && addStudyItemConfirmKind === 'rename') {
+        submitRenameStudyCategory();
+      } else if (!addStudyItemFormConfirming) {
+        showAddStudyItemRenameConfirm();
+      }
+    });
+  }
+  var addStudyItemRenameName = document.getElementById('addStudyItemRenameName');
+  if (addStudyItemRenameName) {
+    addStudyItemRenameName.addEventListener('input', syncAddStudyItemEditorUi);
   }
   var addStudyItemLiveIds = [
     'addStudyItemQuestion',
@@ -4680,13 +4670,37 @@ function resetAddStudyItemEditor(options) {
 
 function syncAddStudyItemEditorUi() {
   var confirming = addStudyItemFormConfirming;
+  var confirmingRename = confirming && addStudyItemConfirmKind === 'rename';
   var saveBtn = document.getElementById('addStudyItemSaveButton');
   if (saveBtn) {
-    saveBtn.textContent = confirming
+    var saveIsConfirm = confirming && !confirmingRename;
+    saveBtn.textContent = saveIsConfirm
       ? '確定'
       : (addStudyItemMode === 'update'
         ? '更新'
         : (addStudyItemMode === 'insert' ? '挿入' : '追加'));
+    saveBtn.classList.toggle('is-confirm', saveIsConfirm);
+  }
+  var renameBtn = document.getElementById('addStudyItemRenameButton');
+  var renameInput = document.getElementById('addStudyItemRenameName');
+  if (renameBtn) {
+    if (addStudyItemFormBusy || (confirming && !confirmingRename)) {
+      renameBtn.disabled = true;
+      renameBtn.textContent = '名前を更新';
+      renameBtn.classList.remove('is-confirm');
+    } else if (confirmingRename) {
+      renameBtn.disabled = false;
+      renameBtn.textContent = '確定';
+      renameBtn.classList.add('is-confirm');
+    } else {
+      renameBtn.textContent = '名前を更新';
+      renameBtn.classList.remove('is-confirm');
+      var renameErr = validateAddStudyItemRenameName(
+        renameInput ? renameInput.value : '',
+        currentAddStudyItemCategoryName()
+      );
+      renameBtn.disabled = !isAddStudyItemRenameVisible() || !!renameErr;
+    }
   }
   var cancelBtn = document.getElementById('addStudyItemCancelButton');
   if (cancelBtn) {
@@ -4706,13 +4720,74 @@ function syncAddStudyItemEditorUi() {
     select.disabled = addStudyItemMode !== 'add' || addStudyItemFormConfirming || addStudyItemFormBusy;
   }
   syncAddStudyItemInputLock();
-  syncAddStudyItemCategoryPicker();
+  syncAddStudyItemRenameFields(false);
 }
 
 function syncAddStudyItemNewCategoryFields() {
   var wrap = document.getElementById('addStudyItemNewCategoryFields');
   if (!wrap) return;
   wrap.style.display = isAddStudyItemNewCategorySelected() ? 'block' : 'none';
+}
+
+function isAddStudyItemRenameVisible() {
+  return isAddStudyItemCategoryChosen() && !isAddStudyItemNewCategorySelected() && addStudyItemMode === 'add';
+}
+
+function currentAddStudyItemCategoryName() {
+  var select = document.getElementById('addStudyItemCategorySelect');
+  if (!select || isAddStudyItemNewCategorySelected() || !String(select.value || '')) {
+    return '';
+  }
+  var items = getItemsForCategoryFromLocal(String(select.value));
+  for (var i = 0; i < items.length; i++) {
+    if (items[i] && String(items[i].category || '').trim()) {
+      return String(items[i].category).trim();
+    }
+  }
+  var cats = getConfigurableCategories();
+  for (var c = 0; c < cats.length; c++) {
+    if (String(cats[c].no) === String(select.value)) {
+      return String(cats[c].name || '').trim();
+    }
+  }
+  return '';
+}
+
+function syncAddStudyItemRenameFields(fillName) {
+  var wrap = document.getElementById('addStudyItemRenameFields');
+  var input = document.getElementById('addStudyItemRenameName');
+  if (wrap) {
+    wrap.style.display = isAddStudyItemRenameVisible() ? 'block' : 'none';
+  }
+  if (fillName && input && !addStudyItemFormConfirming && !addStudyItemFormBusy) {
+    input.value = currentAddStudyItemCategoryName();
+  }
+}
+
+function validateAddStudyItemRenameName(name, currentName) {
+  var next = String(name || '').trim();
+  var current = String(currentName || '').trim();
+  if (!next) {
+    return 'カテゴリ名を入力してください。';
+  }
+  if (next === 'END') {
+    return 'このカテゴリ名は使えません。';
+  }
+  if (next.toLowerCase() === current.toLowerCase()) {
+    return '名前が変わっていません。';
+  }
+  var select = document.getElementById('addStudyItemCategorySelect');
+  var currentNo = select ? String(select.value || '') : '';
+  var cats = getConfigurableCategories();
+  for (var i = 0; i < cats.length; i++) {
+    if (String(cats[i].no) === currentNo) {
+      continue;
+    }
+    if (String(cats[i].name || '').trim().toLowerCase() === next.toLowerCase()) {
+      return 'このカテゴリ名は既にあります。';
+    }
+  }
+  return '';
 }
 
 function syncAddStudyItemInputLock() {
@@ -4728,6 +4803,10 @@ function syncAddStudyItemInputLock() {
       el.disabled = !enabled || addStudyItemFormConfirming || addStudyItemFormBusy;
     }
   }
+  var renameInput = document.getElementById('addStudyItemRenameName');
+  if (renameInput) {
+    renameInput.disabled = addStudyItemFormConfirming || addStudyItemFormBusy || !isAddStudyItemRenameVisible();
+  }
   var newIds = ['addStudyItemCategoryName', 'addStudyItemQTitle', 'addStudyItemATitle'];
   for (var n = 0; n < newIds.length; n++) {
     var newEl = document.getElementById(newIds[n]);
@@ -4737,7 +4816,7 @@ function syncAddStudyItemInputLock() {
   }
   var saveBtn = document.getElementById('addStudyItemSaveButton');
   if (saveBtn) {
-    if (addStudyItemFormBusy) {
+    if (addStudyItemFormBusy || (addStudyItemFormConfirming && addStudyItemConfirmKind === 'rename')) {
       saveBtn.disabled = true;
     } else if (addStudyItemFormConfirming) {
       saveBtn.disabled = false;
@@ -4916,63 +4995,6 @@ function beginAddStudyItemInsertStart() {
   setAddStudyItemStatus('先頭（No.1の前）に挿入します。', true);
 }
 
-function closeAddStudyItemCategoryPanel() {
-  var picker = document.getElementById('addStudyItemCategoryPicker');
-  var panel = document.getElementById('addStudyItemCategoryPanel');
-  var trigger = document.getElementById('addStudyItemCategoryTrigger');
-  var wasOpen = !!(picker && picker.classList.contains('is-open'));
-  if (picker) {
-    picker.classList.remove('is-open');
-  }
-  if (panel) {
-    panel.hidden = true;
-  }
-  if (trigger) {
-    trigger.setAttribute('aria-expanded', 'false');
-  }
-  return wasOpen;
-}
-
-function syncAddStudyItemCategoryPicker() {
-  var select = document.getElementById('addStudyItemCategorySelect');
-  var trigger = document.getElementById('addStudyItemCategoryTrigger');
-  var panel = document.getElementById('addStudyItemCategoryPanel');
-  if (!select || !trigger || !panel) return;
-  trigger.disabled = !!select.disabled;
-  if (select.disabled) {
-    closeAddStudyItemCategoryPanel();
-  }
-  var selectedLabel = 'カテゴリを選択してください';
-  panel.innerHTML = '';
-  for (var i = 0; i < select.options.length; i++) {
-    var opt = select.options[i];
-    var row = document.createElement('div');
-    row.className = 'add-study-cat-option';
-    row.setAttribute('role', 'option');
-    row.setAttribute('data-value', opt.value);
-    row.textContent = opt.textContent || '';
-    if (String(opt.value) === String(select.value)) {
-      row.classList.add('is-selected');
-      row.setAttribute('aria-selected', 'true');
-      selectedLabel = opt.textContent || selectedLabel;
-    } else {
-      row.setAttribute('aria-selected', 'false');
-    }
-    panel.appendChild(row);
-  }
-  trigger.textContent = selectedLabel;
-}
-
-function chooseAddStudyItemCategory(value) {
-  var select = document.getElementById('addStudyItemCategorySelect');
-  if (!select || select.disabled) return;
-  if (String(select.value) !== String(value)) {
-    select.value = value;
-    select.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-  closeAddStudyItemCategoryPanel();
-}
-
 function fillAddStudyItemCategoryOptions(selectedValue) {
   var select = document.getElementById('addStudyItemCategorySelect');
   if (!select) return;
@@ -4996,6 +5018,7 @@ function fillAddStudyItemCategoryOptions(selectedValue) {
   }
   syncAddStudyItemNewCategoryFields();
   syncAddStudyItemEditorUi();
+  syncAddStudyItemRenameFields(true);
   renderAddStudyItemList();
 }
 
@@ -5016,7 +5039,6 @@ function openAddStudyItemOverlay() {
 
 function closeAddStudyItemOverlay() {
   addStudyItemConfirmPending = false;
-  closeAddStudyItemCategoryPanel();
   resetAddStudyItemEditor({ clearFields: true });
   var overlay = document.getElementById('addStudyItemOverlay');
   if (overlay) {
@@ -5125,6 +5147,79 @@ function finishAddStudyItemFormConfirm() {
   syncAddStudyItemEditorUi();
 }
 
+function showAddStudyItemRenameConfirm() {
+  if (!isAddStudyItemRenameVisible()) {
+    setAddStudyItemStatus('カテゴリを選択してください。', false);
+    return;
+  }
+  var input = document.getElementById('addStudyItemRenameName');
+  var err = validateAddStudyItemRenameName(input ? input.value : '', currentAddStudyItemCategoryName());
+  if (err) {
+    setAddStudyItemStatus(err, false);
+    return;
+  }
+  addStudyItemConfirmPending = true;
+  addStudyItemConfirmKind = 'rename';
+  addStudyItemFormConfirming = true;
+  setAddStudyItemAskStatus('このカテゴリ名に更新しますか？');
+  syncAddStudyItemEditorUi();
+}
+
+function submitRenameStudyCategory() {
+  var select = document.getElementById('addStudyItemCategorySelect');
+  var input = document.getElementById('addStudyItemRenameName');
+  var err = validateAddStudyItemRenameName(input ? input.value : '', currentAddStudyItemCategoryName());
+  if (err || !select || !String(select.value || '')) {
+    finishAddStudyItemFormConfirm();
+    setAddStudyItemStatus(err || 'カテゴリを選択してください。', false);
+    return;
+  }
+  var categoryNo = String(select.value);
+  var categoryName = String(input.value || '').trim();
+  addStudyItemFormBusy = true;
+  setAddStudyItemAskStatus('更新中...');
+  syncAddStudyItemEditorUi();
+  var params = new URLSearchParams();
+  params.append('action', 'renameStudyCategory');
+  params.append('categoryNo', categoryNo);
+  params.append('categoryName', categoryName);
+  appendAuthParams(params);
+  params.append('referer', window.location.origin || '');
+  postGasJson(params)
+    .then(function(data) {
+      if (!data || !data.success) {
+        throw new Error((data && data.error) || '名前の更新に失敗しました');
+      }
+      if (isStudyItemList_(data.categoryItems)) {
+        applySheetCategoryItems(categoryNo, data.categoryItems, data.dataGeneration, categoryNo);
+      } else {
+        var items = getMemoryAllStudyItems().slice();
+        for (var i = 0; i < items.length; i++) {
+          if (items[i] && String(items[i].category_no) === categoryNo) {
+            items[i].category = categoryName;
+          }
+        }
+        applyAddStudyItemLocalItems(items, data.dataGeneration, categoryNo);
+      }
+      syncAddStudyItemRenameFields(true);
+      setAddStudyItemStatus('名前を更新しました。', true);
+    })
+    .catch(function(error) {
+      var msg = String(error && (error.message || error) || '名前の更新に失敗しました');
+      if (msg.indexOf('already exists') >= 0) {
+        msg = 'このカテゴリ名は既にあります。';
+      } else if (msg.indexOf('Invalid category') >= 0) {
+        msg = 'このカテゴリ名は使えません。';
+      } else if (msg.indexOf('Update busy') >= 0) {
+        msg = '保存が混み合っています。もう一度お試しください。';
+      }
+      setAddStudyItemStatus(msg, false);
+    })
+    .then(function() {
+      finishAddStudyItemFormConfirm();
+    });
+}
+
 function showAddStudyItemConfirm() {
   var draft = collectAddStudyItemDraft();
   var err = validateAddStudyItemDraft(draft);
@@ -5210,6 +5305,10 @@ function setConfirmModalBusy(busy, busyTitle) {
 }
 
 function submitAddStudyItemConfirm() {
+  if (addStudyItemConfirmKind === 'rename') {
+    submitRenameStudyCategory();
+    return;
+  }
   if (addStudyItemConfirmKind === 'delete') {
     submitDeleteStudyItem();
     return;

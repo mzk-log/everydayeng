@@ -2311,7 +2311,7 @@ body:has(#screen2.active) .answer-text-edit {
   min-height: 0;
   max-height: 100%;
   margin: 0 auto;
-  padding: 12px 12px 8px;
+  padding: 8px 10px 4px;
   border-radius: 10px;
   background-color: #fff;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
@@ -2326,21 +2326,21 @@ body:has(#screen2.active) .answer-text-edit {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 4px;
   flex-shrink: 0;
 }
 
 .add-study-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
 }
 
 .add-study-close {
   border: none;
   background: transparent;
-  font-size: 28px;
+  font-size: 22px;
   line-height: 1;
   cursor: pointer;
   color: #666;
@@ -2348,82 +2348,8 @@ body:has(#screen2.active) .answer-text-edit {
 }
 
 .add-study-panel > .add-study-label,
-.add-study-panel > .add-study-select,
-.add-study-cat-picker {
+.add-study-panel > .add-study-select {
   flex-shrink: 0;
-}
-
-.add-study-select-native {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.add-study-cat-picker {
-  position: relative;
-}
-
-.add-study-cat-trigger {
-  width: 100%;
-  box-sizing: border-box;
-  font-size: 15px;
-  line-height: 1.4;
-  text-align: left;
-  padding: 8px 32px 8px 10px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background-color: #fff;
-  background-image: url('data:image/svg+xml;charset=UTF-8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><path d="M6 9L1 4h10z" fill="%23333"/></svg>');
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  font-family: inherit;
-  color: #222;
-  cursor: pointer;
-}
-
-.add-study-cat-trigger:disabled {
-  background-color: #f3f3f3;
-  color: #888;
-  cursor: not-allowed;
-}
-
-.add-study-cat-panel {
-  max-height: 220px;
-  margin-top: 4px;
-  overflow-y: auto;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: #fff;
-  -webkit-overflow-scrolling: touch;
-}
-
-.add-study-cat-panel[hidden] {
-  display: none;
-}
-
-.add-study-cat-option {
-  padding: 8px 10px;
-  border-bottom: 1px solid #eee;
-  font-size: 15px;
-  line-height: 1.4;
-  color: #222;
-  cursor: text;
-  user-select: text;
-  -webkit-user-select: text;
-  -webkit-touch-callout: default;
-}
-
-.add-study-cat-option:last-child {
-  border-bottom: none;
-}
-
-.add-study-cat-option.is-selected {
-  background: #e8f1ff;
 }
 
 .add-study-new-cat {
@@ -2432,9 +2358,32 @@ body:has(#screen2.active) .answer-text-edit {
   overflow-y: auto;
 }
 
+.add-study-rename {
+  flex-shrink: 0;
+}
+
+.add-study-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.add-study-rename-row .add-study-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 4px 8px;
+}
+
+.add-study-rename-row .add-study-button {
+  flex-shrink: 0;
+  min-width: 0;
+  white-space: nowrap;
+}
+
 .add-study-label {
   display: block;
-  margin: 10px 0 4px;
+  margin: 4px 0 2px;
   font-size: 13px;
   color: #333;
 }
@@ -2451,6 +2400,17 @@ body:has(#screen2.active) .answer-text-edit {
   font-family: inherit;
 }
 
+.add-study-select {
+  font-size: 13px;
+  padding: 4px 8px;
+}
+
+.add-study-select:disabled {
+  background-color: #f3f3f3;
+  color: #888;
+  cursor: not-allowed;
+}
+
 .add-study-textarea {
   min-height: 2.4em;
   resize: vertical;
@@ -2465,7 +2425,7 @@ body:has(#screen2.active) .answer-text-edit {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  margin-top: 8px;
+  margin-top: 4px;
 }
 
 .add-study-list-head {
@@ -2664,19 +2624,19 @@ body:has(#screen2.active) .answer-text-edit {
 .add-study-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 10px;
-  padding-bottom: 2px;
+  gap: 6px;
+  margin-top: 6px;
+  padding-bottom: 0;
   flex-shrink: 0;
 }
 
 .add-study-button {
-  min-width: 88px;
-  padding: 8px 14px;
+  min-width: 64px;
+  padding: 4px 10px;
   border-radius: 6px;
   border: 1px solid #bbb;
   background: #f5f5f5;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -2686,6 +2646,16 @@ body:has(#screen2.active) .answer-text-edit {
   color: #fff;
 }
 
+.add-study-button-save.is-confirm {
+  border-color: #2f6fed;
+  background: #2f6fed;
+}
+
+.add-study-button-save.is-confirm:hover {
+  border-color: #2458c4;
+  background: #2458c4;
+}
+
 .add-study-button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -2693,11 +2663,11 @@ body:has(#screen2.active) .answer-text-edit {
 
 @media (max-height: 740px) {
   .add-study-header {
-    margin-bottom: 8px;
+    margin-bottom: 2px;
   }
 
   .add-study-panel > .add-study-label {
-    margin-top: 6px;
+    margin-top: 2px;
   }
 
   .add-study-form .add-study-label {
@@ -2717,7 +2687,7 @@ body:has(#screen2.active) .answer-text-edit {
   }
 
   .add-study-actions {
-    margin-top: 8px;
+    margin-top: 4px;
   }
 }
 
