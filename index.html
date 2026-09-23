@@ -10,7 +10,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202609222247';
+    var FRONT_VERSION = '202609240808';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -49,7 +49,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202609222247">
+  <link rel="stylesheet" href="style.css?v=202609240808">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -204,6 +204,11 @@
             </div>
           </div>
         </div>
+      </div>
+      <div class="side-menu-item-container" id="addStudyItemItemContainer">
+        <button class="side-menu-item" type="button" id="addStudyItemMenuButton">
+          <span class="side-menu-item-text">問題を追加</span>
+        </button>
       </div>
     </div>
   </div>
@@ -528,6 +533,51 @@
     </div>
   </div>
 
+  <!-- 問題追加 -->
+  <div id="addStudyItemOverlay" class="add-study-overlay" style="display: none;" aria-hidden="true">
+    <div class="add-study-panel" role="dialog" aria-labelledby="addStudyItemTitle" aria-modal="true">
+      <div class="add-study-header">
+        <h2 id="addStudyItemTitle" class="add-study-title">問題の追加・編集</h2>
+        <button type="button" id="addStudyItemCloseButton" class="add-study-close" aria-label="閉じる">×</button>
+      </div>
+      <label class="add-study-label" for="addStudyItemCategoryTrigger">カテゴリ</label>
+      <div id="addStudyItemCategoryPicker" class="add-study-cat-picker">
+        <select id="addStudyItemCategorySelect" class="add-study-select add-study-select-native" tabindex="-1" aria-hidden="true"></select>
+        <button type="button" id="addStudyItemCategoryTrigger" class="add-study-cat-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="addStudyItemCategoryPanel">カテゴリを選択してください</button>
+        <div id="addStudyItemCategoryPanel" class="add-study-cat-panel" role="listbox" hidden></div>
+      </div>
+      <div id="addStudyItemNewCategoryFields" class="add-study-new-cat" style="display: none;">
+        <label class="add-study-label" for="addStudyItemCategoryName">新しいカテゴリ名</label>
+        <input id="addStudyItemCategoryName" class="add-study-input" type="text" autocomplete="off">
+        <label class="add-study-label" for="addStudyItemQTitle">出題の見出し（例：Japanese）</label>
+        <input id="addStudyItemQTitle" class="add-study-input" type="text" autocomplete="off">
+        <label class="add-study-label" for="addStudyItemATitle">解答の見出し（例：English）</label>
+        <input id="addStudyItemATitle" class="add-study-input" type="text" autocomplete="off">
+      </div>
+      <div id="addStudyItemListWrap" class="add-study-list-wrap" style="display: none;">
+        <div class="add-study-list-head">
+          <span class="add-study-list-title">既存の問題</span>
+          <span id="addStudyItemListCount" class="add-study-list-count"></span>
+        </div>
+        <div id="addStudyItemList" class="add-study-list" role="list"></div>
+      </div>
+      <div class="add-study-form">
+        <label class="add-study-label" for="addStudyItemQuestion">出題</label>
+        <textarea id="addStudyItemQuestion" class="add-study-textarea" rows="2"></textarea>
+        <label class="add-study-label" for="addStudyItemAnswer">解答</label>
+        <textarea id="addStudyItemAnswer" class="add-study-textarea" rows="2"></textarea>
+        <label class="add-study-label" for="addStudyItemNote">note（任意）</label>
+        <textarea id="addStudyItemNote" class="add-study-textarea" rows="2"></textarea>
+        <p id="addStudyItemStatus" class="add-study-status" aria-live="polite"></p>
+        <div class="add-study-actions">
+          <button type="button" id="addStudyItemBackToAddButton" class="add-study-button add-study-button-cancel" style="display: none;">追加に戻る</button>
+          <button type="button" id="addStudyItemCancelButton" class="add-study-button add-study-button-cancel">閉じる</button>
+          <button type="button" id="addStudyItemSaveButton" class="add-study-button add-study-button-save">追加</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 回答メモ更新確認モーダル -->
   <div id="answerUpdateConfirmModal" class="modal-overlay">
     <div class="modal-container">
@@ -559,7 +609,7 @@
     </div>
   </div>
 
-  <script src="js/app.js?v=202609222247"></script>
+  <script src="js/app.js?v=202609240808"></script>
 </body>
 </html>
 
