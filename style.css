@@ -1287,7 +1287,7 @@ th {
 /* No列の最小幅設定（クリアボタンが下に落ちないように） */
 .list-table thead th:first-child,
 .list-table tbody td:first-child {
-  width: 14%;
+  width: 7%;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -1309,29 +1309,45 @@ th {
   margin-right: 8px;
 }
 
-/* Question列：折り返し可・残り幅 */
+/* 出題・解答：広く。単語の途中では折らない */
 .list-table thead th:nth-child(2),
-.list-table tbody td:nth-child(2) {
-  width: auto;
+.list-table tbody td:nth-child(2),
+.list-table thead th:nth-child(3),
+.list-table tbody td:nth-child(3) {
+  width: 30%;
   word-wrap: break-word;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
   white-space: pre-line;
 }
 
-/* 学習回数・平均(前回/最新)・学習日：中央寄せ・狭め */
+/* 回数・前回・最新・日時：中央寄せ・狭め */
 .list-table thead th.list-col-study-count,
 .list-table thead th.list-col-duration,
 .list-table thead th.list-col-lastdate,
 .list-table tbody td.list-col-study-count,
 .list-table tbody td.list-col-duration,
 .list-table tbody td.list-col-lastdate {
-  width: 13%;
   text-align: center;
   white-space: normal;
   word-break: break-word;
-  padding-left: 4px;
-  padding-right: 4px;
+  padding-left: 2px;
+  padding-right: 2px;
   font-size: 12px;
+}
+
+.list-table thead th.list-col-study-count,
+.list-table tbody td.list-col-study-count,
+.list-table thead th.list-col-duration-old,
+.list-table tbody td.list-col-duration-old,
+.list-table thead th.list-col-duration-latest,
+.list-table tbody td.list-col-duration-latest {
+  width: 8%;
+}
+
+.list-table thead th.list-col-lastdate,
+.list-table tbody td.list-col-lastdate {
+  width: 9%;
 }
 
 /* クリアボタン */
@@ -4012,20 +4028,35 @@ body:has(#screen2.active) .answer-text-edit {
   /* No列の幅設定(480px) */
   .list-table thead th:first-child,
   .list-table tbody td:first-child {
-    width: 16% !important;
+    width: 8% !important;
     min-width: 0 !important;
   }
 
+  .list-table thead th:nth-child(2),
+  .list-table tbody td:nth-child(2),
+  .list-table thead th:nth-child(3),
+  .list-table tbody td:nth-child(3) {
+    width: 28% !important;
+  }
+
   .list-table thead th.list-col-study-count,
-  .list-table thead th.list-col-duration,
-  .list-table thead th.list-col-lastdate,
   .list-table tbody td.list-col-study-count,
-  .list-table tbody td.list-col-duration,
-  .list-table tbody td.list-col-lastdate {
-    width: 11% !important;
+  .list-table thead th.list-col-duration-old,
+  .list-table tbody td.list-col-duration-old,
+  .list-table thead th.list-col-duration-latest,
+  .list-table tbody td.list-col-duration-latest {
+    width: 8% !important;
     font-size: 11px !important;
-    padding-left: 2px !important;
-    padding-right: 2px !important;
+    padding-left: 1px !important;
+    padding-right: 1px !important;
+  }
+
+  .list-table thead th.list-col-lastdate,
+  .list-table tbody td.list-col-lastdate {
+    width: 12% !important;
+    font-size: 11px !important;
+    padding-left: 1px !important;
+    padding-right: 1px !important;
   }
 
   /* No列ヘッダー内のspanとbuttonの間隔(480px) */

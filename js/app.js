@@ -7650,105 +7650,94 @@ function pinCompletionListMinHeightForLoading(listContainerEl) {
   }
 }
 
-// リストを表示
+// リストを表示。HOME／完了直後／完了後の閲覧は、将来別表示にできるよう別関数
 function displayList() {
-  var ui = getListUiConfig();
-  var tableBody = document.getElementById(ui.tableBodyId);
-  if (!tableBody) return;
-  
-  var listContainerEl = ui.containerId ? document.getElementById(ui.containerId) : null;
-  // 再描画中の潰し防止で一時ピン。描画後は実高に合わせて解除／付け直し（間延び防止）
-  var pinnedMinHeight = 0;
-  if (isLearningCompleted && listContainerEl) {
-    pinnedMinHeight = Math.max(0, Math.floor(listContainerEl.offsetHeight || 0));
-    if (pinnedMinHeight > 0) {
-      applyCompletionListMinHeight(listContainerEl, pinnedMinHeight);
-    }
+  if (!isLearningCompleted) {
+    displayHomeList();
+    return;
   }
-  
-  tableBody.innerHTML = '';
+  if (isCompletionSessionListView()) {
+    displayLearningJustCompletedList();
+    return;
+  }
+  displayLearningBrowsedList();
+}
 
-  var showAnswerSideInList = isCompletionSessionListView();
-  
-  // 最初のアイテムからタイトルを取得してヘッダーに設定
-  // 完了直後セッションListは解答側、それ以外（TOP／閲覧後）は出題側
+/**
+ * テキストまたは画像URLを List の1セルへ入れる（この関数内だけで使う）
+ * @param {HTMLElement} row
+ * @param {string} content
+ */
+function appendHomeListSideCell(row, content) {
+  var cell = document.createElement('td');
+  if (isImageUrl(content)) {
+    var imageUrl = convertGoogleDriveUrl(content);
+    var img = document.createElement('img');
+    img.src = imageUrl;
+    img.className = 'list-thumbnail';
+    img.alt = '画像';
+    img.style.maxWidth = '100px';
+    img.style.maxHeight = '60px';
+    img.style.height = 'auto';
+    img.style.display = 'block';
+    img.style.objectFit = 'contain';
+    img.addEventListener('error', function() {
+      cell.textContent = '[画像]';
+    });
+    cell.appendChild(img);
+  } else {
+    cell.textContent = content;
+  }
+  row.appendChild(cell);
+}
+
+/**
+ * HOME の List。左が実効出題側、右が実効解答側（入替えONで左右入替）
+ */
+function displayHomeList() {
+  var tableBody = document.getElementById('listTableBody');
+  if (!tableBody) return;
+  tableBody.innerHTML = '';
   if (currentCategoryData.length > 0) {
-    var headerCell = document.getElementById(ui.headerId);
-    if (headerCell) {
-      headerCell.textContent = showAnswerSideInList
-        ? (getEffectiveATitle(currentCategoryData[0]) || '')
-        : (getEffectiveQTitle(currentCategoryData[0]) || '');
+    var leftHeader = document.getElementById('listTableHeader');
+    var rightHeader = document.getElementById('listTableHeaderRight');
+    if (leftHeader) {
+      leftHeader.textContent = getEffectiveQTitle(currentCategoryData[0]) || '';
+    }
+    if (rightHeader) {
+      rightHeader.textContent = getEffectiveATitle(currentCategoryData[0]) || '';
     }
   }
-  
   currentCategoryData.forEach(function(item, index) {
     var row = document.createElement('tr');
     var isSelected = selectedQuestionIndices.indexOf(index) !== -1;
-    
-    // 選択状態に応じてクラスを追加（TOPのみ）
-    if (ui.allowRowSelect && isSelected) {
+    if (isSelected) {
       row.classList.add('selected-row');
     }
-    
     var noCell = document.createElement('td');
     noCell.textContent = item.no || '';
-    // 選択状態に応じてNo列にクラスを追加
-    if (ui.allowRowSelect && isSelected) {
+    if (isSelected) {
       noCell.classList.add('selected-no');
     }
-    var questionCell = document.createElement('td');
-    // 完了直後は解答側、それ以外は出題側（画像対応・入替え対応）
-    var questionContent = showAnswerSideInList
-      ? getEffectiveAnswer(item)
-      : getEffectiveQuestion(item);
-    if (isImageUrl(questionContent)) {
-      // 画像URLの場合はサムネイル表示
-      var imageUrl = convertGoogleDriveUrl(questionContent);
-      var img = document.createElement('img');
-      img.src = imageUrl;
-      img.className = 'list-thumbnail';
-      img.alt = '画像';
-      img.style.maxWidth = '100px';
-      img.style.maxHeight = '60px';
-      img.style.height = 'auto';
-      img.style.display = 'block';
-      img.style.objectFit = 'contain';
-      
-      // エラーハンドリング
-      img.addEventListener('error', function() {
-        questionCell.textContent = '[画像]';
-      });
-      
-      questionCell.appendChild(img);
-    } else {
-      // テキストの場合はテキスト表示
-      questionCell.textContent = questionContent;
-    }
-    
+    row.appendChild(noCell);
+    appendHomeListSideCell(row, getEffectiveQuestion(item));
+    appendHomeListSideCell(row, getEffectiveAnswer(item));
     var studyCountCell = document.createElement('td');
     studyCountCell.className = 'list-col-study-count';
     studyCountCell.textContent = formatStudyCountForList(item);
-    
     var durationOldCell = document.createElement('td');
     durationOldCell.className = 'list-col-duration list-col-duration-old';
     durationOldCell.textContent = formatDurationForDisplay(item.duration_old);
-    
     var durationCell = document.createElement('td');
     durationCell.className = 'list-col-duration list-col-duration-latest';
     durationCell.textContent = formatDurationForDisplay(item.duration);
-    
     var lastDateCell = document.createElement('td');
     lastDateCell.className = 'list-col-lastdate';
     lastDateCell.textContent = formatYmdForDisplay(item.last_date);
-    
-    row.appendChild(noCell);
-    row.appendChild(questionCell);
     row.appendChild(studyCountCell);
     row.appendChild(durationOldCell);
     row.appendChild(durationCell);
     row.appendChild(lastDateCell);
-    
-    if (ui.allowRowSelect) {
     var clickTimer = null;
     row.addEventListener('click', function(e) {
       if (clickTimer === null) {
@@ -7758,47 +7747,213 @@ function displayList() {
         }, 300);
       }
     });
-    if (ui.allowPreviewModal) {
-      row.addEventListener('dblclick', function(e) {
-        e.preventDefault();
-        if (clickTimer) {
-          clearTimeout(clickTimer);
-          clickTimer = null;
-        }
-        var itemIndex = currentCategoryData.indexOf(item);
-        showModal(item, itemIndex);
-      });
+    row.addEventListener('dblclick', function(e) {
+      e.preventDefault();
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = null;
       }
-    }
-    
+      var itemIndex = currentCategoryData.indexOf(item);
+      showModal(item, itemIndex);
+    });
     tableBody.appendChild(row);
   });
-  
-  // 選択数の表示を更新
   updateSelectionCount();
-  
-  var listMessage = document.getElementById(ui.messageId);
-  var listContainer = document.getElementById(ui.containerId);
-  
+  var listMessage = document.getElementById('listMessage');
+  var listContainer = document.getElementById('listContainer');
   if (listMessage) listMessage.style.display = 'none';
   if (listContainer) listContainer.style.display = 'block';
-  if (ui.showStartButton) {
-    setStartButtonVisible(true);
+  setStartButtonVisible(true);
+}
+
+/**
+ * テキストまたは画像URLを完了直後 List の1セルへ入れる
+ * @param {HTMLElement} row
+ * @param {string} content
+ */
+function appendJustCompletedListSideCell(row, content) {
+  var cell = document.createElement('td');
+  if (isImageUrl(content)) {
+    var imageUrl = convertGoogleDriveUrl(content);
+    var img = document.createElement('img');
+    img.src = imageUrl;
+    img.className = 'list-thumbnail';
+    img.alt = '画像';
+    img.style.maxWidth = '100px';
+    img.style.maxHeight = '60px';
+    img.style.height = 'auto';
+    img.style.display = 'block';
+    img.style.objectFit = 'contain';
+    img.addEventListener('error', function() {
+      cell.textContent = '[画像]';
+    });
+    cell.appendChild(img);
+  } else {
+    cell.textContent = content;
   }
-  
-  if (isLearningCompleted) {
-    // 描画後は実コンテンツ高に合わせる（大きい方に張り付かせない＝間延び防止）
-    if (listContainerEl) {
-      clearCompletionListMinHeight(listContainerEl);
-      var contentHeight = Math.max(0, Math.floor(listContainerEl.offsetHeight || 0));
-      if (contentHeight > 0) {
-        applyCompletionListMinHeight(listContainerEl, contentHeight);
-      }
-      bindCompletionListImagesToKeepScroll(listContainerEl);
+  row.appendChild(cell);
+}
+
+/**
+ * 学習完了直後の List。列は HOME と同じ（左が実効出題側、右が実効解答側）
+ */
+function displayLearningJustCompletedList() {
+  var tableBody = document.getElementById('completionListTableBody');
+  if (!tableBody) return;
+  var listContainerEl = document.getElementById('completionListContainer');
+  var pinnedMinHeight = 0;
+  if (listContainerEl) {
+    pinnedMinHeight = Math.max(0, Math.floor(listContainerEl.offsetHeight || 0));
+    if (pinnedMinHeight > 0) {
+      applyCompletionListMinHeight(listContainerEl, pinnedMinHeight);
     }
-    updateNavAnswerButton();
-    maintainCompletionScrollAtBottom();
   }
+  tableBody.innerHTML = '';
+  if (currentCategoryData.length > 0) {
+    var leftHeader = document.getElementById('completionListTableHeader');
+    var rightHeader = document.getElementById('completionListTableHeaderRight');
+    if (leftHeader) {
+      leftHeader.textContent = getEffectiveQTitle(currentCategoryData[0]) || '';
+    }
+    if (rightHeader) {
+      rightHeader.textContent = getEffectiveATitle(currentCategoryData[0]) || '';
+    }
+  }
+  currentCategoryData.forEach(function(item) {
+    var row = document.createElement('tr');
+    var noCell = document.createElement('td');
+    noCell.textContent = item.no || '';
+    row.appendChild(noCell);
+    appendJustCompletedListSideCell(row, getEffectiveQuestion(item));
+    appendJustCompletedListSideCell(row, getEffectiveAnswer(item));
+    var studyCountCell = document.createElement('td');
+    studyCountCell.className = 'list-col-study-count';
+    studyCountCell.textContent = formatStudyCountForList(item);
+    var durationOldCell = document.createElement('td');
+    durationOldCell.className = 'list-col-duration list-col-duration-old';
+    durationOldCell.textContent = formatDurationForDisplay(item.duration_old);
+    var durationCell = document.createElement('td');
+    durationCell.className = 'list-col-duration list-col-duration-latest';
+    durationCell.textContent = formatDurationForDisplay(item.duration);
+    var lastDateCell = document.createElement('td');
+    lastDateCell.className = 'list-col-lastdate';
+    lastDateCell.textContent = formatYmdForDisplay(item.last_date);
+    row.appendChild(studyCountCell);
+    row.appendChild(durationOldCell);
+    row.appendChild(durationCell);
+    row.appendChild(lastDateCell);
+    tableBody.appendChild(row);
+  });
+  updateSelectionCount();
+  var listMessage = document.getElementById('completionListMessage');
+  var listContainer = document.getElementById('completionListContainer');
+  if (listMessage) listMessage.style.display = 'none';
+  if (listContainer) listContainer.style.display = 'block';
+  if (listContainerEl) {
+    clearCompletionListMinHeight(listContainerEl);
+    var contentHeight = Math.max(0, Math.floor(listContainerEl.offsetHeight || 0));
+    if (contentHeight > 0) {
+      applyCompletionListMinHeight(listContainerEl, contentHeight);
+    }
+    bindCompletionListImagesToKeepScroll(listContainerEl);
+  }
+  updateNavAnswerButton();
+  maintainCompletionScrollAtBottom();
+}
+
+/**
+ * テキストまたは画像URLを、完了後に切り替えた List の1セルへ入れる
+ * @param {HTMLElement} row
+ * @param {string} content
+ */
+function appendLearningBrowsedListSideCell(row, content) {
+  var cell = document.createElement('td');
+  if (isImageUrl(content)) {
+    var imageUrl = convertGoogleDriveUrl(content);
+    var img = document.createElement('img');
+    img.src = imageUrl;
+    img.className = 'list-thumbnail';
+    img.alt = '画像';
+    img.style.maxWidth = '100px';
+    img.style.maxHeight = '60px';
+    img.style.height = 'auto';
+    img.style.display = 'block';
+    img.style.objectFit = 'contain';
+    img.addEventListener('error', function() {
+      cell.textContent = '[画像]';
+    });
+    cell.appendChild(img);
+  } else {
+    cell.textContent = content;
+  }
+  row.appendChild(cell);
+}
+
+/**
+ * 完了後にカテゴリやページを切り替えた List。列は HOME と同じ
+ */
+function displayLearningBrowsedList() {
+  var tableBody = document.getElementById('completionListTableBody');
+  if (!tableBody) return;
+  var listContainerEl = document.getElementById('completionListContainer');
+  var pinnedMinHeight = 0;
+  if (listContainerEl) {
+    pinnedMinHeight = Math.max(0, Math.floor(listContainerEl.offsetHeight || 0));
+    if (pinnedMinHeight > 0) {
+      applyCompletionListMinHeight(listContainerEl, pinnedMinHeight);
+    }
+  }
+  tableBody.innerHTML = '';
+  if (currentCategoryData.length > 0) {
+    var leftHeader = document.getElementById('completionListTableHeader');
+    var rightHeader = document.getElementById('completionListTableHeaderRight');
+    if (leftHeader) {
+      leftHeader.textContent = getEffectiveQTitle(currentCategoryData[0]) || '';
+    }
+    if (rightHeader) {
+      rightHeader.textContent = getEffectiveATitle(currentCategoryData[0]) || '';
+    }
+  }
+  currentCategoryData.forEach(function(item) {
+    var row = document.createElement('tr');
+    var noCell = document.createElement('td');
+    noCell.textContent = item.no || '';
+    row.appendChild(noCell);
+    appendLearningBrowsedListSideCell(row, getEffectiveQuestion(item));
+    appendLearningBrowsedListSideCell(row, getEffectiveAnswer(item));
+    var studyCountCell = document.createElement('td');
+    studyCountCell.className = 'list-col-study-count';
+    studyCountCell.textContent = formatStudyCountForList(item);
+    var durationOldCell = document.createElement('td');
+    durationOldCell.className = 'list-col-duration list-col-duration-old';
+    durationOldCell.textContent = formatDurationForDisplay(item.duration_old);
+    var durationCell = document.createElement('td');
+    durationCell.className = 'list-col-duration list-col-duration-latest';
+    durationCell.textContent = formatDurationForDisplay(item.duration);
+    var lastDateCell = document.createElement('td');
+    lastDateCell.className = 'list-col-lastdate';
+    lastDateCell.textContent = formatYmdForDisplay(item.last_date);
+    row.appendChild(studyCountCell);
+    row.appendChild(durationOldCell);
+    row.appendChild(durationCell);
+    row.appendChild(lastDateCell);
+    tableBody.appendChild(row);
+  });
+  updateSelectionCount();
+  var listMessage = document.getElementById('completionListMessage');
+  var listContainer = document.getElementById('completionListContainer');
+  if (listMessage) listMessage.style.display = 'none';
+  if (listContainer) listContainer.style.display = 'block';
+  if (listContainerEl) {
+    clearCompletionListMinHeight(listContainerEl);
+    var contentHeight = Math.max(0, Math.floor(listContainerEl.offsetHeight || 0));
+    if (contentHeight > 0) {
+      applyCompletionListMinHeight(listContainerEl, contentHeight);
+    }
+    bindCompletionListImagesToKeepScroll(listContainerEl);
+  }
+  updateNavAnswerButton();
+  maintainCompletionScrollAtBottom();
 }
 
 // 問題の選択/解除をトグル
