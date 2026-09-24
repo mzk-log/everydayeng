@@ -180,6 +180,9 @@ var USER_SETTINGS_SYNC_RETRY_DELAY_MS = 800; // 設定同期リトライ間隔
 // Ans後：音声ネット取得を優先し、シート更新を遅延するための保留
 var pendingAnsSheetPersist = null;
 var ansSheetPersistTimer = null;
+// 全問取得の開始後に成功した学習記録。古い全問応答で端末の Ans を戻さない
+var sheetStudyWriteLog = [];
+var STUDY_STAT_FIELD_KEYS = ['total_study_count', 'daily_study_count', 'duration_old', 'duration', 'last_date'];
 
 // 通信診断（ENABLE_LOAD_DIAG）
 var loadDiagBootTimer = null;
@@ -1485,30 +1488,35 @@ function continueBootWithStudyItems(settingsErr, settingsData) {
   var serverGen = (settingsData && settingsData.dataGeneration != null)
     ? Number(settingsData.dataGeneration)
     : null;
-  var canSkip = localOk && (
-    settingsErr
-      ? true
-      : (serverGen != null && !isNaN(serverGen) && serverGen === Number(local.dataGeneration))
-  );
-  if (canSkip) {
+  var generationMatches = localOk && serverGen != null && !isNaN(serverGen) &&
+    serverGen === Number(local.dataGeneration);
+  var skipFetch = localOk && (settingsErr || generationMatches);
+  if (localOk) {
     applyStudyItemsToApp(local.items, { isBoot: true });
     finishPageLoadingAndUnlock();
     fetchDriveAudioCoverage();
     ensureAudioPrefetchInventory();
+  }
+  if (skipFetch) {
     return;
   }
-  setPageLoadingProgress(50, '全問データ');
+  if (!localOk) {
+    setPageLoadingProgress(50, '全問データ');
+  }
   fetchAllStudyItemsFromServer(function(fetchErr, items, meta) {
+    if (meta && meta.droppedStale) {
+      if (localOk) {
+        return;
+      }
+      showBootDataRetry(new Error('データがありません'));
+      return;
+    }
     if (fetchErr) {
       if (isGoogleAuthFailureMessage(String(fetchErr.message || fetchErr))) {
         showError(String(fetchErr.message || fetchErr));
         return;
       }
       if (localOk) {
-        applyStudyItemsToApp(local.items, { isBoot: true });
-        finishPageLoadingAndUnlock();
-        fetchDriveAudioCoverage();
-        ensureAudioPrefetchInventory();
         return;
       }
       showBootDataRetry(fetchErr);
@@ -1516,10 +1524,6 @@ function continueBootWithStudyItems(settingsErr, settingsData) {
     }
     if (!items || !items.length) {
       if (localOk) {
-        applyStudyItemsToApp(local.items, { isBoot: true });
-        finishPageLoadingAndUnlock();
-        fetchDriveAudioCoverage();
-        ensureAudioPrefetchInventory();
         return;
       }
       showBootDataRetry(new Error('データがありません'));
@@ -1527,11 +1531,16 @@ function continueBootWithStudyItems(settingsErr, settingsData) {
     }
     var gen = (meta && meta.dataGeneration != null) ? meta.dataGeneration : serverGen;
     writeLocalStudyBundle(items || [], gen);
-    applyStudyItemsToApp(items || [], { isBoot: true });
-    finishPageLoadingAndUnlock();
-    fetchDriveAudioCoverage();
-    ensureAudioPrefetchInventory();
-  });
+    applyStudyItemsToApp(items || [], {
+      isBoot: true,
+      skipLearningArrays: isActiveLearningSession()
+    });
+    if (!localOk) {
+      finishPageLoadingAndUnlock();
+      fetchDriveAudioCoverage();
+      ensureAudioPrefetchInventory();
+    }
+  }, localOk ? { noRetryNotFound: true } : null);
 }
 
 /**
@@ -2794,6 +2803,9 @@ function maybeRefreshStudyItemsFromGeneration(options) {
         if (isGoogleAuthFailureMessage(String(fetchErr.message || fetchErr))) {
           showError(String(fetchErr.message || fetchErr));
         }
+        return;
+      }
+      if ((meta && meta.droppedStale) || !items || !items.length) {
         return;
       }
       var nextGen = (meta && meta.dataGeneration != null) ? meta.dataGeneration : gen;
@@ -6169,10 +6181,159 @@ function parseJsonResponseWithProgress(response, onProgress) {
 }
 
 /**
- * GAS getAllStudyItems をタイムアウト付きで取得（一時失敗は自動リトライ）
- * @param {function(*, Array|null): void} onDone - (error, items)
+ * 学習記録だけを取り出す（本文は含めない）
+ * @param {Object} source
+ * @returns {Object|null}
  */
-function fetchAllStudyItemsFromServer(onDone) {
+function pickStudyStatFields(source) {
+  if (!source) {
+    return null;
+  }
+  var out = null;
+  for (var i = 0; i < STUDY_STAT_FIELD_KEYS.length; i++) {
+    var key = STUDY_STAT_FIELD_KEYS[i];
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      if (!out) {
+        out = {};
+      }
+      out[key] = source[key];
+    }
+  }
+  return out;
+}
+
+/**
+ * シート更新の成功時に、学習記録と世代を残す
+ * @param {string} id
+ * @param {Object} fields
+ * @param {number} dataGeneration
+ */
+function recordCompletedSheetStudyWrite(id, fields, dataGeneration) {
+  var picked = pickStudyStatFields(fields);
+  if (!id || !picked) {
+    return;
+  }
+  var gen = Number(dataGeneration);
+  sheetStudyWriteLog.push({
+    id: String(id),
+    fields: picked,
+    dataGeneration: isFinite(gen) ? gen : null
+  });
+}
+
+/**
+ * 全問配列の当該行へ学習記録だけを重ねる
+ * @param {Array} items
+ * @param {string} id
+ * @param {Object} fields
+ */
+function overlayStudyStatFields(items, id, fields) {
+  var picked = pickStudyStatFields(fields);
+  if (!items || !picked) {
+    return;
+  }
+  var idText = String(id);
+  for (var i = 0; i < items.length; i++) {
+    if (!items[i] || String(items[i].id) !== idText) {
+      continue;
+    }
+    var copy = {};
+    var srcKeys = Object.keys(items[i]);
+    for (var s = 0; s < srcKeys.length; s++) {
+      copy[srcKeys[s]] = items[i][srcKeys[s]];
+    }
+    var keys = Object.keys(picked);
+    for (var k = 0; k < keys.length; k++) {
+      copy[keys[k]] = picked[keys[k]];
+    }
+    items[i] = copy;
+    return;
+  }
+}
+
+/**
+ * 未送信・送信中の Ans が持つ学習記録
+ * @returns {Array<{id: string, fields: Object}>}
+ */
+function collectInFlightAnsStudyOverlays() {
+  var list = [];
+  if (pendingAnsSheetPersist && pendingAnsSheetPersist.item && pendingAnsSheetPersist.item.id != null) {
+    var pendingFields = pickStudyStatFields(pendingAnsSheetPersist.item);
+    if (pendingFields) {
+      list.push({ id: pendingAnsSheetPersist.item.id, fields: pendingFields });
+    }
+  }
+  for (var i = 0; i < gasSheetUpdateQueue.length; i++) {
+    var job = gasSheetUpdateQueue[i];
+    if (!job || !job.studyOverlay || job.id == null) {
+      continue;
+    }
+    list.push({ id: job.id, fields: job.studyOverlay });
+  }
+  return list;
+}
+
+/**
+ * 全問応答を端末へ書く前に、古い世代は捨て、新しい Ans の学習記録は残す
+ * @param {Array} items
+ * @param {{dataGeneration?: number}} meta
+ * @param {number} guardStart
+ * @returns {{items: Array, meta: Object}|null}
+ */
+function reconcileAllStudyItemsWithLocalAns(items, meta, guardStart) {
+  var local = readLocalStudyBundle();
+  var localGen = (local && local.dataGeneration != null) ? Number(local.dataGeneration) : null;
+  var respGen = (meta && meta.dataGeneration != null) ? Number(meta.dataGeneration) : null;
+  var localGenOk = localGen != null && !isNaN(localGen);
+  var respGenOk = respGen != null && !isNaN(respGen);
+  if (localGenOk && respGenOk && respGen < localGen) {
+    return null;
+  }
+  var nextItems = (items || []).slice();
+  var start = guardStart > 0 ? guardStart : 0;
+  for (var i = start; i < sheetStudyWriteLog.length; i++) {
+    var entry = sheetStudyWriteLog[i];
+    if (!entry) {
+      continue;
+    }
+    if (respGenOk && entry.dataGeneration != null && respGen > entry.dataGeneration) {
+      continue;
+    }
+    overlayStudyStatFields(nextItems, entry.id, entry.fields);
+  }
+  var inflight = collectInFlightAnsStudyOverlays();
+  for (var j = 0; j < inflight.length; j++) {
+    overlayStudyStatFields(nextItems, inflight[j].id, inflight[j].fields);
+  }
+  return { items: nextItems, meta: meta || {} };
+}
+
+/**
+ * GAS getAllStudyItems をタイムアウト付きで取得（一時失敗は自動リトライ）
+ * @param {function(*, Array|null, Object=): void} onDone - (error, items, meta)
+ * @param {{noRetryNotFound?: boolean}} [options] - true のとき HTTP 404 は再試行しない
+ */
+function fetchAllStudyItemsFromServer(onDone, options) {
+  options = options || {};
+  var guardStart = sheetStudyWriteLog.length;
+  function deliver(err, items, meta) {
+    if (typeof onDone !== 'function') {
+      return;
+    }
+    if (err || !items || !items.length) {
+      onDone(err, items || null, meta);
+      return;
+    }
+    var reconciled = reconcileAllStudyItemsWithLocalAns(items, meta, guardStart);
+    if (!reconciled) {
+      onDone(null, null, {
+        droppedStale: true,
+        dataGeneration: meta && meta.dataGeneration
+      });
+      return;
+    }
+    onDone(null, reconciled.items, reconciled.meta);
+  }
   function attempt(attemptIndex) {
     beginLoadDiag('run', '全問', ALL_STUDY_ITEMS_FETCH_MAX_ATTEMPTS, { attempt: attemptIndex, kind: 'all' });
     updateAllStudyFetchProgress(0, 0);
@@ -6210,7 +6371,7 @@ function fetchAllStudyItemsFromServer(onDone) {
         var bytes = approxJsonBytes(data);
         finishLoadDiag('run', 'OK', { ok: true, bytes: bytes, kind: 'all' });
         if (typeof onDone === 'function') {
-          onDone(null, data.items || [], {
+          deliver(null, data.items || [], {
             dataGeneration: data.dataGeneration
           });
         }
@@ -6227,9 +6388,11 @@ function fetchAllStudyItemsFromServer(onDone) {
           attempt: attemptIndex,
           status: loadDiagStatusFromError(err)
         });
+        var notFound = /ネットワークエラー:\s*404\b/.test(String(err && (err.message || err) || ''));
         if (
           attemptIndex + 1 < ALL_STUDY_ITEMS_FETCH_MAX_ATTEMPTS &&
-          isTransientAllStudyItemsError(err)
+          isTransientAllStudyItemsError(err) &&
+          !(options.noRetryNotFound && notFound)
         ) {
           var delay = ALL_STUDY_ITEMS_RETRY_BASE_DELAY_MS * Math.pow(2, attemptIndex);
           setTimeout(function() {
@@ -6239,7 +6402,7 @@ function fetchAllStudyItemsFromServer(onDone) {
         }
         finishLoadDiag('run', loadDiagStatusFromError(err), { ok: false });
         if (typeof onDone === 'function') {
-          onDone(err, null);
+          deliver(err, null);
         }
       });
   }
@@ -6457,6 +6620,11 @@ function loadLastDateModeData(options) {
         showError('アクセスエラー: ' + error.toString());
       if (holdOverlay) finishPageLoadingAndUnlock();
       cancelStartWaitCharge();
+      return;
+    }
+    if ((meta && meta.droppedStale) || !items || !items.length) {
+      clearAllStudyItemsLoadingUi();
+      if (holdOverlay) finishPageLoadingAndUnlock();
       return;
     }
     writeLocalStudyBundle(items || [], meta && meta.dataGeneration);
@@ -6724,6 +6892,11 @@ function loadDurationModeData(options) {
         showError('アクセスエラー: ' + error.toString());
       if (holdOverlay) finishPageLoadingAndUnlock();
       cancelStartWaitCharge();
+      return;
+    }
+    if ((meta && meta.droppedStale) || !items || !items.length) {
+      clearAllStudyItemsLoadingUi();
+      if (holdOverlay) finishPageLoadingAndUnlock();
       return;
     }
     writeLocalStudyBundle(items || [], meta && meta.dataGeneration);
@@ -9469,8 +9642,13 @@ function runGasSheetUpdateJob(job, attemptIndex) {
     if (job.field) {
       fields[job.field] = job.value;
     }
+    if (data && data.fields && typeof data.fields === 'object' && !Array.isArray(data.fields) &&
+        Object.keys(data.fields).length) {
+      fields = data.fields;
+    }
     if (job.id && fields && Object.keys(fields).length) {
       patchLocalStudyItemFields(job.id, fields, data.dataGeneration);
+      recordCompletedSheetStudyWrite(job.id, fields, data.dataGeneration);
     }
     if (typeof job.onSuccess === 'function') {
       job.onSuccess(data);
@@ -9543,13 +9721,17 @@ function updateItemFieldsAsync(item, fields, onSuccess, onFinalError) {
     }
     return;
   }
-  enqueueGasSheetUpdate({
+  var job = {
     action: 'updateItemFields',
     id: item.id,
     fields: fields,
     onSuccess: onSuccess,
     onFinalError: onFinalError
-  });
+  };
+  if (fields && (fields.ans_apply === 1 || fields.ans_apply === '1' || fields.ans_apply === true)) {
+    job.studyOverlay = pickStudyStatFields(item);
+  }
+  enqueueGasSheetUpdate(job);
 }
 
 /**
@@ -9585,10 +9767,8 @@ function persistAnsStudyStatsAsync(item, elapsedMs, options) {
   item.last_date = now;
 
   var fields = {
-    total_study_count: nextCount,
-    daily_study_count: nextDaily,
-    duration_old: previousDuration,
-    duration: duration,
+    ans_apply: 1,
+    elapsed_ms: currentMs,
     last_date: now
   };
 
@@ -9596,7 +9776,31 @@ function persistAnsStudyStatsAsync(item, elapsedMs, options) {
     scheduleAnsSheetPersist(item, fields);
     return;
   }
-  updateItemFieldsAsync(item, fields);
+  updateItemFieldsAsync(item, fields, function(data) {
+    applyServerAnsFieldsToOpenItem(item, data);
+  });
+}
+
+/**
+ * シートが計算した Ans の5項目を、出題中の表示と今日の件数へ反映する
+ * @param {Object} item
+ * @param {Object} data
+ */
+function applyServerAnsFieldsToOpenItem(item, data) {
+  var written = data && data.fields;
+  if (!item || !written) {
+    return;
+  }
+  var keys = ['total_study_count', 'daily_study_count', 'duration_old', 'duration', 'last_date'];
+  if (displayedLearningItem && String(displayedLearningItem.id) === String(item.id)) {
+    for (var i = 0; i < keys.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(written, keys[i])) {
+        displayedLearningItem[keys[i]] = written[keys[i]];
+      }
+    }
+    updateLearningMetaDisplay(displayedLearningItem, 'learningMeta');
+  }
+  recountTodayStudyStatsFromLocalItems();
 }
 
 /**
@@ -9612,7 +9816,9 @@ function flushPendingAnsSheetPersist() {
   }
   var pending = pendingAnsSheetPersist;
   pendingAnsSheetPersist = null;
-  updateItemFieldsAsync(pending.item, pending.fields);
+  updateItemFieldsAsync(pending.item, pending.fields, function(data) {
+    applyServerAnsFieldsToOpenItem(pending.item, data);
+  });
 }
 
 /**
