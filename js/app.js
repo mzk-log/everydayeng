@@ -46,6 +46,7 @@ var isInRetryMode = false; // 再チャレンジモードかどうか
 var retryQuestionIndex = 0; // 現在の再チャレンジ問題のインデックス
 var completedQuestionIndices = []; // 完了した問題のインデックスを保存（灰色表示）
 var isLearningCompleted = false; // 学習が完了したかどうか
+var isCategoryTransitionInProgress = false; // カテゴリ切替中か
 var completionMessageIconRevealTimeoutId = null; // 完了メッセージアイコン表示用タイマー
 var isCompletionCongratsCleared = false; // Next等でお祝い文言を空にしたか
 var isCompletionStudyFieldsCollapsed = false; // 完了後カテゴリ切替で出題／解答／note を畳んだか
@@ -63,10 +64,13 @@ var COMPLETION_SFX_URL = 'audio/pirorin.mp3';
 var UI_CLICK_SFX_URL = 'audio/buho.mp3';
 var START_SFX_URL = 'audio/start.mp3';
 var RETRY_SFX_URL = 'audio/retry.mp3';
+var CHARGE_SFX_URL = 'audio/charge.mp3';
 var UI_CLICK_SFX_VOLUME = 1.0;
 var uiClickSfxAudio = null; // ボタン効果音（使い回し。Pages静的ファイル）
 var startSfxAudio = null; // START効果音（使い回し。Pages静的ファイル）
 var retrySfxAudio = null; // リトライ効果音（使い回し。Pages静的ファイル）
+var chargeSfxAudio = null; // START待ち効果音（使い回し。Pages静的ファイル）
+var pendingStartWaitCharge = false; // 完了画面Nextのあと、Start表示できたときだけ charge を鳴らす
 var uiClickSfxPlaying = false;
 var uiClickSfxWaiters = [];
 var activePlayField = null; // 再生／取得中の欄 'question' | 'answer' | null
@@ -2679,42 +2683,42 @@ function applyStudyItemsToApp(items, options) {
   categories = built.categories;
   applyTodayStudiedItemCount(built.today_item_count, built.today_ymd);
   applyTodayStudiedAnsCount(built.today_ans_count, built.today_ymd);
-  reconcileVisibleCategorySetting();
+        reconcileVisibleCategorySetting();
 
   var select = document.getElementById('categorySelect');
   var preserveValue = options.preserveValue != null && options.preserveValue !== ''
     ? String(options.preserveValue)
     : ((select && select.value) || (currentCategoryNo != null ? String(currentCategoryNo) : ''));
-  if (select) {
+        if (select) {
     var valueToRestore = preserveValue || '';
-    if (valueToRestore && !isCategoryNoVisible(valueToRestore)) {
-      valueToRestore = '';
+          if (valueToRestore && !isCategoryNoVisible(valueToRestore)) {
+            valueToRestore = '';
       if (!skipLearningArrays && !isDurationQuestionMethod() && !isLastDateQuestionMethod()) {
-        currentCategoryNo = null;
-        currentCategoryData = [];
-        selectedQuestionIndices = [];
-        resetListDisplay();
-      }
-    }
-    select.disabled = false;
-    populateCategorySelectOptions(select, valueToRestore);
-  }
-  var learningSelectContainer = document.getElementById('learningCategorySelectContainer');
-  if (learningSelectContainer && learningSelectContainer.style.display !== 'none' && isLearningCompleted) {
-    var learningSelectEl = document.getElementById('learningCategorySelect');
-    var learningValueToRestore = '';
-    if (learningSelectEl && learningSelectEl.value) {
-      learningValueToRestore = String(learningSelectEl.value);
-    } else if (currentCategoryNo != null && currentCategoryNo !== '') {
-      learningValueToRestore = String(currentCategoryNo);
-    }
-    if (learningValueToRestore && !isCategoryNoVisible(learningValueToRestore)) {
+              currentCategoryNo = null;
+              currentCategoryData = [];
+              selectedQuestionIndices = [];
+              resetListDisplay();
+            }
+          }
+          select.disabled = false;
+          populateCategorySelectOptions(select, valueToRestore);
+        }
+        var learningSelectContainer = document.getElementById('learningCategorySelectContainer');
+        if (learningSelectContainer && learningSelectContainer.style.display !== 'none' && isLearningCompleted) {
+          var learningSelectEl = document.getElementById('learningCategorySelect');
+          var learningValueToRestore = '';
+          if (learningSelectEl && learningSelectEl.value) {
+            learningValueToRestore = String(learningSelectEl.value);
+          } else if (currentCategoryNo != null && currentCategoryNo !== '') {
+            learningValueToRestore = String(currentCategoryNo);
+          }
+          if (learningValueToRestore && !isCategoryNoVisible(learningValueToRestore)) {
       learningValueToRestore = (currentCategoryNo != null && isCategoryNoVisible(currentCategoryNo))
         ? String(currentCategoryNo)
         : '';
-    }
-    populateCategorySelectOptions(learningSelectEl, learningValueToRestore);
-  }
+          }
+          populateCategorySelectOptions(learningSelectEl, learningValueToRestore);
+        }
 
   if (!skipLearningArrays) {
     if (isDurationQuestionMethod()) {
@@ -2752,15 +2756,15 @@ function applyStudyItemsToApp(items, options) {
   }
 
   hideCategoryLoadingSpinner();
-  updateListNavButtons();
-  if (isLearningCompleted) {
-    if (isCompletionStudyFieldsCollapsed) {
-      maintainCompletionScrollAtTop();
-    } else {
-      maintainCompletionScrollAtBottom();
-    }
-  }
-  syncDailyStudyStatsDisplay();
+        updateListNavButtons();
+        if (isLearningCompleted) {
+          if (isCompletionStudyFieldsCollapsed) {
+            maintainCompletionScrollAtTop();
+          } else {
+            maintainCompletionScrollAtBottom();
+          }
+        }
+        syncDailyStudyStatsDisplay();
 }
 
 /**
@@ -2851,13 +2855,13 @@ function loadCategories(options) {
     });
     hideCategoryLoadingSpinner();
     if (!options.quiet && hasUsableAuth() && !isPageLoadingVisible()) {
-      setAppAuthUiLocked(false);
-    }
+        setAppAuthUiLocked(false);
+      }
   }
   maybeRefreshStudyItemsFromGeneration({
     preserveValue: preserveValue,
     source: options.quiet ? 'home' : 'loadCategories'
-  });
+    });
 }
 
 /**
@@ -4385,7 +4389,7 @@ function loadAudioSettings() {
   
   persistFixedAudioSpeed_();
   syncAudioSpeedButtonsLocked_();
-
+  
   // 解答音声
   var answerVoice = getAudioVoice('answer');
   updateAudioVoiceButtons('answer', answerVoice);
@@ -6195,7 +6199,7 @@ function fetchAllStudyItemsFromServer(onDone) {
       readJson: function(response) {
         return parseJsonResponseWithProgress(response, updateAllStudyFetchProgress);
       }
-    })
+      })
       .then(function(data) {
         if (timeoutId) {
           clearTimeout(timeoutId);
@@ -6276,6 +6280,7 @@ function applyLastDateModePageToList() {
     updateListNavButtons();
     if (isLearningCompleted) {
       refreshAdvanceNavControls();
+      tryPlayStartWaitCharge();
     }
     return;
   }
@@ -6293,6 +6298,7 @@ function applyLastDateModePageToList() {
   updateListNavButtons();
   if (isLearningCompleted) {
     refreshAdvanceNavControls();
+    tryPlayStartWaitCharge();
   }
 }
 
@@ -6320,6 +6326,7 @@ function regenerateLastDateModeList() {
   updateListNavButtons();
   if (isLearningCompleted) {
     refreshAdvanceNavControls();
+    tryPlayStartWaitCharge();
   }
 }
 
@@ -6442,12 +6449,14 @@ function loadLastDateModeData(options) {
     if (!isLastDateQuestionMethod()) {
       clearAllStudyItemsLoadingUi();
       if (holdOverlay) finishPageLoadingAndUnlock();
+      cancelStartWaitCharge();
       return;
     }
     if (error) {
-      clearAllStudyItemsLoadingUi('データの取得に失敗しました。再読み込みしてください。');
-      showError('アクセスエラー: ' + error.toString());
+        clearAllStudyItemsLoadingUi('データの取得に失敗しました。再読み込みしてください。');
+        showError('アクセスエラー: ' + error.toString());
       if (holdOverlay) finishPageLoadingAndUnlock();
+      cancelStartWaitCharge();
       return;
     }
     writeLocalStudyBundle(items || [], meta && meta.dataGeneration);
@@ -6615,6 +6624,7 @@ function applyDurationModePageToList() {
     updateListNavButtons();
     if (isLearningCompleted) {
       refreshAdvanceNavControls();
+      tryPlayStartWaitCharge();
     }
     return;
   }
@@ -6635,6 +6645,7 @@ function applyDurationModePageToList() {
   updateListNavButtons();
   if (isLearningCompleted) {
     refreshAdvanceNavControls();
+    tryPlayStartWaitCharge();
   }
 }
 
@@ -6705,12 +6716,14 @@ function loadDurationModeData(options) {
     if (!isDurationQuestionMethod()) {
       clearAllStudyItemsLoadingUi();
       if (holdOverlay) finishPageLoadingAndUnlock();
+      cancelStartWaitCharge();
       return;
     }
     if (error) {
-      clearAllStudyItemsLoadingUi('データの取得に失敗しました。再読み込みしてください。');
-      showError('アクセスエラー: ' + error.toString());
+        clearAllStudyItemsLoadingUi('データの取得に失敗しました。再読み込みしてください。');
+        showError('アクセスエラー: ' + error.toString());
       if (holdOverlay) finishPageLoadingAndUnlock();
+      cancelStartWaitCharge();
       return;
     }
     writeLocalStudyBundle(items || [], meta && meta.dataGeneration);
@@ -7313,10 +7326,10 @@ function compressImageToDataURL(dataUrl, maxSizeKB, callback) {
 function loadCategoryData(categoryNo) {
   if (!userEmail) {
     try {
-      userEmail = localStorage.getItem('userEmail');
+    userEmail = localStorage.getItem('userEmail');
     } catch (e) {
       userEmail = userEmail || null;
-    }
+  }
   }
   if (!userEmail) {
     showError('メールアドレスが設定されていません。');
@@ -7331,12 +7344,12 @@ function loadCategoryData(categoryNo) {
   } else {
     applyLoadedCategoryData(categoryNo, []);
   }
-  hideCategoryLoadingSpinner();
-  if (listContainer) listContainer.style.pointerEvents = 'auto';
+          hideCategoryLoadingSpinner();
+          if (listContainer) listContainer.style.pointerEvents = 'auto';
   maybeRefreshStudyItemsFromGeneration({
     preserveValue: String(categoryNo),
     source: 'categorySwitch'
-  });
+    });
 }
 
 /**
@@ -7563,25 +7576,25 @@ function displayList() {
     row.appendChild(lastDateCell);
     
     if (ui.allowRowSelect) {
-      var clickTimer = null;
-      row.addEventListener('click', function(e) {
-        if (clickTimer === null) {
-          clickTimer = setTimeout(function() {
-            clickTimer = null;
-            toggleQuestionSelection(index, row);
-          }, 300);
+    var clickTimer = null;
+    row.addEventListener('click', function(e) {
+      if (clickTimer === null) {
+        clickTimer = setTimeout(function() {
+          clickTimer = null;
+          toggleQuestionSelection(index, row);
+        }, 300);
+      }
+    });
+    if (ui.allowPreviewModal) {
+      row.addEventListener('dblclick', function(e) {
+        e.preventDefault();
+        if (clickTimer) {
+          clearTimeout(clickTimer);
+          clickTimer = null;
         }
+        var itemIndex = currentCategoryData.indexOf(item);
+        showModal(item, itemIndex);
       });
-      if (ui.allowPreviewModal) {
-        row.addEventListener('dblclick', function(e) {
-          e.preventDefault();
-          if (clickTimer) {
-            clearTimeout(clickTimer);
-            clickTimer = null;
-          }
-          var itemIndex = currentCategoryData.indexOf(item);
-          showModal(item, itemIndex);
-        });
       }
     }
     
@@ -8297,6 +8310,11 @@ function startLearning() {
         filteredData.push(currentCategoryData[index]);
       }
     });
+    // 範囲外の選択だけだと 0 件になり、学習画面が空になる。表示中の全問で開始する
+    if (filteredData.length === 0) {
+      filteredData = currentCategoryData.slice();
+      selectedQuestionIndices = [];
+    }
   }
   
   // フィルタリングされたデータをcurrentCategoryDataに設定
@@ -8961,7 +8979,7 @@ function setupFieldEditDoubleClick() {
     updateFieldEditPencils();
     return;
   }
-
+  
   var questionText = document.getElementById('questionText');
   if (questionText) {
     questionText.removeEventListener('dblclick', handleQuestionDoubleClick);
@@ -8970,7 +8988,7 @@ function setupFieldEditDoubleClick() {
   if (answerTextDisplay) {
     answerTextDisplay.removeEventListener('dblclick', handleAnswerDoubleClick);
   }
-
+  
   var noteText = document.getElementById('noteText');
   if (noteText) {
     noteText.removeEventListener('click', handleNoteClick);
@@ -10546,7 +10564,7 @@ function enqueueGasAudioFetch(taskFn, options) {
   } else {
     abortRunningAudioPrefetch();
     audioPrefetchPlayBlocked = true;
-    gasAudioFetchQueue.push(taskFn);
+  gasAudioFetchQueue.push(taskFn);
   }
   processGasAudioFetchQueue();
 }
@@ -10895,7 +10913,7 @@ function playFieldAudio(fieldType, forceRefresh, options) {
     }
     getCachedAudioFromIdb(text, voiceGender, speed, function(idbResult) {
       if (getCurrentLearningItem() !== item) {
-        settleAudioNetwork();
+          settleAudioNetwork();
         return;
       }
       if (idbResult && idbResult.audioData) {
@@ -10915,8 +10933,8 @@ function playFieldAudio(fieldType, forceRefresh, options) {
           playAudioFromCache(idbResult.audioData, fieldType, 'indexedDB');
         }, 0);
         settleAudioNetwork();
-        return;
-      }
+      return;
+    }
       enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork);
     });
     return;
@@ -10932,8 +10950,8 @@ function enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, 
   enqueueGasAudioFetch(function(signal, generation, done) {
     ensureFreshGoogleAuthToken(function() {
       if (generation !== activeAudioFetchGeneration) {
-        done();
-        settleAudioNetwork();
+      done();
+      settleAudioNetwork();
         return;
       }
       var after = function() {
@@ -11185,7 +11203,7 @@ function getAudioIdbRecord(id, onDone) {
       req.onerror = function() {
         onDone(null);
       };
-    } catch (e) {
+  } catch (e) {
       onDone(null);
     }
   });
@@ -11534,7 +11552,7 @@ function playAudioFromCache(audioData, fieldType, source) {
     currentAudio = audio;
     activePlayField = fieldType || null;
     updateFieldPlayButtons();
-
+    
     var playbackStarted = false;
 
     function isThisAudio_() {
@@ -11547,8 +11565,8 @@ function playAudioFromCache(audioData, fieldType, source) {
         return;
       }
       if (isThisAudio_()) {
-        activePlayField = null;
-        releaseCurrentAudioElement();
+      activePlayField = null;
+      releaseCurrentAudioElement();
       } else if (activePlayField === fieldType) {
         activePlayField = null;
       }
@@ -11956,7 +11974,7 @@ function collectAudioPrefetchItems() {
         return;
       }
       if (!isCategoryNoVisible(it.category_no != null ? it.category_no : resolveItemCategoryNo(it))) {
-        return;
+    return;
       }
       byId[String(it.id)] = it;
     });
@@ -12072,7 +12090,7 @@ function armAudioPrefetchRecheck_(delayMs) {
 function onAudioPrefetchQueueIdle_() {
   refreshAudioIdbStats(function() {
     if (audioPrefetchStopped) {
-      return;
+    return;
     }
     if (idbAudioTargetCount > 0 && idbAudioReadyCount >= idbAudioTargetCount) {
       return;
@@ -12209,8 +12227,8 @@ function prefetchOneDriveAudio(job, signal, generation, done) {
           clearTimeout(timeoutId);
           if (generation !== activeAudioFetchGeneration) {
             done();
-            return;
-          }
+          return;
+        }
           if (data && data.success && data.found && data.audioContent) {
             saveAudioToCache(job.text, data.audioContent, job.voice, job.speed);
             finishLoadDiag('run', 'OK', { ok: true, bytes: String(data.audioContent).length });
@@ -12267,14 +12285,14 @@ function fetchDriveAudioCoverage() {
   appendAuthParams(params);
   params.append('referer', window.location.origin);
   postGasJson(params)
-    .then(function(data) {
+      .then(function(data) {
       if (data && data.success) {
         driveAudioTargetCount = Number(data.target) || 0;
         driveAudioReadyCount = Number(data.ready) || 0;
         refreshLoadDiagUi();
       }
-    })
-    .catch(function() {
+      })
+      .catch(function() {
       // 診断用。失敗しても学習は続ける
     });
 }
@@ -12679,7 +12697,14 @@ function handleNavAnswerButtonClick() {
     if (shouldShowCompletionStartButton()) {
       playStartSfxThen(afterCompletionNavClick);
     } else {
-      playUiClickSfxThen(afterCompletionNavClick);
+      pendingStartWaitCharge = true;
+      playUiClickSfxThen(function() {
+        if (!isLearningCompleted || isCategoryTransitionInProgress) {
+          cancelStartWaitCharge();
+          return;
+        }
+        navigateCompletionCategory(1);
+      });
     }
     return;
   }
@@ -12934,11 +12959,15 @@ function navigateCompletionCategory(direction) {
   hideCompletionCongratsMessage();
   ensureCompletionBrowseLayout(function() {
     if (isDurationQuestionMethod()) {
-      navigateDurationModePage(direction);
+      if (!navigateDurationModePage(direction)) {
+        cancelStartWaitCharge();
+      }
       return;
     }
     if (isLastDateQuestionMethod()) {
-      navigateLastDateModePage(direction);
+      if (!navigateLastDateModePage(direction)) {
+        cancelStartWaitCharge();
+      }
       return;
     }
     var select = document.getElementById('learningCategorySelect');
@@ -12954,6 +12983,7 @@ function navigateCompletionCategory(direction) {
     }
     var targetIndex = findSelectableCategoryIndex(currentIndex, direction);
     if (targetIndex < 0) {
+      cancelStartWaitCharge();
       return;
     }
     var targetNo = categories[targetIndex].no;
@@ -12992,6 +13022,7 @@ function loadCategoryDataForCompletionBrowseInner(categoryNo) {
     }
   }
   if (targetCat && isEndCategory(targetCat)) {
+    cancelStartWaitCharge();
     return;
   }
   if (!userEmail) {
@@ -13000,6 +13031,7 @@ function loadCategoryDataForCompletionBrowseInner(categoryNo) {
   if (!userEmail) {
     showError('メールアドレスが設定されていません。');
     checkUserEmail();
+    cancelStartWaitCharge();
     return;
   }
   
@@ -13023,23 +13055,23 @@ function loadCategoryDataForCompletionBrowseInner(categoryNo) {
     categoryDataByNo[categoryKey] = localCached;
     if (isCategoryShuffleQuestionMethod() && String(currentCategoryNo) === categoryKey && currentCategoryData.length > 0) {
       currentCategoryData = mergeCategoryItemsPreserveOrder(currentCategoryData, localCached);
-      displayList();
-      syncCategoryLastDateFromList();
-      finishCompletionCategoryBrowse();
-    } else {
+        displayList();
+        syncCategoryLastDateFromList();
+        finishCompletionCategoryBrowse();
+      } else {
       applyLoadedCompletionCategoryData(categoryNo, localCached, false);
     }
   } else {
-    if (listMessage) {
-      listMessage.style.display = 'block';
+        if (listMessage) {
+          listMessage.style.display = 'block';
       listMessage.textContent = '表示できる問題がありません。';
-    }
-    finishCompletionCategoryBrowse();
+      }
+      finishCompletionCategoryBrowse();
   }
   maybeRefreshStudyItemsFromGeneration({
     preserveValue: categoryKey,
     source: 'completionBrowse'
-  });
+    });
 }
 
 /**
@@ -13087,6 +13119,7 @@ function finishCompletionCategoryBrowse() {
   refreshAdvanceNavControls();
   updateListNavButtons();
   maintainCompletionScrollAtBottom();
+  tryPlayStartWaitCharge();
 }
 
 /**
@@ -13185,21 +13218,21 @@ function loadCategoryDataAndStartLearning(categoryNo, forceAllQuestions) {
     return;
   }
   categoryDataByNo[String(categoryNo)] = items;
-  if (isCategoryShuffleQuestionMethod()) {
+      if (isCategoryShuffleQuestionMethod()) {
     currentCategoryData = shuffleArray(items);
-  } else {
+      } else {
     currentCategoryData = items;
-  }
-  currentCategoryNo = categoryNo;
-  if (forceAllQuestions) {
-    selectedQuestionIndices = [];
-  }
-  hideCompletionListSection();
-  justCompletedCategoryNo = null;
-  isDurationCompletionSessionView = false;
-  isLastDateCompletionSessionView = false;
-  isCategoryCompletionSessionView = false;
-  startLearning();
+      }
+      currentCategoryNo = categoryNo;
+      if (forceAllQuestions) {
+        selectedQuestionIndices = [];
+      }
+      hideCompletionListSection();
+      justCompletedCategoryNo = null;
+      isDurationCompletionSessionView = false;
+      isLastDateCompletionSessionView = false;
+      isCategoryCompletionSessionView = false;
+      startLearning();
 }
 
 // プラスボタンの状態を更新
@@ -13632,6 +13665,7 @@ function stopUiClickSfx() {
   stopSfxAudioElement_(uiClickSfxAudio);
   stopSfxAudioElement_(startSfxAudio);
   stopSfxAudioElement_(retrySfxAudio);
+  stopSfxAudioElement_(chargeSfxAudio);
   refreshAudioLockControls_();
 }
 
@@ -13657,8 +13691,8 @@ function ensureStaticSfxAudio_(existing, url) {
  */
 function ensureUiClickSfxAudio() {
   uiClickSfxAudio = ensureStaticSfxAudio_(uiClickSfxAudio, UI_CLICK_SFX_URL);
-  return uiClickSfxAudio;
-}
+    return uiClickSfxAudio;
+  }
 
 /**
  * START効果音用 Audio を用意する（未作成なら生成）
@@ -13682,6 +13716,7 @@ function preloadUiClickSfx() {
     ensureUiClickSfxAudio().load();
     ensureStartSfxAudio().load();
     ensureRetrySfxAudio().load();
+    ensureChargeSfxAudio().load();
   } catch (e) {}
 }
 
@@ -13734,6 +13769,9 @@ function playButtonSfxAudio_(audio) {
   if (audio !== retrySfxAudio) {
     stopSfxAudioElement_(retrySfxAudio);
   }
+  if (audio !== chargeSfxAudio) {
+    stopSfxAudioElement_(chargeSfxAudio);
+  }
   try {
     audio.pause();
     audio.currentTime = 0;
@@ -13785,6 +13823,50 @@ function playStartSfx() {
 
 function playRetrySfx() {
   playButtonSfxAudio_(ensureRetrySfxAudio());
+}
+
+function ensureChargeSfxAudio() {
+  chargeSfxAudio = ensureStaticSfxAudio_(chargeSfxAudio, CHARGE_SFX_URL);
+  return chargeSfxAudio;
+}
+
+function playChargeSfx() {
+  playButtonSfxAudio_(ensureChargeSfxAudio());
+}
+
+function cancelStartWaitCharge() {
+  pendingStartWaitCharge = false;
+}
+
+function isStartWaitChargeReady_() {
+  return isLearningCompleted
+    && !isCategoryTransitionInProgress
+    && shouldShowCompletionStartButton()
+    && currentCategoryData
+    && currentCategoryData.length > 0;
+}
+
+function tryPlayStartWaitCharge() {
+  if (!pendingStartWaitCharge) {
+    return;
+  }
+  if (isCategoryTransitionInProgress) {
+    return;
+  }
+  if (!isStartWaitChargeReady_()) {
+    pendingStartWaitCharge = false;
+    return;
+  }
+  pendingStartWaitCharge = false;
+  runAfterUiClickSfx(function() {
+    if (!isLearningCompleted || !shouldShowCompletionStartButton()) {
+      return;
+    }
+    if (!currentCategoryData || currentCategoryData.length === 0) {
+      return;
+    }
+    playChargeSfx();
+  });
 }
 
 function showCompletionMessage() {
@@ -13944,6 +14026,7 @@ function goToHome() {
   // 万一の抜け対策：再生中音声を停止してから遷移する
   flushPendingAnsSheetPersist();
   stopCurrentAudioPlayback();
+  cancelStartWaitCharge();
   stopUiClickSfx();
   clearAudioSourceDebug();
   
