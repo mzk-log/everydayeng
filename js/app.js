@@ -18,7 +18,7 @@ var isStopwatchRunning = false;
 var isAnswerShown = false;
 var isNoteExpanded = false; // note 本文を開いているか（情報あり時のみ意味を持つ）
 var noteClickTimer = null; // note シングル／ダブルクリック判別用
-var NOTE_COLLAPSED_HINT = 'メモあり（タップで表示）';
+var NOTE_COLLAPSED_HINT = 'メモあり';
 var userEmail = null; // ユーザーのメールアドレス（Googleログイン後）
 var googleIdToken = null; // Google IDトークン（GIS credential）
 var googleAccessToken = null; // OAuth access token（自前ボタン／Brave等向け）
@@ -70,7 +70,7 @@ var uiClickSfxAudio = null; // ボタン効果音（使い回し。Pages静的�
 var startSfxAudio = null; // START効果音（使い回し。Pages静的ファイル）
 var retrySfxAudio = null; // リトライ効果音（使い回し。Pages静的ファイル）
 var chargeSfxAudio = null; // START待ち効果音（使い回し。Pages静的ファイル）
-var pendingStartWaitCharge = false; // 完了画面Nextのあと、Start表示できたときだけ charge を鳴らす
+var pendingStartWaitCharge = false; // 完了画面Nextのあと。Startと一覧が得られたときは charge のみ。そうでなければ buho
 var uiClickSfxPlaying = false;
 var uiClickSfxWaiters = [];
 var activePlayField = null; // 再生／取得中の欄 'question' | 'answer' | null
@@ -140,6 +140,9 @@ var ENABLE_AUDIO_SOURCE_DEBUG = true;
 var ENABLE_LOAD_DIAG = true;
 var FIELD_PLAY_LONG_PRESS_MS = 700; // 再生ボタン長押しで音声再作成／本文長押しでリトライ
 var LEARNING_GESTURE_MOVE_PX = 12; // 本文タップ／長押しをスクロールと区別
+// 試行用。false にすると学習中の本文1タップは即時に戻り、2タップ聞き直しはなくなる
+var ENABLE_LEARNING_BODY_DOUBLE_TAP_REPLAY = true;
+var LEARNING_BODY_DOUBLE_TAP_MS = 300;
 var GAS_UPDATE_MAX_ATTEMPTS = 5; // シート更新の最大試行回数（初回含む）
 var GAS_UPDATE_BASE_DELAY_MS = 700; // リトライの基本待機（指数バックオフ）
 var gasSheetUpdateQueue = []; // シート更新ジョブの直列キュー
@@ -3776,6 +3779,31 @@ function setupEventListeners() {
       e.preventDefault();
       e.stopPropagation();
       startUpdateMode('answer');
+    });
+  }
+  var noteEyeButton = document.getElementById('noteEyeButton');
+  if (noteEyeButton) {
+    noteEyeButton.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (isUpdateMode || isLearningCompleted || !isAnswerShown) {
+        return;
+      }
+      var noteItem = getCurrentLearningItem();
+      if (!noteItem || !String(noteItem.note || '').trim()) {
+        return;
+      }
+      isNoteExpanded = true;
+      applyLearningNoteDisplay(noteItem);
+      updateFieldEditPencils();
+    });
+  }
+  var noteEditPencil = document.getElementById('noteEditPencil');
+  if (noteEditPencil) {
+    noteEditPencil.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      startUpdateMode('note');
     });
   }
   bindLearningBodyGestures();
@@ -9264,41 +9292,23 @@ function applyLearningNoteDisplay(item) {
     isNoteExpanded = false;
     noteText.textContent = '';
     noteText.classList.add('note-empty');
-    noteText.setAttribute('aria-expanded', 'false');
+    noteText.removeAttribute('aria-expanded');
     noteText.removeAttribute('role');
     noteText.tabIndex = -1;
     return;
   }
-  
-  noteText.setAttribute('role', 'button');
-  noteText.tabIndex = 0;
+
+  noteText.removeAttribute('role');
+  noteText.tabIndex = -1;
   if (isNoteExpanded) {
     noteText.textContent = noteValue;
     noteText.classList.add('note-expanded');
-    noteText.setAttribute('aria-expanded', 'true');
+    noteText.removeAttribute('aria-expanded');
   } else {
     noteText.textContent = NOTE_COLLAPSED_HINT;
     noteText.classList.add('note-collapsed');
-    noteText.setAttribute('aria-expanded', 'false');
+    noteText.removeAttribute('aria-expanded');
   }
-}
-
-/**
- * note の開閉をトグル（情報あり時のみ）
- */
-function toggleLearningNoteExpanded() {
-  if (isUpdateMode) {
-    return;
-  }
-  if (!isAnswerShown) {
-    return;
-  }
-  var item = getCurrentLearningItem();
-  if (!item || !String(item.note || '').trim()) {
-    return;
-  }
-  isNoteExpanded = !isNoteExpanded;
-  applyLearningNoteDisplay(item);
 }
 
 // 学習画面の項目編集用ダブルクリックを設定
@@ -9316,16 +9326,6 @@ function setupFieldEditDoubleClick() {
   if (answerTextDisplay) {
     answerTextDisplay.removeEventListener('dblclick', handleAnswerDoubleClick);
   }
-  
-  var noteText = document.getElementById('noteText');
-  if (noteText) {
-    noteText.removeEventListener('click', handleNoteClick);
-    noteText.removeEventListener('dblclick', handleNoteDoubleClick);
-    noteText.removeEventListener('keydown', handleNoteKeydown);
-    noteText.addEventListener('click', handleNoteClick);
-    noteText.addEventListener('dblclick', handleNoteDoubleClick);
-    noteText.addEventListener('keydown', handleNoteKeydown);
-  }
   updateFieldEditPencils();
 }
 
@@ -9339,48 +9339,6 @@ function handleAnswerDoubleClick(e) {
   e.preventDefault();
   e.stopPropagation();
   startUpdateMode('answer');
-}
-
-function handleNoteClick(e) {
-  if (isUpdateMode || !isAnswerShown) {
-    return;
-  }
-  var item = getCurrentLearningItem();
-  if (!item || !String(item.note || '').trim()) {
-    return;
-  }
-  // ダブルクリック判別のため遅延トグル（開き中の編集と競合しない）
-  clearNoteClickTimer();
-  noteClickTimer = setTimeout(function() {
-    noteClickTimer = null;
-    toggleLearningNoteExpanded();
-  }, 280);
-}
-
-function handleNoteDoubleClick(e) {
-  e.preventDefault();
-  e.stopPropagation();
-  clearNoteClickTimer();
-  if (!isNoteExpanded) {
-    return;
-  }
-  var item = getCurrentLearningItem();
-  if (!item || !String(item.note || '').trim()) {
-    return;
-  }
-  startUpdateMode('note');
-}
-
-function handleNoteKeydown(e) {
-  if (e.key !== 'Enter' && e.key !== ' ') {
-    return;
-  }
-  var item = getCurrentLearningItem();
-  if (!item || !String(item.note || '').trim()) {
-    return;
-  }
-  e.preventDefault();
-  toggleLearningNoteExpanded();
 }
 
 /**
@@ -10445,9 +10403,6 @@ function isLearningBodyGestureIgnoreTarget_(el) {
   if (el.closest('#learningCategorySection')) {
     return true;
   }
-  if (el.closest('#noteSection')) {
-    return true;
-  }
   if (el.closest('.field-edit-pencil')) {
     return true;
   }
@@ -10476,12 +10431,32 @@ function bindLearningBodyGestures() {
   var startX = 0;
   var startY = 0;
   var moved = false;
+  var singleTapTimer = null;
 
   function clearPressTimer() {
     if (pressTimer) {
       clearTimeout(pressTimer);
       pressTimer = null;
     }
+  }
+
+  function clearSingleTapTimer() {
+    if (singleTapTimer) {
+      clearTimeout(singleTapTimer);
+      singleTapTimer = null;
+    }
+  }
+
+  function shouldDelayBodyTapForDoubleTap_() {
+    return ENABLE_LEARNING_BODY_DOUBLE_TAP_REPLAY && !isLearningCompleted;
+  }
+
+  function replayAnswerFromBodyDoubleTap_() {
+    var btn = document.getElementById('answerPlayButton');
+    if (!btn || btn.disabled) {
+      return;
+    }
+    playFieldAudio('answer', false);
   }
 
   function isLearningScreenActive() {
@@ -10497,6 +10472,13 @@ function bindLearningBodyGestures() {
       return;
     }
     var el = getEventElement_(e.target);
+    if (singleTapTimer) {
+      clearSingleTapTimer();
+      if (!isLearningBodyGestureIgnoreTarget_(el)) {
+        replayAnswerFromBodyDoubleTap_();
+      }
+      return;
+    }
     if (isLearningBodyGestureIgnoreTarget_(el)) {
       return;
     }
@@ -10548,6 +10530,17 @@ function bindLearningBodyGestures() {
     if (isLearningBodyGestureIgnoreTarget_(el)) {
       return;
     }
+    if (shouldDelayBodyTapForDoubleTap_()) {
+      clearSingleTapTimer();
+      singleTapTimer = setTimeout(function() {
+        singleTapTimer = null;
+        if (!isLearningScreenActive() || isUpdateMode || isLearningCompleted) {
+          return;
+        }
+        handleNavAnswerButtonClick();
+      }, LEARNING_BODY_DOUBLE_TAP_MS);
+      return;
+    }
     handleNavAnswerButtonClick();
   }
 
@@ -10573,6 +10566,16 @@ function updateFieldEditPencils() {
   if (a) {
     var ans = document.getElementById('answerTextDisplay');
     a.hidden = !show || !ans || ans.style.display === 'none';
+  }
+  var eye = document.getElementById('noteEyeButton');
+  var notePencil = document.getElementById('noteEditPencil');
+  var noteItem = getCurrentLearningItem();
+  var hasNote = !!(noteItem && String(noteItem.note || '').trim());
+  if (eye) {
+    eye.hidden = !(show && hasNote && !isNoteExpanded);
+  }
+  if (notePencil) {
+    notePencil.hidden = !(show && (!hasNote || isNoteExpanded));
   }
 }
 
@@ -13059,13 +13062,11 @@ function handleNavAnswerButtonClick() {
       playStartSfxThen(afterCompletionNavClick);
     } else {
       pendingStartWaitCharge = true;
-      playUiClickSfxThen(function() {
-        if (!isLearningCompleted || isCategoryTransitionInProgress) {
-          cancelStartWaitCharge();
-          return;
-        }
-        navigateCompletionCategory(1);
-      });
+      if (isCategoryTransitionInProgress) {
+        cancelStartWaitCharge();
+        return;
+      }
+      navigateCompletionCategory(1);
     }
     return;
   }
@@ -13804,9 +13805,12 @@ function getCompletionStudyFieldElements() {
 /**
  * 完了後カテゴリ切替レイアウト：出題ブロックをフェードアウトして非表示にし、上端へスクロール
  * @param {Function} [done]
+ * @param {{scrollToTop?: boolean}} [options] - false のとき End 直後。上端へは送らない
  */
-function ensureCompletionBrowseLayout(done) {
+function ensureCompletionBrowseLayout(done, options) {
   var after = typeof done === 'function' ? done : function() {};
+  options = options || {};
+  var scrollToTop = options.scrollToTop !== false;
 
   if (completionStudyFieldsCollapseTimerId !== null) {
     clearTimeout(completionStudyFieldsCollapseTimerId);
@@ -13839,8 +13843,10 @@ function ensureCompletionBrowseLayout(done) {
       els[j].style.opacity = '';
     }
     isCompletionStudyFieldsCollapsed = true;
-    scrollPageToTop(true);
-    maintainCompletionScrollAtTop();
+    if (scrollToTop) {
+      scrollPageToTop(true);
+      maintainCompletionScrollAtTop();
+    }
     isCategoryTransitionInProgress = false;
     refreshAdvanceNavControls();
     after();
@@ -14196,7 +14202,11 @@ function playChargeSfx() {
 }
 
 function cancelStartWaitCharge() {
+  if (!pendingStartWaitCharge) {
+    return;
+  }
   pendingStartWaitCharge = false;
+  playUiClickSfx();
 }
 
 function isStartWaitChargeReady_() {
@@ -14219,23 +14229,22 @@ function tryPlayStartWaitCharge() {
     return;
   }
   pendingStartWaitCharge = false;
-  runAfterUiClickSfx(function() {
-    if (!isLearningCompleted || !shouldShowCompletionStartButton()) {
-      return;
-    }
-    if (!currentCategoryData || currentCategoryData.length === 0) {
-      return;
-    }
-    playChargeSfx();
-  });
+  if (!isLearningCompleted || !shouldShowCompletionStartButton()) {
+    return;
+  }
+  if (!currentCategoryData || currentCategoryData.length === 0) {
+    return;
+  }
+  playChargeSfx();
 }
 
 function showCompletionMessage() {
   playCompletionSfx();
-  // 完了直後は出題ブロックを再表示（カテゴリ切替で畳んでいた場合の復帰）
-  restoreCompletionStudyFields();
   updateFieldEditPencils();
   scheduleAudioPrefetch();
+  ensureCompletionBrowseLayout(function() {
+    scrollLearningContentToCompletionView();
+  }, { scrollToTop: false });
 
   var completionSection = document.getElementById('completionMessageSection');
   var completionMessageText = document.querySelector('#completionMessage .completion-message-text');
@@ -14780,6 +14789,9 @@ function refreshEditedFieldDisplay(item, text) {
   }
   
   if (updateDisplayTarget === 'note') {
+    if (String(item.note || '').trim()) {
+      isNoteExpanded = true;
+    }
     applyLearningNoteDisplay(item);
     var noteText = document.getElementById('noteText');
     if (noteText) {

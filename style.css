@@ -1880,21 +1880,21 @@ tr:last-child td {
 /* 学習画面：note空欄時は白背景の透明度を上げて空欄であることを示す */
 #screen2 .note-text.note-empty {
   background-color: rgba(255, 255, 255, 0.35);
-  min-height: 1.5em;
+  min-height: 44px;
   cursor: default;
 }
 
 /* 学習画面：note情報あり（閉じ） */
 #screen2 .note-text.note-collapsed {
-  cursor: pointer;
+  cursor: default;
   color: #555;
   user-select: none;
   -webkit-user-select: none;
 }
 
-/* 学習画面：note情報あり（開き） */
+/* 学習画面：note情報あり（開き）。枠タップは進行 */
 #screen2 .note-text.note-expanded {
-  cursor: pointer;
+  cursor: default;
 }
 
 /* ナビゲーションバー（画面下端固定） */
@@ -3223,7 +3223,8 @@ body:has(#screen2.active) .answer-text-edit {
 #screen2 .note-text {
   font-size: 16px;
   margin: 3px 0;
-  padding: 6px;
+  padding: 6px 42px 6px 6px;
+  min-height: 44px;
   border-radius: 6px;
 }
 

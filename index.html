@@ -10,7 +10,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202609242126';
+    var FRONT_VERSION = '202609252121';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -49,7 +49,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202609242126">
+  <link rel="stylesheet" href="style.css?v=202609252121">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -375,7 +375,11 @@
         
         <div class="section note-section" id="noteSection" style="display: none;">
           <div class="section-label">note:</div>
-          <div class="note-text" id="noteText"></div>
+          <div class="field-text-wrap">
+            <div class="note-text" id="noteText"></div>
+            <button type="button" class="field-edit-pencil" id="noteEyeButton" hidden aria-label="メモを表示">👁</button>
+            <button type="button" class="field-edit-pencil" id="noteEditPencil" hidden aria-label="メモを編集">✎</button>
+          </div>
           <textarea id="noteTextEdit" class="field-text-edit" style="display: none;"></textarea>
           <div class="field-update-controls" id="noteUpdateControls" style="display: none;">
             <button class="answer-update-button" id="noteUpdateButton" type="button">更新</button>
@@ -614,7 +618,7 @@
     </div>
   </div>
 
-  <script src="js/app.js?v=202609242126"></script>
+  <script src="js/app.js?v=202609252121"></script>
 </body>
 </html>
 
