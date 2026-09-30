@@ -325,6 +325,14 @@ function setupEventListeners() {
   dom.visibleCategoriesSaveButton.addEventListener('click', function() {
     saveVisibleCategoriesFromUi();
   });
+  var loadDiagMenuButton = dom.loadDiagMenuButton;
+  if (loadDiagMenuButton) {
+    loadDiagMenuButton.addEventListener('click', function() {
+      toggleLoadDiagVisible();
+    });
+  }
+  bindPageLoadingDiagLongPress();
+
   var addStudyItemMenuButton = dom.addStudyItemMenuButton;
   if (addStudyItemMenuButton) {
     addStudyItemMenuButton.addEventListener('click', function() {
@@ -536,4 +544,42 @@ function setupEventListeners() {
   });
 
   preloadUiClickSfx();
+}
+
+/**
+ * 起動オーバーレイの長押しで通信ログ表示を切り替える（管理者のみ）
+ */
+function bindPageLoadingDiagLongPress() {
+  var overlay = document.getElementById('pageLoadingOverlay');
+  if (!overlay || overlay.getAttribute('data-load-diag-press') === '1') {
+    return;
+  }
+  overlay.setAttribute('data-load-diag-press', '1');
+  var timer = null;
+  function clearTimer() {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  }
+  overlay.addEventListener('pointerdown', function(e) {
+    if (!isLoadDiagAdmin()) {
+      return;
+    }
+    if (e.button != null && e.button !== 0) {
+      return;
+    }
+    var target = e.target;
+    if (target && target.id === 'pageLoadingRetryButton') {
+      return;
+    }
+    clearTimer();
+    timer = setTimeout(function() {
+      timer = null;
+      toggleLoadDiagVisible();
+    }, FIELD_PLAY_LONG_PRESS_MS);
+  });
+  overlay.addEventListener('pointerup', clearTimer);
+  overlay.addEventListener('pointercancel', clearTimer);
+  overlay.addEventListener('pointerleave', clearTimer);
 }

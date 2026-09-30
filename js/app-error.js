@@ -55,6 +55,9 @@ function enforceGoogleAuthFailureLock(rawMessage) {
   }
   googleLogin.lockInProgress = true;
   try {
+    if (String(rawMessage || '').indexOf('Email not authorized') >= 0) {
+      revokeLoadDiagAdminForCurrentEmail();
+    }
     clearAllGoogleAuthTokens();
     clearAppSessionToken();
     clearAppSessionDataAfterAuthFailure();
@@ -75,6 +78,7 @@ function enforceGoogleAuthFailureLock(rawMessage) {
  * 認証失敗・アカウント切替時に、操作可能な学習／List 状態を破棄する
  */
 function clearAppSessionDataAfterAuthFailure() {
+  suspendLoadDiagAccess();
   stopCurrentAudioPlayback();
   stopUiClickSfx();
   stopCompletionSfx();

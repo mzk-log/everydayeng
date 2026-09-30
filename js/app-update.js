@@ -33,6 +33,9 @@ function startUpdateMode(displayTarget) {
   if (editEl) {
     editEl.value = updateMode.originalText;
     editEl.style.display = 'block';
+    updateMode.selectionStart = null;
+    updateMode.selectionEnd = null;
+    bindYomiganaSelectionMemory_(editEl);
     editEl.focus();
   }
   
@@ -109,6 +112,7 @@ function endUpdateMode(restoreOriginal) {
   if (ui) {
     var editEl = document.getElementById(ui.editId);
     if (editEl) {
+      clearYomiganaSelectionMemory_(editEl);
       editEl.style.display = 'none';
     }
     var controlsEl = document.getElementById(ui.controlsId);
@@ -228,6 +232,164 @@ function bindAnswerUpdateConfirmModalListeners() {
   answerUpdateConfirmModalListenersBound = true;
 }
 
+var YOMIGANA_PHONEME_OPEN = '<phoneme alphabet="yomigana" ph="';
+var YOMIGANA_PHONEME_AFTER_PH = '">';
+var YOMIGANA_PHONEME_CLOSE = '</phoneme>';
+
+/**
+ * ボタン押下でフォーカスが移る前に、選択範囲またはカーソル位置を覚える
+ * @param {HTMLTextAreaElement} editEl
+ */
+function rememberYomiganaSelection_(editEl) {
+  if (!editEl || !updateMode.active) {
+    return;
+  }
+  var start = editEl.selectionStart;
+  var end = editEl.selectionEnd;
+  if (start == null || end == null) {
+    updateMode.selectionStart = null;
+    updateMode.selectionEnd = null;
+    return;
+  }
+  updateMode.selectionStart = start;
+  updateMode.selectionEnd = end;
+}
+
+/**
+ * @param {HTMLTextAreaElement} editEl
+ */
+function bindYomiganaSelectionMemory_(editEl) {
+  if (!editEl) {
+    return;
+  }
+  editEl.onmouseup = function() {
+    rememberYomiganaSelection_(editEl);
+  };
+  editEl.ontouchend = function() {
+    rememberYomiganaSelection_(editEl);
+  };
+  editEl.onkeyup = function() {
+    rememberYomiganaSelection_(editEl);
+  };
+}
+
+/**
+ * @param {HTMLTextAreaElement} editEl
+ */
+function clearYomiganaSelectionMemory_(editEl) {
+  if (!editEl) {
+    return;
+  }
+  editEl.onmouseup = null;
+  editEl.ontouchend = null;
+  editEl.onkeyup = null;
+  updateMode.selectionStart = null;
+  updateMode.selectionEnd = null;
+}
+
+/**
+ * 有効な挿入位置か
+ * @param {string} value
+ * @param {number|null} start
+ * @param {number|null} end
+ * @returns {boolean}
+ */
+function isValidYomiganaRange_(value, start, end) {
+  return start != null && end != null &&
+    start >= 0 && end <= value.length && start <= end;
+}
+
+/**
+ * いまの選択／カーソル。ボタンで消えていれば、直前の位置を使う
+ * @param {HTMLTextAreaElement} editEl
+ * @returns {{start: number, end: number}|null}
+ */
+function getYomiganaInsertRange_(editEl) {
+  var value = editEl.value || '';
+  var liveStart = editEl.selectionStart;
+  var liveEnd = editEl.selectionEnd;
+  var memStart = updateMode.selectionStart;
+  var memEnd = updateMode.selectionEnd;
+
+  if (isValidYomiganaRange_(value, liveStart, liveEnd) && liveStart < liveEnd) {
+    return { start: liveStart, end: liveEnd };
+  }
+  if (isValidYomiganaRange_(value, memStart, memEnd) && memStart < memEnd) {
+    return { start: memStart, end: memEnd };
+  }
+  if (document.activeElement === editEl &&
+      isValidYomiganaRange_(value, liveStart, liveEnd) && liveStart === liveEnd) {
+    return { start: liveStart, end: liveEnd };
+  }
+  if (isValidYomiganaRange_(value, memStart, memEnd) && memStart === memEnd) {
+    return { start: memStart, end: memEnd };
+  }
+  if (isValidYomiganaRange_(value, liveStart, liveEnd) && liveStart === liveEnd) {
+    return { start: liveStart, end: liveEnd };
+  }
+  return null;
+}
+
+/**
+ * 選択範囲が既存の phoneme タグと重なるか
+ * @param {string} value
+ * @param {number} start
+ * @param {number} end
+ * @returns {boolean}
+ */
+function selectionCrossesYomiganaPhoneme_(value, start, end) {
+  var selected = value.substring(start, end);
+  if (selected.indexOf('<phoneme') >= 0 || selected.indexOf('</phoneme>') >= 0) {
+    return true;
+  }
+  var before = value.substring(0, start);
+  var openAt = before.lastIndexOf('<phoneme');
+  if (openAt < 0) {
+    return false;
+  }
+  return before.lastIndexOf('</phoneme>') < openAt;
+}
+
+/**
+ * 編集中の出題／解答へ読み指定タグを入れる
+ * 選択あり：その文字を包む。未選択：カーソル位置へ空タグを入れる
+ * @param {'question'|'answer'} displayTarget
+ */
+function insertYomiganaPhoneme(displayTarget) {
+  if (!updateMode.active || updateMode.displayTarget !== displayTarget) {
+    return;
+  }
+  if (displayTarget !== 'question' && displayTarget !== 'answer') {
+    return;
+  }
+  var ui = getUpdateUiConfig(displayTarget);
+  if (!ui) {
+    return;
+  }
+  var editEl = document.getElementById(ui.editId);
+  if (!editEl) {
+    return;
+  }
+  var range = getYomiganaInsertRange_(editEl);
+  if (!range) {
+    return;
+  }
+  var start = range.start;
+  var end = range.end;
+  var value = editEl.value || '';
+  if (selectionCrossesYomiganaPhoneme_(value, start, end)) {
+    return;
+  }
+  var selected = value.substring(start, end);
+  var wrapped = YOMIGANA_PHONEME_OPEN + YOMIGANA_PHONEME_AFTER_PH + selected + YOMIGANA_PHONEME_CLOSE;
+  editEl.value = value.substring(0, start) + wrapped + value.substring(end);
+  var cursor = start + YOMIGANA_PHONEME_OPEN.length;
+  updateMode.selectionStart = cursor;
+  updateMode.selectionEnd = cursor;
+  editEl.focus();
+  editEl.setSelectionRange(cursor, cursor);
+}
+
 // 更新モード用のイベントリスナーを設定
 function setupUpdateModeEventListeners() {
   var updateButtonIds = ['questionUpdateButton', 'answerUpdateButton', 'noteUpdateButton'];
@@ -240,6 +402,29 @@ function setupUpdateModeEventListeners() {
     }
   });
   
+  var yomiganaButtons = [
+    { id: 'questionYomiganaButton', target: 'question' },
+    { id: 'answerYomiganaButton', target: 'answer' }
+  ];
+  yomiganaButtons.forEach(function(entry) {
+    var yomiganaButton = document.getElementById(entry.id);
+    if (yomiganaButton) {
+      yomiganaButton.onpointerdown = function(event) {
+        event.preventDefault();
+        var ui = getUpdateUiConfig(entry.target);
+        if (ui) {
+          rememberYomiganaSelection_(document.getElementById(ui.editId));
+        }
+      };
+      yomiganaButton.onpointerup = function(event) {
+        if (event.button != null && event.button !== 0) {
+          return;
+        }
+        insertYomiganaPhoneme(entry.target);
+      };
+    }
+  });
+
   var endButtonIds = ['questionEndButton', 'answerEndButton', 'noteEndButton'];
   endButtonIds.forEach(function(id) {
     var button = document.getElementById(id);

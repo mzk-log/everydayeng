@@ -75,7 +75,7 @@ function displayImageOrText(element, content) {
     element.textContent = formattedDate;
   } else {
     // テキストの場合
-    element.textContent = trimmedContent;
+    element.textContent = studyFieldDisplayText(trimmedContent);
   }
 }
 

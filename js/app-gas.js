@@ -6,6 +6,190 @@ function isLoadDiagEnabled() {
 }
 
 /**
+ * @param {string} email
+ * @returns {string}
+ */
+function normalizeLoadDiagEmail_(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+/**
+ * @param {string} email
+ * @returns {string}
+ */
+function loadDiagAdminStorageKey_(email) {
+  return LOAD_DIAG_ADMIN_KEY_PREFIX + normalizeLoadDiagEmail_(email);
+}
+
+/**
+ * @param {string} email
+ * @returns {string}
+ */
+function loadDiagVisibleStorageKey_(email) {
+  return LOAD_DIAG_VISIBLE_KEY_PREFIX + normalizeLoadDiagEmail_(email);
+}
+
+/**
+ * いまの通信が進行中か（表示ONにしたときに経過更新を再開する）
+ * @param {Object} slot
+ * @returns {boolean}
+ */
+function isLoadDiagSlotLive_(slot) {
+  if (!slot || !slot.startedAt) {
+    return false;
+  }
+  return slot.status === '取得中' || slot.status === '通信待ち' || slot.status === '更新待機';
+}
+
+/**
+ * 管理者かつ表示ON
+ * @returns {boolean}
+ */
+function isLoadDiagAdmin() {
+  return isLoadDiagEnabled() && loadDiagAdmin === true;
+}
+
+/**
+ * @returns {boolean}
+ */
+function isLoadDiagVisible() {
+  return isLoadDiagAdmin() && loadDiagVisible === true;
+}
+
+/**
+ * メニューと診断行を、いまの管理者／表示フラグに合わせる
+ */
+function syncLoadDiagAccessUi() {
+  var box = dom.loadDiagMenuItemContainer;
+  var label = dom.loadDiagMenuButtonText;
+  if (box) {
+    box.style.display = isLoadDiagAdmin() ? '' : 'none';
+  }
+  if (label) {
+    label.textContent = loadDiagVisible ? '通信ログ ON' : '通信ログ OFF';
+  }
+  if (!isLoadDiagVisible()) {
+    stopLoadDiagTicker('boot');
+    stopLoadDiagTicker('run');
+  }
+  refreshLoadDiagUi();
+}
+
+/**
+ * 進行中の通信があれば、表示用の経過更新を始める
+ */
+function resumeLoadDiagTickersIfLive_() {
+  if (!isLoadDiagVisible()) {
+    return;
+  }
+  if (isLoadDiagSlotLive_(loadDiagBoot)) {
+    startLoadDiagTicker('boot');
+  }
+  if (isLoadDiagSlotLive_(loadDiagRun)) {
+    startLoadDiagTicker('run');
+  }
+}
+
+/**
+ * 使える認証がある起動時：同一メールの管理者記憶と表示ONを戻す
+ */
+function restoreLoadDiagAccessFromStorage() {
+  var email = normalizeLoadDiagEmail_(resolveAuthEmail());
+  loadDiagAdmin = false;
+  loadDiagVisible = false;
+  if (email) {
+    try {
+      loadDiagAdmin = localStorage.getItem(loadDiagAdminStorageKey_(email)) === '1';
+      loadDiagVisible = loadDiagAdmin &&
+        localStorage.getItem(loadDiagVisibleStorageKey_(email)) === '1';
+    } catch (e) {
+      loadDiagAdmin = false;
+      loadDiagVisible = false;
+    }
+  }
+  resumeLoadDiagTickersIfLive_();
+  syncLoadDiagAccessUi();
+}
+
+/**
+ * 認証成功の isAdmin を反映する
+ * @param {boolean} isAdmin
+ */
+function applyLoadDiagAdminFromServer(isAdmin) {
+  var email = normalizeLoadDiagEmail_(resolveAuthEmail());
+  var admin = isAdmin === true;
+  var visible = false;
+  if (email) {
+    try {
+      localStorage.setItem(loadDiagAdminStorageKey_(email), admin ? '1' : '0');
+      if (admin) {
+        visible = localStorage.getItem(loadDiagVisibleStorageKey_(email)) === '1';
+      }
+    } catch (e) {
+      visible = false;
+    }
+  }
+  if (loadDiagAdmin === admin && loadDiagVisible === visible) {
+    return;
+  }
+  loadDiagAdmin = admin;
+  loadDiagVisible = visible;
+  resumeLoadDiagTickersIfLive_();
+  syncLoadDiagAccessUi();
+}
+
+/**
+ * ログアウト・アカウント切替の直後は隠す。端末の管理者記憶は残す
+ */
+function suspendLoadDiagAccess() {
+  loadDiagAdmin = false;
+  loadDiagVisible = false;
+  syncLoadDiagAccessUi();
+}
+
+/**
+ * 未許可：このメールの管理者記憶を消して隠す
+ */
+function revokeLoadDiagAdminForCurrentEmail() {
+  var email = normalizeLoadDiagEmail_(resolveAuthEmail());
+  loadDiagAdmin = false;
+  loadDiagVisible = false;
+  if (email) {
+    try {
+      localStorage.setItem(loadDiagAdminStorageKey_(email), '0');
+    } catch (e) {
+      // ignore
+    }
+  }
+  syncLoadDiagAccessUi();
+}
+
+/**
+ * 管理者だけが通信ログの表示を切り替える
+ */
+function toggleLoadDiagVisible() {
+  if (!isLoadDiagAdmin()) {
+    return;
+  }
+  loadDiagVisible = !loadDiagVisible;
+  var email = normalizeLoadDiagEmail_(resolveAuthEmail());
+  if (email) {
+    try {
+      var key = loadDiagVisibleStorageKey_(email);
+      if (loadDiagVisible) {
+        localStorage.setItem(key, '1');
+      } else {
+        localStorage.removeItem(key);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+  resumeLoadDiagTickersIfLive_();
+  syncLoadDiagAccessUi();
+}
+
+/**
  * @param {number} ms
  * @returns {string}
  */
@@ -140,13 +324,16 @@ function approxJsonBytes(obj) {
  * 診断UIを描画
  */
 function refreshLoadDiagUi() {
-  if (!isLoadDiagEnabled()) {
+  if (!isLoadDiagVisible()) {
     var hideIds = ['pageLoadingDiag', 'learningLoadDiag', 'netLoadDiag'];
     for (var i = 0; i < hideIds.length; i++) {
       var elHide = document.getElementById(hideIds[i]);
       if (elHide) {
         elHide.style.display = 'none';
       }
+    }
+    if (typeof syncAppHeaderHeight === 'function') {
+      syncAppHeaderHeight();
     }
     return;
   }
@@ -247,8 +434,10 @@ function beginLoadDiag(which, phase, maxAttempts, extra) {
   } else {
     slot.lastSuccessSec = loadDiag.lastAudioSec;
   }
-  startLoadDiagTicker(which);
-  refreshLoadDiagUi();
+  if (isLoadDiagVisible()) {
+    startLoadDiagTicker(which);
+    refreshLoadDiagUi();
+  }
 }
 
 /**
@@ -270,7 +459,9 @@ function updateLoadDiag(which, patch) {
   if (patch.restartTimer) {
     slot.startedAt = Date.now();
   }
-  refreshLoadDiagUi();
+  if (isLoadDiagVisible()) {
+    refreshLoadDiagUi();
+  }
 }
 
 /**
@@ -308,6 +499,9 @@ function finishLoadDiag(which, status, opts) {
     pushLoadDiagHistory(
       formatLoadDiagClock() + ' ' + formatLoadDiagLine(slot, { elapsedMs: elapsedSec * 1000 })
     );
+  }
+  if (!isLoadDiagVisible()) {
+    return;
   }
   refreshLoadDiagUi();
   var keepMs = opts.keepTickerMs != null ? opts.keepTickerMs : (which === 'boot' ? 0 : 1200);
@@ -367,6 +561,9 @@ function buildGasPostUrl() {
 function applyGasAuthPayload(data) {
   if (data && data.sessionToken) {
     setAppSessionToken(data.sessionToken);
+  }
+  if (data && data.success === true && typeof data.isAdmin === 'boolean') {
+    applyLoadDiagAdminFromServer(data.isAdmin);
   }
   return data;
 }

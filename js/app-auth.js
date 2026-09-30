@@ -2,12 +2,14 @@
 function checkUserEmail() {
   restoreGoogleAuthFromStorage();
   if (!googleAuth.email || !hasUsableAuth()) {
+    suspendLoadDiagAccess();
     setAppAuthUiLocked(true);
     tryGoogleResumeSignIn(function() {
       showGoogleLoginDialog({ cancellable: true });
     });
     return;
   }
+  restoreLoadDiagAccessFromStorage();
   startAuthenticatedBoot();
 }
 

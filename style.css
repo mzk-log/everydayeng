@@ -1694,7 +1694,8 @@ tr:last-child td {
 }
 
 .answer-update-button,
-.answer-end-button {
+.answer-end-button,
+.field-yomigana-button {
   padding: 10px 20px;
   font-size: 16px;
   font-weight: bold;
@@ -1728,6 +1729,19 @@ tr:last-child td {
 
 .answer-end-button:active {
   background-color: #c62828;
+}
+
+.field-yomigana-button {
+  background-color: #1565C0;
+  color: #fff;
+}
+
+.field-yomigana-button:hover {
+  background-color: #0D47A1;
+}
+
+.field-yomigana-button:active {
+  background-color: #0A3A86;
 }
 
 /* マイクボタン */

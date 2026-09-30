@@ -37,7 +37,7 @@ function escapeAddStudyItemHtml(text) {
 }
 
 function previewAddStudyItemText(text) {
-  var t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+  var t = studyFieldDisplayText(text).replace(/\s+/g, ' ').trim();
   return t || '（空）';
 }
 

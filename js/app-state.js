@@ -147,7 +147,9 @@ var updateMode = {
   active: false, // 更新モードかどうか
   originalText: '', // 更新前の編集対象テキスト
   displayTarget: null, // 'question' | 'answer' | 'note'
-  storageField: null // 保存先キー 'question' | 'answer' | 'note'
+  storageField: null, // 保存先キー 'question' | 'answer' | 'note'
+  selectionStart: null, // 読みボタン用。押下で消える前の選択／カーソル開始
+  selectionEnd: null // 同上。未選択なら開始と同じ（カーソル位置）
 };
 var voiceRec = {
   recorder: null, // MediaRecorder
@@ -176,7 +178,7 @@ var AUDIO_PREFETCH_FAIL_BACKOFF_MS = 10000; // 失敗後の再開（倍増の起
 var AUDIO_PREFETCH_FAIL_BACKOFF_MAX_MS = 60000;
 var AUTH_REFRESH_MARGIN_MS = 5 * 60 * 1000; // トークン残存がこれ未満なら静かに再取得
 var ENABLE_AUDIO_SOURCE_DEBUG = true;
-var ENABLE_LOAD_DIAG = true;
+var ENABLE_LOAD_DIAG = true; // 通信のメモリ記録。画面表示は管理者かつ表示ONのときだけ
 var FIELD_PLAY_LONG_PRESS_MS = 700; // 再生ボタン長押しで音声再作成／本文長押しでリトライ
 var LEARNING_GESTURE_MOVE_PX = 12; // 本文タップ／長押しをスクロールと区別
 var LEARNING_BODY_DOUBLE_TAP_MS = 300;
@@ -250,6 +252,10 @@ var loadDiag = {
   lastAllSec: null
 };
 var LOAD_DIAG_HISTORY_MAX = 8; // 直近完了ログ（スクショ1画面向け）
+var LOAD_DIAG_ADMIN_KEY_PREFIX = 'loadDiagAdmin:';
+var LOAD_DIAG_VISIBLE_KEY_PREFIX = 'loadDiagVisible:';
+var loadDiagAdmin = false; // いまのメールが管理者か
+var loadDiagVisible = false; // 管理者の表示ON
 var loadDiagHistory = []; // 古い→新しい。表示は新しい順
 var loadDiagBoot = {
   phase: '',
@@ -422,5 +428,8 @@ var dom = {
   appHeaderVersion: document.getElementById('appHeaderVersion'),
   audioSourceDebug: document.getElementById('audioSourceDebug'),
   learningLoadDiag: document.getElementById('learningLoadDiag'),
-  netLoadDiag: document.getElementById('netLoadDiag')
+  netLoadDiag: document.getElementById('netLoadDiag'),
+  loadDiagMenuItemContainer: document.getElementById('loadDiagMenuItemContainer'),
+  loadDiagMenuButton: document.getElementById('loadDiagMenuButton'),
+  loadDiagMenuButtonText: document.getElementById('loadDiagMenuButtonText')
 };

@@ -192,7 +192,7 @@ function appendHomeListSideCell(row, content) {
     });
     cell.appendChild(img);
   } else {
-    cell.textContent = content;
+    cell.textContent = studyFieldDisplayText(content);
   }
   row.appendChild(cell);
 }
@@ -295,7 +295,7 @@ function appendJustCompletedListSideCell(row, content) {
     });
     cell.appendChild(img);
   } else {
-    cell.textContent = content;
+    cell.textContent = studyFieldDisplayText(content);
   }
   row.appendChild(cell);
 }
@@ -390,7 +390,7 @@ function appendLearningBrowsedListSideCell(row, content) {
     });
     cell.appendChild(img);
   } else {
-    cell.textContent = content;
+    cell.textContent = studyFieldDisplayText(content);
   }
   row.appendChild(cell);
 }

@@ -293,3 +293,15 @@ function formatIsoDateTimeToYearMonth(isoString) {
     return isoString;
   }
 }
+
+/**
+ * 出題／解答の表示用。読み指定の phoneme タグを外し、中の文字だけ返す
+ * @param {*} text
+ * @returns {string}
+ */
+function studyFieldDisplayText(text) {
+  var source = text == null ? '' : String(text);
+  return source.replace(/<phoneme\b[^>]*>[\s\S]*?<\/phoneme>/gi, function(match) {
+    return match.replace(/^<phoneme\b[^>]*>/i, '').replace(/<\/phoneme>$/i, '');
+  });
+}
