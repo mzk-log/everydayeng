@@ -291,11 +291,14 @@ function setupEventListeners() {
     closeSideMenu();
   });
   
-  // 問題追加中の ESC は閉じない（閉じる／× のみ）。裏のメニューも閉じない
+  // 問題追加・表示カテゴリ中の ESC は閉じない（閉じる／×／キャンセルのみ）。裏のメニューも閉じない
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
       var addOverlay = dom.addStudyItemOverlay;
       if (addOverlay && addOverlay.style.display !== 'none') {
+        return;
+      }
+      if (isVisibleCategoriesOverlayOpen()) {
         return;
       }
       closeSideMenu();
@@ -312,9 +315,9 @@ function setupEventListeners() {
     toggleAudioSettingsSubmenu();
   });
   
-  // 表示カテゴリ（HOMEのみ）
+  // 表示カテゴリ（HOMEのみ・全画面）
   dom.visibleCategoriesButton.addEventListener('click', function() {
-    toggleVisibleCategoriesSubmenu();
+    openVisibleCategoriesOverlay();
   });
   dom.visibleCategoriesSelectAllButton.addEventListener('click', function() {
     setAllVisibleCategoryChecks(true);
@@ -325,6 +328,12 @@ function setupEventListeners() {
   dom.visibleCategoriesSaveButton.addEventListener('click', function() {
     saveVisibleCategoriesFromUi();
   });
+  var visibleCategoriesCloseButton = dom.visibleCategoriesCloseButton;
+  if (visibleCategoriesCloseButton) {
+    visibleCategoriesCloseButton.addEventListener('click', function() {
+      closeVisibleCategoriesOverlay();
+    });
+  }
   var loadDiagMenuButton = dom.loadDiagMenuButton;
   if (loadDiagMenuButton) {
     loadDiagMenuButton.addEventListener('click', function() {
@@ -433,7 +442,7 @@ function setupEventListeners() {
   }
   bindAnswerUpdateConfirmModalListeners();
   dom.visibleCategoriesCancelButton.addEventListener('click', function() {
-    closeVisibleCategoriesSubmenu();
+    closeVisibleCategoriesOverlay();
   });
   
   // 出題設定のアコーディオンメニュー

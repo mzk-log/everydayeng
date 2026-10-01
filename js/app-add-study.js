@@ -310,6 +310,18 @@ function renderAddStudyItemList() {
       escapeAddStudyItemHtml(id) + '">下に挿入</button>';
     html += '<button type="button" class="add-study-list-mini add-study-list-mini-del" data-add-del="' +
       escapeAddStudyItemHtml(id) + '">削除</button>';
+    var ttsPending = typeof isStudyItemAudioPreparePending === 'function' &&
+      isStudyItemAudioPreparePending(id);
+    var ttsMissing = (typeof getStudyItemMissingAudioFields === 'function')
+      ? getStudyItemMissingAudioFields(it)
+      : [];
+    if (ttsPending) {
+      html += '<button type="button" class="add-study-list-mini add-study-list-mini-tts is-busy" data-add-tts="' +
+        escapeAddStudyItemHtml(id) + '" disabled>TTS中...</button>';
+    } else if (ttsMissing.length) {
+      html += '<button type="button" class="add-study-list-mini add-study-list-mini-tts" data-add-tts="' +
+        escapeAddStudyItemHtml(id) + '">TTS実行</button>';
+    }
     html += '</div></div>';
     html += '<div class="add-study-list-move">';
     html += '<button type="button" class="add-study-list-move-btn" data-add-move="up" data-add-id="' +
@@ -322,12 +334,81 @@ function renderAddStudyItemList() {
   list.innerHTML = html;
 }
 
+/**
+ * 追加画面が開いているか
+ * @returns {boolean}
+ */
+function isAddStudyItemOverlayOpen() {
+  var overlay = dom.addStudyItemOverlay;
+  return !!(overlay && overlay.style.display === 'flex');
+}
+
+/**
+ * TTS ボタン表示だけ差し替える（一覧のスクロール位置を維持）
+ */
+function refreshAddStudyItemAudioButtons() {
+  if (!isAddStudyItemOverlayOpen()) {
+    return;
+  }
+  var list = dom.addStudyItemList;
+  if (!list) {
+    return;
+  }
+  var scrollTop = list.scrollTop;
+  renderAddStudyItemList();
+  list.scrollTop = scrollTop;
+}
+
+/**
+ * 未準備の欄だけ既存の音声準備キューへ積む（追加待ち・本問再生中は後回し）
+ * @param {string} itemId
+ */
+function requestAddStudyItemTts(itemId) {
+  if (!itemId || typeof enqueueStudyItemAudioPrepare !== 'function') {
+    return;
+  }
+  if (typeof getStudyItemMissingAudioFields !== 'function') {
+    return;
+  }
+  var select = dom.addStudyItemCategorySelect;
+  var categoryNo = select ? String(select.value || '') : '';
+  var items = getAddStudyItemItemsSorted(categoryNo);
+  var item = null;
+  for (var i = 0; i < items.length; i++) {
+    if (String(items[i].id) === String(itemId)) {
+      item = items[i];
+      break;
+    }
+  }
+  if (!item) {
+    setAddStudyItemStatus('TTS対象の問題が見つかりません。', false);
+    return;
+  }
+  var missing = getStudyItemMissingAudioFields(item);
+  if (!missing.length) {
+    refreshAddStudyItemAudioButtons();
+    return;
+  }
+  enqueueStudyItemAudioPrepare(item, { fields: missing });
+  refreshAddStudyItemAudioButtons();
+}
+
 function handleAddStudyItemListClick(e) {
   if (addStudy.formConfirming || addStudy.formBusy) {
     return;
   }
   var target = e.target;
   if (!target) return;
+  var ttsBtn = target.closest ? target.closest('[data-add-tts]') : null;
+  if (ttsBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (ttsBtn.disabled) {
+      return;
+    }
+    requestAddStudyItemTts(ttsBtn.getAttribute('data-add-tts'));
+    return;
+  }
   var delBtn = target.closest ? target.closest('[data-add-del]') : null;
   if (delBtn) {
     e.preventDefault();
@@ -457,6 +538,11 @@ function openAddStudyItemOverlay() {
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
   }
+  if (typeof refreshAudioIdbStats === 'function') {
+    refreshAudioIdbStats(function() {
+      refreshAddStudyItemAudioButtons();
+    });
+  }
 }
 
 function closeAddStudyItemOverlay() {
@@ -567,6 +653,9 @@ function finishAddStudyItemFormConfirm() {
   addStudy.confirmPending = false;
   addStudy.confirmKind = '';
   syncAddStudyItemEditorUi();
+  if (typeof notifyAddStudyAudioGateChanged === 'function') {
+    notifyAddStudyAudioGateChanged();
+  }
 }
 
 function showAddStudyItemRenameConfirm() {
@@ -599,6 +688,9 @@ function submitRenameStudyCategory() {
   var categoryNo = String(select.value);
   var categoryName = String(input.value || '').trim();
   addStudy.formBusy = true;
+  if (typeof pauseBackgroundAudioForAddStudy_ === 'function') {
+    pauseBackgroundAudioForAddStudy_();
+  }
   setAddStudyItemAskStatus('更新中...');
   syncAddStudyItemEditorUi();
   var params = new URLSearchParams();
@@ -752,6 +844,9 @@ function submitUpdateStudyItem() {
     return;
   }
   addStudy.formBusy = true;
+  if (typeof pauseBackgroundAudioForAddStudy_ === 'function') {
+    pauseBackgroundAudioForAddStudy_();
+  }
   setAddStudyItemAskStatus(addStudyItemBusyMessage());
   syncAddStudyItemEditorUi();
   var oldQuestion = item.question != null ? String(item.question) : '';
@@ -776,19 +871,34 @@ function submitUpdateStudyItem() {
       item.note = draft.note || '';
       var items = getMemoryAllStudyItems().slice();
       applyAddStudyItemLocalItems(items, data.dataGeneration, String(item.category_no));
-      if (oldQuestion !== item.question) {
+      var questionChanged = oldQuestion !== item.question;
+      var answerChanged = oldAnswer !== item.answer;
+      var deleteJobs = [];
+      if (questionChanged) {
         clearLocalAudioCachesForText(oldQuestion);
         clearLocalAudioCachesForText(item.question);
-        deleteDriveAudioAsync(item, 'question');
+        deleteJobs.push(deleteDriveAudioAsync(item, 'question'));
       }
-      if (oldAnswer !== item.answer) {
+      if (answerChanged) {
         clearLocalAudioCachesForText(oldAnswer);
         clearLocalAudioCachesForText(item.answer);
-        deleteDriveAudioAsync(item, 'answer');
+        deleteJobs.push(deleteDriveAudioAsync(item, 'answer'));
       }
-      resetAddStudyItemEditor({ keepCategory: true, clearFields: true });
-      renderAddStudyItemList();
-      setAddStudyItemStatus('更新しました。', true);
+      var prepareFields = [];
+      if (questionChanged) {
+        prepareFields.push('question');
+      }
+      if (answerChanged) {
+        prepareFields.push('answer');
+      }
+      return Promise.all(deleteJobs).then(function() {
+        if (prepareFields.length && typeof enqueueStudyItemAudioPrepare === 'function') {
+          enqueueStudyItemAudioPrepare(item, { fields: prepareFields });
+        }
+        resetAddStudyItemEditor({ keepCategory: true, clearFields: true });
+        renderAddStudyItemList();
+        setAddStudyItemStatus('更新しました。', true);
+      });
     })
     .catch(function(error) {
       setAddStudyItemStatus(String(error && (error.message || error) || '更新に失敗しました'), false);
@@ -807,6 +917,9 @@ function submitDeleteStudyItem() {
     return;
   }
   setConfirmModalBusy(true, '削除中...');
+  if (typeof pauseBackgroundAudioForAddStudy_ === 'function') {
+    pauseBackgroundAudioForAddStudy_();
+  }
   var params = new URLSearchParams();
   params.append('action', 'deleteStudyItem');
   params.append('id', String(item.id));
@@ -844,6 +957,9 @@ function submitDeleteStudyItem() {
       addStudy.confirmPending = false;
       addStudy.pendingDeleteId = '';
       closeUpdateConfirmModal();
+      if (typeof notifyAddStudyAudioGateChanged === 'function') {
+        notifyAddStudyAudioGateChanged();
+      }
     });
 }
 
@@ -857,6 +973,9 @@ function submitMoveStudyItem(id, direction) {
   }
   var dir = String(direction || '') === 'up' ? 'up' : 'down';
   addStudy.moveBusy = true;
+  if (typeof pauseBackgroundAudioForAddStudy_ === 'function') {
+    pauseBackgroundAudioForAddStudy_();
+  }
   setAddStudyItemStatus(dir === 'up' ? '上へ移動中...' : '下へ移動中...', false);
   var params = new URLSearchParams();
   params.append('action', 'moveStudyItem');
@@ -910,6 +1029,9 @@ function submitMoveStudyItem(id, direction) {
     })
     .then(function() {
       addStudy.moveBusy = false;
+      if (typeof notifyAddStudyAudioGateChanged === 'function') {
+        notifyAddStudyAudioGateChanged();
+      }
     });
 }
 
@@ -923,6 +1045,9 @@ function submitAddStudyItem() {
   }
   var isInsert = addStudy.mode === 'insert';
   addStudy.formBusy = true;
+  if (typeof pauseBackgroundAudioForAddStudy_ === 'function') {
+    pauseBackgroundAudioForAddStudy_();
+  }
   setAddStudyItemAskStatus(addStudyItemBusyMessage());
   syncAddStudyItemEditorUi();
   var params = new URLSearchParams();
@@ -966,6 +1091,9 @@ function submitAddStudyItem() {
         }
         items.push(data.item);
         applyAddStudyItemLocalItems(items, data.dataGeneration, keepCat);
+      }
+      if (typeof enqueueStudyItemAudioPrepare === 'function') {
+        enqueueStudyItemAudioPrepare(data.item);
       }
       resetAddStudyItemEditor({ keepCategory: true, clearFields: true });
       renderAddStudyItemList();

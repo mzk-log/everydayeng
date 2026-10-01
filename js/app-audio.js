@@ -474,6 +474,33 @@ function enqueueGasAudioFetch(taskFn, options) {
   processGasAudioFetchQueue();
 }
 
+/**
+ * 問題追加の GAS 待ち中は、先読み／準備音声を動かさない
+ * @returns {boolean}
+ */
+function isAddStudyDeferringAudio_() {
+  return !!(addStudy.formBusy || addStudy.moveBusy || addStudy.modalBusy);
+}
+
+/**
+ * 追加操作の開始時：実行中の先読みだけ止める（本問キューは触らない）
+ */
+function pauseBackgroundAudioForAddStudy_() {
+  abortRunningAudioPrefetch();
+}
+
+/**
+ * 追加の待ちが解けたら、保存後準備と先読みを再開する
+ */
+function notifyAddStudyAudioGateChanged() {
+  if (isAddStudyDeferringAudio_()) {
+    pauseBackgroundAudioForAddStudy_();
+    return;
+  }
+  flushStudyAudioPrepareQueue_();
+  scheduleAudioPrefetch();
+}
+
 function processGasAudioFetchQueue() {
   if (audioFetch.running) {
     return;
@@ -483,6 +510,42 @@ function processGasAudioFetchQueue() {
   if (audioFetch.queue.length > 0) {
     task = audioFetch.queue.shift();
   } else if (
+    !isAddStudyDeferringAudio_() &&
+    ENABLE_AUDIO_PREFETCH &&
+    !audioPrefetch.stopped &&
+    !audioPrefetch.playBlocked &&
+    !isFieldAudioBusy() &&
+    studyAudioPrepare.queue.length > 0
+  ) {
+    // 保存後準備／手動TTS：先読みより前。queue に残すので本問再生の abort で消えない
+    var prepJob = studyAudioPrepare.queue.shift();
+    studyAudioPrepare.activeItemId = prepJob && prepJob.item
+      ? String(prepJob.item.id)
+      : '';
+    task = function(signal, generation, done) {
+      ensureStudyItemFieldAudio_(prepJob, signal, generation, function() {
+        if (studyAudioPrepare.activeItemId && prepJob && prepJob.item &&
+            studyAudioPrepare.activeItemId === String(prepJob.item.id)) {
+          var stillPending = false;
+          for (var pi = 0; pi < studyAudioPrepare.queue.length; pi++) {
+            var pending = studyAudioPrepare.queue[pi];
+            if (pending && pending.item &&
+                String(pending.item.id) === String(prepJob.item.id)) {
+              stillPending = true;
+              break;
+            }
+          }
+          if (!stillPending) {
+            studyAudioPrepare.activeItemId = '';
+          }
+        }
+        notifyAddStudyAudioPrepareProgress_();
+        done();
+      });
+    };
+    isPrefetch = true;
+  } else if (
+    !isAddStudyDeferringAudio_() &&
     ENABLE_AUDIO_PREFETCH &&
     !audioPrefetch.stopped &&
     !audioPrefetch.playBlocked &&
@@ -522,9 +585,11 @@ function processGasAudioFetchQueue() {
     processGasAudioFetchQueue();
     if (!isPrefetch && audioFetch.queue.length === 0 && !isFieldAudioBusy()) {
       audioPrefetch.playBlocked = false;
+      flushStudyAudioPrepareQueue_();
       scheduleAudioPrefetch();
     } else if (
       isPrefetch &&
+      studyAudioPrepare.queue.length === 0 &&
       audioFetch.prefetchQueue.length === 0 &&
       audioFetch.queue.length === 0 &&
       !isFieldAudioBusy()
@@ -668,12 +733,21 @@ function clearLocalAudioCachesForText(text) {
  * @param {string} speed
  * @param {string} audioContent
  */
+/**
+ * Drive へ音声を保存（失敗は無視。Promise を返す）
+ * @param {Object} item
+ * @param {string} sheetField
+ * @param {string} voiceGender
+ * @param {string} speed
+ * @param {string} audioContent
+ * @returns {Promise<*>}
+ */
 function saveDriveAudioAsync(item, sheetField, voiceGender, speed, audioContent) {
   if (!canUseDriveAudioMeta(item) || !audioContent || !googleAuth.email) {
-    return;
+    return Promise.resolve(null);
   }
   if (sheetField !== 'question' && sheetField !== 'answer') {
-    return;
+    return Promise.resolve(null);
   }
   try {
     var params = new URLSearchParams();
@@ -687,26 +761,26 @@ function saveDriveAudioAsync(item, sheetField, voiceGender, speed, audioContent)
     params.append('audioContent', audioContent);
     appendAuthParams(params);
     params.append('referer', window.location.origin);
-
-    postGasJson(params).catch(function() {
-      // Drive失敗は学習を止めない
+    return postGasJson(params).catch(function() {
+      return null;
     });
   } catch (e) {
-    // ignore
+    return Promise.resolve(null);
   }
 }
 
 /**
- * Drive 上の当該フィールド音声を削除（失敗は無視）
+ * Drive 上の当該フィールド音声を削除（失敗は無視。Promise を返す）
  * @param {Object} item
  * @param {string} sheetField
+ * @returns {Promise<*>}
  */
 function deleteDriveAudioAsync(item, sheetField) {
   if (!canUseDriveAudioMeta(item) || !googleAuth.email) {
-    return;
+    return Promise.resolve(null);
   }
   if (sheetField !== 'question' && sheetField !== 'answer') {
-    return;
+    return Promise.resolve(null);
   }
   try {
     var params = new URLSearchParams();
@@ -717,12 +791,11 @@ function deleteDriveAudioAsync(item, sheetField) {
     params.append('field', sheetField);
     appendAuthParams(params);
     params.append('referer', window.location.origin);
-
-    postGasJson(params).catch(function() {
-      // ignore
+    return postGasJson(params).catch(function() {
+      return null;
     });
   } catch (e) {
-    // ignore
+    return Promise.resolve(null);
   }
 }
 
@@ -1153,6 +1226,16 @@ function evictAudioIdbIfNeeded(incomingBytes, onReady) {
   });
 }
 
+function notifyVisibleCategoriesAfterIdbStats() {
+  if (typeof syncVisibleCategoriesAfterIdbChange === 'function') {
+    syncVisibleCategoriesAfterIdbChange();
+    return;
+  }
+  if (typeof updateVisibleCategoriesIdbLabels === 'function') {
+    updateVisibleCategoriesIdbLabels();
+  }
+}
+
 function refreshAudioIdbStats(onDone) {
   var done = typeof onDone === 'function' ? onDone : function() {};
   var targets = collectAudioPrefetchJobs();
@@ -1162,7 +1245,9 @@ function refreshAudioIdbStats(onDone) {
       audioStock.idbIds = {};
       audioStock.idbReady = 0;
       audioStock.idbBytes = 0;
+      audioStock.idbInventoryReady = true;
       refreshLoadDiagUi();
+      notifyVisibleCategoriesAfterIdbStats();
       done();
       return;
     }
@@ -1188,18 +1273,63 @@ function refreshAudioIdbStats(onDone) {
         audioStock.idbIds = have;
         audioStock.idbBytes = bytes;
         audioStock.idbReady = ready;
+        audioStock.idbInventoryReady = true;
         refreshLoadDiagUi();
+        notifyVisibleCategoriesAfterIdbStats();
         done();
       };
       req.onerror = function() {
+        audioStock.idbInventoryReady = true;
         refreshLoadDiagUi();
+        notifyVisibleCategoriesAfterIdbStats();
         done();
       };
     } catch (e) {
+      audioStock.idbInventoryReady = true;
       refreshLoadDiagUi();
+      notifyVisibleCategoriesAfterIdbStats();
       done();
     }
   });
+}
+
+/**
+ * カテゴリ別の IdB 揃い（出題＋解答、いまの声・速さ。空・画像除く）
+ * 表示カテゴリの ON/OFF には依存しない
+ * @returns {Object.<string, {ready: number, target: number}>}
+ */
+function buildCategoryIdbProgressMap() {
+  var map = {};
+  var qVoice = getAudioVoice('question');
+  var qSpeed = getAudioSpeed('question');
+  var aVoice = getAudioVoice('answer');
+  var aSpeed = getAudioSpeed('answer');
+  var have = audioStock.idbIds || {};
+
+  function addField(catKey, text, voice, speed) {
+    if (!text || isImageUrl(text)) {
+      return;
+    }
+    var cacheKey = normalizeTextForTTS(text) + '_' + voice + '_' + speed;
+    var idbId = audioIdbRecordId(cacheKey);
+    if (!map[catKey]) {
+      map[catKey] = { ready: 0, target: 0 };
+    }
+    map[catKey].target += 1;
+    if (have[idbId]) {
+      map[catKey].ready += 1;
+    }
+  }
+
+  getMemoryAllStudyItems().forEach(function(item) {
+    if (!item || item.category_no == null || item.category_no === '') {
+      return;
+    }
+    var catKey = String(item.category_no);
+    addField(catKey, getEffectiveQuestion(item), qVoice, qSpeed);
+    addField(catKey, getEffectiveAnswer(item), aVoice, aSpeed);
+  });
+  return map;
 }
 
 /**
@@ -1728,7 +1858,20 @@ function preloadNextQuestions() {
 }
 
 /**
- * 先読み対象アイテム（表示カテゴリ、重複なし）
+ * 先読み対象から除外するカテゴリか（END のみ。表示カテゴリ OFF でも先読みする）
+ * @param {string|number|null} categoryNo
+ * @returns {boolean}
+ */
+function isAudioPrefetchExcludedCategory_(categoryNo) {
+  if (categoryNo == null || categoryNo === '') {
+    return true;
+  }
+  var cat = findCategoryByNo(categoryNo);
+  return !!(cat && isEndCategory(cat));
+}
+
+/**
+ * 先読み対象アイテム（END 以外の全カテゴリ、重複なし）
  * @returns {Object[]}
  */
 function collectAudioPrefetchItems() {
@@ -1738,8 +1881,9 @@ function collectAudioPrefetchItems() {
       if (!it || it.id == null) {
         return;
       }
-      if (!isCategoryNoVisible(it.category_no != null ? it.category_no : resolveItemCategoryNo(it))) {
-    return;
+      var catNo = it.category_no != null ? it.category_no : resolveItemCategoryNo(it);
+      if (isAudioPrefetchExcludedCategory_(catNo)) {
+        return;
       }
       byId[String(it.id)] = it;
     });
@@ -1783,7 +1927,13 @@ function collectAudioPrefetchJobs() {
   items.forEach(function(item) {
     var idStr = String(item.id);
     var sessionIdx = sessionIds.hasOwnProperty(idStr) ? sessionIds[idStr] : 9999;
-    var pri = 50;
+    var catNo = item.category_no != null ? item.category_no : resolveItemCategoryNo(item);
+    // 先読み優先の「表示カテゴリON」は希望（IdB未完了でも優先して埋める）
+    var inVisiblePref = (typeof isCategoryNoInVisiblePreference === 'function')
+      ? isCategoryNoInVisiblePreference(catNo)
+      : (typeof isCategoryNoVisible === 'function' && isCategoryNoVisible(catNo));
+    // いまの問題 → 学習List近傍 → 表示カテゴリ希望ON → その他
+    var pri = inVisiblePref ? 40 : 50;
     if (currentId && idStr === currentId) {
       pri = 0;
     } else if (sessionIdx >= 0 && sessionIdx < 9999) {
@@ -1884,6 +2034,10 @@ function scheduleAudioPrefetch() {
     return;
   }
   if (!googleAuth.email || !hasUsableAuth()) {
+    return;
+  }
+  if (isAddStudyDeferringAudio_()) {
+    armAudioPrefetchRecheck_(AUDIO_PREFETCH_RECHECK_MS);
     return;
   }
   if (audioFetch.prefetchQueue.length > 0 || audioFetch.prefetchRunning) {
@@ -2028,18 +2182,314 @@ function prefetchOneDriveAudio(job, signal, generation, done) {
   });
 }
 
+/**
+ * Cloud TTS のみ（再生しない）
+ * @param {string} text
+ * @param {string} voiceGender
+ * @param {string} speed
+ * @param {AbortSignal|null} [signal]
+ * @returns {Promise<string>}
+ */
+function synthesizeTtsAudioContent_(text, voiceGender, speed, signal) {
+  var params = new URLSearchParams();
+  params.append('text', text);
+  params.append('voiceGender', voiceGender || AUDIO_VOICE_DEFAULT);
+  params.append('speed', speed || AUDIO_SPEED_FIXED);
+  appendAuthParams(params);
+  params.append('referer', window.location.origin || '');
+  return postGasJson(params, { signal: signal }).then(function(data) {
+    if (data && data.success && data.audioContent) {
+      return String(data.audioContent);
+    }
+    throw new Error((data && data.error) || 'TTS failed');
+  });
+}
+
+/**
+ * 保存成功後の音声準備ジョブを積む（追加の GAS 待ちが明けてから実行）
+ * @param {Object} item
+ * @param {{fields?: string[]}} [options] fields は sheet 基準 'question'|'answer'
+ */
+function enqueueStudyItemAudioPrepare(item, options) {
+  if (!item || item.id == null || !canUseDriveAudioMeta(item)) {
+    return;
+  }
+  if (!ENABLE_AUDIO_PREFETCH) {
+    return;
+  }
+  if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
+    return;
+  }
+  if (!googleAuth.email || !hasUsableAuth()) {
+    return;
+  }
+  options = options || {};
+  var fields = options.fields && options.fields.length
+    ? options.fields.slice()
+    : ['question', 'answer'];
+  // Drive ファイル名は列基準。入替えONでも Q列／A列の本文で準備する
+  var qVoice = getAudioVoice(isSwapQAEnabled() ? 'answer' : 'question');
+  var aVoice = getAudioVoice(isSwapQAEnabled() ? 'question' : 'answer');
+  var speed = AUDIO_SPEED_FIXED;
+  for (var i = 0; i < fields.length; i++) {
+    var sheetField = fields[i] === 'answer' ? 'answer' : 'question';
+    var text = sheetField === 'answer'
+      ? (item.answer != null ? String(item.answer) : '')
+      : (item.question != null ? String(item.question) : '');
+    text = normalizeTextForTTS(text);
+    if (!text || isImageUrl(text)) {
+      continue;
+    }
+    var voice = sheetField === 'answer' ? aVoice : qVoice;
+    var cacheKey = text + '_' + voice + '_' + speed;
+    var idbId = audioIdbRecordId(cacheKey);
+    var dup = false;
+    for (var q = 0; q < studyAudioPrepare.queue.length; q++) {
+      var pending = studyAudioPrepare.queue[q];
+      if (pending && pending.idbId === idbId &&
+          String(pending.item && pending.item.id) === String(item.id) &&
+          pending.field === sheetField) {
+        dup = true;
+        break;
+      }
+    }
+    if (dup) {
+      continue;
+    }
+    studyAudioPrepare.queue.push({
+      item: {
+        id: item.id,
+        no: item.no,
+        category_no: item.category_no != null ? item.category_no : resolveItemCategoryNo(item),
+        question: item.question,
+        answer: item.answer
+      },
+      text: text,
+      voice: voice,
+      speed: speed,
+      field: sheetField,
+      idbId: idbId
+    });
+  }
+  flushStudyAudioPrepareQueue_();
+}
+
+/**
+ * 準備キューを処理開始する（追加の GAS 待ち・本問再生中は process 側で動かさない）
+ */
+function flushStudyAudioPrepareQueue_() {
+  if (isAddStudyDeferringAudio_()) {
+    return;
+  }
+  if (!studyAudioPrepare.queue.length) {
+    return;
+  }
+  processGasAudioFetchQueue();
+}
+
+/**
+ * 追加画面向け：当該問題で IdB／Mem に無い欄（sheet 基準）
+ * @param {Object} item
+ * @returns {string[]} 'question'|'answer'
+ */
+function getStudyItemMissingAudioFields(item) {
+  var missing = [];
+  if (!item || item.id == null) {
+    return missing;
+  }
+  var qVoice = getAudioVoice(isSwapQAEnabled() ? 'answer' : 'question');
+  var aVoice = getAudioVoice(isSwapQAEnabled() ? 'question' : 'answer');
+  var speed = AUDIO_SPEED_FIXED;
+  var fields = [
+    { field: 'question', text: item.question, voice: qVoice },
+    { field: 'answer', text: item.answer, voice: aVoice }
+  ];
+  for (var i = 0; i < fields.length; i++) {
+    var sheetField = fields[i].field;
+    var text = normalizeTextForTTS(fields[i].text != null ? String(fields[i].text) : '');
+    if (!text || isImageUrl(text)) {
+      continue;
+    }
+    var voice = fields[i].voice;
+    if (getCachedAudio(text, voice, speed)) {
+      continue;
+    }
+    var idbId = audioIdbRecordId(text + '_' + voice + '_' + speed);
+    if (audioStock.idbIds && audioStock.idbIds[idbId]) {
+      continue;
+    }
+    missing.push(sheetField);
+  }
+  return missing;
+}
+
+/**
+ * 準備キュー／実行中に当該問題があるか
+ * @param {string|number} itemId
+ * @returns {boolean}
+ */
+function isStudyItemAudioPreparePending(itemId) {
+  if (itemId == null || itemId === '') {
+    return false;
+  }
+  var key = String(itemId);
+  if (studyAudioPrepare.activeItemId && studyAudioPrepare.activeItemId === key) {
+    return true;
+  }
+  for (var i = 0; i < studyAudioPrepare.queue.length; i++) {
+    var pending = studyAudioPrepare.queue[i];
+    if (pending && pending.item && String(pending.item.id) === key) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 追加画面の TTS 表示を IdB 集計と合わせて更新
+ */
+function notifyAddStudyAudioPrepareProgress_() {
+  if (typeof refreshAudioIdbStats !== 'function') {
+    if (typeof refreshAddStudyItemAudioButtons === 'function') {
+      refreshAddStudyItemAudioButtons();
+    }
+    return;
+  }
+  refreshAudioIdbStats(function() {
+    if (typeof refreshAddStudyItemAudioButtons === 'function') {
+      refreshAddStudyItemAudioButtons();
+    }
+    if (typeof updateVisibleCategoriesIdbLabels === 'function') {
+      updateVisibleCategoriesIdbLabels();
+    }
+  });
+}
+
+/**
+ * 1欄：Mem／IdB → Drive → 無ければ TTS→Drive保存→IdB（再生しない）
+ * @param {Object} job
+ * @param {AbortSignal|null} signal
+ * @param {number} generation
+ * @param {function(): void} done
+ */
+function ensureStudyItemFieldAudio_(job, signal, generation, done) {
+  if (!job || generation !== audioFetch.generation) {
+    done();
+    return;
+  }
+  if (isAddStudyDeferringAudio_()) {
+    studyAudioPrepare.queue.unshift(job);
+    done();
+    return;
+  }
+  if (getCachedAudio(job.text, job.voice, job.speed)) {
+    done();
+    return;
+  }
+  getCachedAudioFromIdb(job.text, job.voice, job.speed, function(cached) {
+    if (cached) {
+      done();
+      return;
+    }
+    ensureFreshGoogleAuthToken(function() {
+      if (generation !== audioFetch.generation || isAddStudyDeferringAudio_()) {
+        if (isAddStudyDeferringAudio_()) {
+          studyAudioPrepare.queue.unshift(job);
+        }
+        done();
+        return;
+      }
+      beginLoadDiag('run', '準備', 1, {
+        status: '取得中',
+        queueWait: audioFetch.prefetchQueue.length
+      });
+      var params = new URLSearchParams();
+      params.append('action', 'getDriveAudio');
+      params.append('id', String(job.item.id));
+      params.append('categoryNo', String(resolveItemCategoryNo(job.item)));
+      params.append('no', String(job.item.no));
+      params.append('field', job.field);
+      params.append('voiceGender', job.voice);
+      params.append('speed', job.speed);
+      appendAuthParams(params);
+      params.append('referer', window.location.origin || '');
+
+      postGasJson(params, {
+        signal: signal,
+        httpErrorPrefix: 'drive fetch failed: '
+      })
+        .then(function(data) {
+          if (generation !== audioFetch.generation) {
+            done();
+            return;
+          }
+          if (data && data.success && data.found && data.audioContent) {
+            saveAudioToCache(job.text, data.audioContent, job.voice, job.speed);
+            finishLoadDiag('run', 'OK', {
+              ok: true,
+              bytes: String(data.audioContent).length
+            });
+            done();
+            return;
+          }
+          updateLoadDiag('run', { phase: 'TTS', status: '取得中' });
+          return synthesizeTtsAudioContent_(job.text, job.voice, job.speed, signal)
+            .then(function(audioContent) {
+              if (generation !== audioFetch.generation) {
+                done();
+                return;
+              }
+              saveAudioToCache(job.text, audioContent, job.voice, job.speed);
+              return saveDriveAudioAsync(
+                job.item,
+                job.field,
+                job.voice,
+                job.speed,
+                audioContent
+              ).then(function() {
+                finishLoadDiag('run', 'OK', {
+                  ok: true,
+                  bytes: String(audioContent).length
+                });
+                done();
+              });
+            });
+        })
+        .catch(function(error) {
+          if (generation !== audioFetch.generation) {
+            finishLoadDiag('run', loadDiagStatusFromError(error), { ok: false });
+            done();
+            return;
+          }
+          if (isAbortError(error)) {
+            // 本問再生や追加待ちで中断：キューに戻して再開を待つ
+            studyAudioPrepare.queue.unshift(job);
+            finishLoadDiag('run', 'abort', { ok: false });
+            done();
+            return;
+          }
+          finishLoadDiag('run', loadDiagStatusFromError(error), { ok: false });
+          console.warn('study audio prepare failed:', error);
+          done();
+        });
+    }, function() {
+      done();
+    });
+  });
+}
+
 function fetchDriveAudioCoverage() {
   if (!googleAuth.email || !hasUsableAuth()) {
     return;
   }
-  var nos = getSavedVisibleCategoryNos();
-  if (!nos || !nos.length) {
-    nos = (categoryCatalog.list || []).filter(function(cat) {
+  // IdB／先読みと同じく END 以外全カテゴリ（表示カテゴリ ON/OFF に依存しない）
+  var nos = (typeof getConfigurableCategories === 'function'
+    ? getConfigurableCategories()
+    : (categoryCatalog.list || []).filter(function(cat) {
       return cat && !isEndCategory(cat);
-    }).map(function(cat) {
-      return cat.no;
-    });
-  }
+    })).map(function(cat) {
+    return cat.no;
+  });
   var params = new URLSearchParams();
   params.append('action', 'getDriveAudioCoverage');
   params.append('categoryNos', JSON.stringify(nos || []));

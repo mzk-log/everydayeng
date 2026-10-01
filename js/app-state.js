@@ -3,7 +3,8 @@ var categoryCatalog = {
   list: [], // カテゴリ一覧
   items: [], // 現在表示中の問題
   no: null, // 現在のカテゴリ番号
-  byNo: {} // カテゴリ切替高速化用（セッション内キャッシュ）
+  byNo: {}, // カテゴリ切替高速化用（セッション内キャッシュ）
+  ready: false // 全問反映済み（表示カテゴリのシート突合が可能か）
 };
 var questionCursor = {
   index: 0,
@@ -127,6 +128,11 @@ var addStudy = {
   moveBusy: false,
   modalBusy: false // 確認モーダルの処理中
 };
+// 問題追加の保存成功後／手動TTS：Drive／TTS→IdB（追加の GAS 待ち・本問再生中は動かさない）
+var studyAudioPrepare = {
+  queue: [], // { item, text, voice, speed, field, idbId }
+  activeItemId: '' // いま実行中の問題 ID（追加画面の「TTS中」表示用）
+};
 var isRefreshingAdvanceNavControls = false; // refreshAdvanceNavControls の再入防止
 var CROSS_CATEGORY_LIST_SIZE = 7; // カテゴリ横断モード：List表示件数
 var LAST_DATE_POOL_SIZE = 20; // 学習日優先：抽選プール件数
@@ -209,6 +215,7 @@ var audioStock = {
   idbReady: 0,
   idbTarget: 0,
   idbBytes: 0,
+  idbInventoryReady: false, // IdB 一覧を一度でも取得済みか（未取得時は表示カテゴリを IdB で絞らない）
   driveReady: null,
   driveTarget: null
 };
@@ -367,12 +374,14 @@ var dom = {
   visibleCategoriesCancelButton: document.getElementById('visibleCategoriesCancelButton'),
   visibleCategoriesChecklist: document.getElementById('visibleCategoriesChecklist'),
   visibleCategoriesClearAllButton: document.getElementById('visibleCategoriesClearAllButton'),
+  visibleCategoriesCloseButton: document.getElementById('visibleCategoriesCloseButton'),
   visibleCategoriesCount: document.getElementById('visibleCategoriesCount'),
   visibleCategoriesError: document.getElementById('visibleCategoriesError'),
   visibleCategoriesItemContainer: document.getElementById('visibleCategoriesItemContainer'),
+  visibleCategoriesOverlay: document.getElementById('visibleCategoriesOverlay'),
   visibleCategoriesSaveButton: document.getElementById('visibleCategoriesSaveButton'),
   visibleCategoriesSelectAllButton: document.getElementById('visibleCategoriesSelectAllButton'),
-  visibleCategoriesSubmenu: document.getElementById('visibleCategoriesSubmenu'),
+  visibleCategoriesTitle: document.getElementById('visibleCategoriesTitle'),
   audioSettingsButton: document.getElementById('audioSettingsButton'),
   audioSettingsSubmenu: document.getElementById('audioSettingsSubmenu'),
   hamburgerMenuButton: document.getElementById('hamburgerMenuButton'),

@@ -127,44 +127,45 @@ function applyStudyItemsToApp(items, options) {
   rebuildCategoryDataByNoFromItems(items || []);
   var built = buildCategoriesAndTodayStatsFromItems(items || [], getTodayYmdLocal());
   categoryCatalog.list = built.categories;
+  categoryCatalog.ready = true;
   applyTodayStudiedItemCount(built.today_item_count, built.today_ymd);
   applyTodayStudiedAnsCount(built.today_ans_count, built.today_ymd);
-        reconcileVisibleCategorySetting();
+  reconcileVisibleCategorySetting();
 
   var select = dom.categorySelect;
   var preserveValue = options.preserveValue != null && options.preserveValue !== ''
     ? String(options.preserveValue)
     : ((select && select.value) || (categoryCatalog.no != null ? String(categoryCatalog.no) : ''));
-        if (select) {
+  if (select) {
     var valueToRestore = preserveValue || '';
-          if (valueToRestore && !isCategoryNoVisible(valueToRestore)) {
-            valueToRestore = '';
+    if (valueToRestore && !isCategoryNoVisible(valueToRestore)) {
+      valueToRestore = '';
       if (!skipLearningArrays && !isDurationQuestionMethod() && !isLastDateQuestionMethod()) {
-              categoryCatalog.no = null;
-              categoryCatalog.items = [];
-              questionList.selected = [];
-              resetListDisplay();
-            }
-          }
-          select.disabled = false;
-          populateCategorySelectOptions(select, valueToRestore);
-        }
-        var learningSelectContainer = dom.learningCategorySelectContainer;
-        if (learningSelectContainer && learningSelectContainer.style.display !== 'none' && studyEnd.done) {
-          var learningSelectEl = dom.learningCategorySelect;
-          var learningValueToRestore = '';
-          if (learningSelectEl && learningSelectEl.value) {
-            learningValueToRestore = String(learningSelectEl.value);
-          } else if (categoryCatalog.no != null && categoryCatalog.no !== '') {
-            learningValueToRestore = String(categoryCatalog.no);
-          }
-          if (learningValueToRestore && !isCategoryNoVisible(learningValueToRestore)) {
+        categoryCatalog.no = null;
+        categoryCatalog.items = [];
+        questionList.selected = [];
+        resetListDisplay();
+      }
+    }
+    select.disabled = false;
+    populateCategorySelectOptions(select, valueToRestore);
+  }
+  var learningSelectContainer = dom.learningCategorySelectContainer;
+  if (learningSelectContainer && learningSelectContainer.style.display !== 'none' && studyEnd.done) {
+    var learningSelectEl = dom.learningCategorySelect;
+    var learningValueToRestore = '';
+    if (learningSelectEl && learningSelectEl.value) {
+      learningValueToRestore = String(learningSelectEl.value);
+    } else if (categoryCatalog.no != null && categoryCatalog.no !== '') {
+      learningValueToRestore = String(categoryCatalog.no);
+    }
+    if (learningValueToRestore && !isCategoryNoVisible(learningValueToRestore)) {
       learningValueToRestore = (categoryCatalog.no != null && isCategoryNoVisible(categoryCatalog.no))
         ? String(categoryCatalog.no)
         : '';
-          }
-          populateCategorySelectOptions(learningSelectEl, learningValueToRestore);
-        }
+    }
+    populateCategorySelectOptions(learningSelectEl, learningValueToRestore);
+  }
 
   if (!skipLearningArrays) {
     if (isDurationQuestionMethod()) {
@@ -202,15 +203,16 @@ function applyStudyItemsToApp(items, options) {
   }
 
   hideCategoryLoadingSpinner();
-        updateListNavButtons();
-        if (studyEnd.done) {
-          if (studyEnd.browseStarted) {
-            maintainCompletionScrollAtTop();
-          } else {
-            maintainCompletionScrollAtBottom();
-          }
-        }
-        syncDailyStudyStatsDisplay();
+  updateListNavButtons();
+  if (studyEnd.done) {
+    if (studyEnd.browseStarted) {
+      maintainCompletionScrollAtTop();
+    } else {
+      maintainCompletionScrollAtBottom();
+    }
+  }
+  syncDailyStudyStatsDisplay();
+  lastEffectiveVisibleCategoriesKey = getEffectiveVisibleCategoriesKey();
 }
 
 /**
@@ -426,11 +428,11 @@ function getConfigurableCategories() {
 }
 
 /**
- * カテゴリ番号が表示対象か（END は常に false。未設定時は END 以外すべて true）
+ * 表示カテゴリの「希望」（localStorage）。IdB 完了は見ない
  * @param {string|number} no
  * @returns {boolean}
  */
-function isCategoryNoVisible(no) {
+function isCategoryNoInVisiblePreference(no) {
   if (no == null || no === '') {
     return false;
   }
@@ -440,14 +442,49 @@ function isCategoryNoVisible(no) {
   }
   var saved = getSavedVisibleCategoryNos();
   if (saved === null) {
-    // 未設定：END 以外は表示。カテゴリ一覧に無い番号は表示扱い（横断データの欠落対策）
+    // 未設定：END 以外は希望ON。カテゴリ一覧に無い番号は表示扱い（横断データの欠落対策）
     return !(cat && isEndCategory(cat));
   }
   return saved.indexOf(String(no)) >= 0;
 }
 
 /**
- * ドロップダウン／ナビ用の表示カテゴリ一覧
+ * IdB 進捗が未完了か（target>0 かつ ready<source）
+ * @param {{ready: number, target: number}|null|undefined} progress
+ * @returns {boolean}
+ */
+function isCategoryIdbProgressIncomplete(progress) {
+  return !!(progress && progress.target && progress.ready < progress.target);
+}
+
+/**
+ * この端末でカテゴリ音声が IdB 完了しているか。
+ * 一覧未取得時は true（起動直後に全部消えないようにする）
+ * @param {string|number} no
+ * @returns {boolean}
+ */
+function isCategoryIdbReadyForVisible(no) {
+  if (!audioStock || !audioStock.idbInventoryReady) {
+    return true;
+  }
+  if (typeof buildCategoryIdbProgressMap !== 'function') {
+    return true;
+  }
+  var progress = buildCategoryIdbProgressMap()[String(no)];
+  return !isCategoryIdbProgressIncomplete(progress);
+}
+
+/**
+ * カテゴリ番号が実行時の表示対象か（希望ONかつこの端末で IdB 完了。END は常に false）
+ * @param {string|number} no
+ * @returns {boolean}
+ */
+function isCategoryNoVisible(no) {
+  return isCategoryNoInVisiblePreference(no) && isCategoryIdbReadyForVisible(no);
+}
+
+/**
+ * ドロップダウン／ナビ用の表示カテゴリ一覧（実行時＝希望∩IdB完了）
  * @returns {Object[]}
  */
 function getVisibleCategories() {
@@ -466,10 +503,14 @@ function isCategorySelectable(cat) {
 }
 
 /**
- * 保存済み設定を現行カテゴリ一覧と突合。有効 0 件なら未設定に戻す
+ * 保存済み希望をシート上のカテゴリと突合。有効 0 件なら未設定に戻す。
+ * カテゴリ未反映時や IdB 完了状況では呼ばない／判定に使わない。
  * @returns {boolean} 未設定へリセットした場合 true
  */
 function reconcileVisibleCategorySetting() {
+  if (!categoryCatalog.ready) {
+    return false;
+  }
   var saved = getSavedVisibleCategoryNos();
   if (saved === null) {
     return false;
@@ -514,18 +555,31 @@ function isHomeScreenActive() {
 }
 
 /**
- * 表示カテゴリ設定パネルを破棄して閉じる
+ * 表示カテゴリの全画面パネルを閉じる（未保存は破棄）
  */
-function closeVisibleCategoriesSubmenu() {
-  var submenu = dom.visibleCategoriesSubmenu;
-  var parentButton = dom.visibleCategoriesButton;
-  if (submenu) {
-    submenu.classList.remove('active');
-  }
-  if (parentButton) {
-    parentButton.classList.remove('active');
+function closeVisibleCategoriesOverlay() {
+  var overlay = dom.visibleCategoriesOverlay;
+  if (overlay) {
+    overlay.style.display = 'none';
+    overlay.setAttribute('aria-hidden', 'true');
   }
   hideVisibleCategoriesError();
+}
+
+/**
+ * 互換名（閉じる処理）
+ */
+function closeVisibleCategoriesSubmenu() {
+  closeVisibleCategoriesOverlay();
+}
+
+/**
+ * 表示カテゴリの全画面パネルが開いているか
+ * @returns {boolean}
+ */
+function isVisibleCategoriesOverlayOpen() {
+  var overlay = dom.visibleCategoriesOverlay;
+  return !!(overlay && overlay.style.display !== 'none');
 }
 
 /**
@@ -552,7 +606,150 @@ function showVisibleCategoriesError(message) {
 }
 
 /**
- * チェックリストを現在の保存状態（未設定＝全ON）で描画
+ * 未完了のときだけ付ける IdB 表示文言
+ * @param {{ready: number, target: number}|null|undefined} progress
+ * @returns {string}
+ */
+function formatVisibleCategoryIdbSuffix(progress) {
+  if (!isCategoryIdbProgressIncomplete(progress)) {
+    return '';
+  }
+  return ' IdB ' + progress.ready + '/' + progress.target;
+}
+
+/**
+ * 表示カテゴリ1行の IdB ラベル／選択可否を同期
+ * @param {HTMLInputElement} input
+ * @param {HTMLElement} idbEl
+ * @param {string} catNo
+ * @param {{ready: number, target: number}|null|undefined} progress
+ */
+function syncVisibleCategoryRowIdbState(input, idbEl, catNo, progress) {
+  if (!input || !idbEl) {
+    return;
+  }
+  var incomplete = isCategoryIdbProgressIncomplete(progress);
+  idbEl.textContent = formatVisibleCategoryIdbSuffix(progress);
+  var label = input.closest ? input.closest('label') : input.parentNode;
+  if (incomplete) {
+    input.disabled = true;
+    input.checked = false;
+    if (label && label.classList) {
+      label.classList.add('is-idb-incomplete');
+    }
+    return;
+  }
+  var wasDisabled = !!input.disabled;
+  input.disabled = false;
+  if (label && label.classList) {
+    label.classList.remove('is-idb-incomplete');
+  }
+  // 未完了→完了になった行だけ希望を反映（編集中の完了行は触らない）
+  if (wasDisabled) {
+    input.checked = isCategoryNoInVisiblePreference(catNo);
+  }
+}
+
+/**
+ * 表示カテゴリ一覧の IdB ラベルと選択可否を更新する
+ */
+function updateVisibleCategoriesIdbLabels() {
+  if (!isVisibleCategoriesOverlayOpen()) {
+    return;
+  }
+  var container = dom.visibleCategoriesChecklist;
+  if (!container || typeof buildCategoryIdbProgressMap !== 'function') {
+    return;
+  }
+  var map = buildCategoryIdbProgressMap();
+  var nodes = container.querySelectorAll('.visible-categories-check-idb');
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    var no = el.getAttribute('data-category-no');
+    var label = el.closest ? el.closest('label') : el.parentNode && el.parentNode.parentNode;
+    var input = label ? label.querySelector('input[type="checkbox"]') : null;
+    syncVisibleCategoryRowIdbState(input, el, no, map[String(no)]);
+  }
+  updateVisibleCategoriesCount();
+}
+
+var lastEffectiveVisibleCategoriesKey = null;
+var refreshingVisibleCategoriesRuntimeUi = false;
+
+/**
+ * 実行時表示対象の指紋（Category_No をカンマ連結）
+ * @returns {string}
+ */
+function getEffectiveVisibleCategoriesKey() {
+  return getVisibleCategories().map(function(cat) {
+    return String(cat.no);
+  }).join(',');
+}
+
+/**
+ * 実行時の表示対象（希望∩IdB完了）に合わせて TOP／横断 UI を更新する。
+ * 希望設定のシート突合（reconcile）は行わない。
+ */
+function refreshVisibleCategoriesRuntimeUi() {
+  if (refreshingVisibleCategoriesRuntimeUi) {
+    return;
+  }
+  refreshingVisibleCategoriesRuntimeUi = true;
+  try {
+    var select = dom.categorySelect;
+    var previousValue = select ? select.value : '';
+    var stillVisible = previousValue && isCategoryNoVisible(previousValue);
+
+    if (select) {
+      populateCategorySelectOptions(select, stillVisible ? previousValue : '');
+    }
+
+    if (previousValue && !stillVisible) {
+      categoryCatalog.no = null;
+      categoryCatalog.items = [];
+      questionList.selected = [];
+      questionList.original = [];
+      hideCategoryLoadingSpinner();
+      if (!isDurationQuestionMethod() && !isLastDateQuestionMethod()) {
+        resetListDisplay();
+      }
+    }
+
+    if (isDurationQuestionMethod()) {
+      loadDurationModeData({ resetPage: true, resort: true, forceFetch: true, pageLoading: true });
+    } else if (isLastDateQuestionMethod()) {
+      loadLastDateModeData({ regenerate: true, forceFetch: true, pageLoading: true });
+    } else {
+      updateListNavButtons();
+    }
+    syncDailyStudyStatsDisplay();
+    lastEffectiveVisibleCategoriesKey = getEffectiveVisibleCategoriesKey();
+    // 先読み対象集合は変わらないが、優先（表示カテゴリ希望ON）を組み直す
+    if (typeof scheduleAudioPrefetch === 'function') {
+      scheduleAudioPrefetch();
+    }
+  } finally {
+    refreshingVisibleCategoriesRuntimeUi = false;
+  }
+}
+
+/**
+ * IdB 集計更新後：パネルの選択可否を更新し、実行時表示が変わったら HOME UI だけ同期する。
+ * 希望設定のリセット（reconcile）はしない。
+ */
+function syncVisibleCategoriesAfterIdbChange() {
+  updateVisibleCategoriesIdbLabels();
+  if (!isHomeScreenActive() || !categoryCatalog.ready) {
+    return;
+  }
+  if (getEffectiveVisibleCategoriesKey() === lastEffectiveVisibleCategoriesKey) {
+    return;
+  }
+  refreshVisibleCategoriesRuntimeUi();
+}
+
+/**
+ * チェックリストを現在の保存状態（未設定＝全ON）で描画。IdB未完了は選択不可
  */
 function renderVisibleCategoriesChecklist() {
   var container = dom.visibleCategoriesChecklist;
@@ -567,18 +764,37 @@ function renderVisibleCategoriesChecklist() {
     updateVisibleCategoriesCount();
     return;
   }
+  var idbMap = (typeof buildCategoryIdbProgressMap === 'function')
+    ? buildCategoryIdbProgressMap()
+    : {};
   list.forEach(function(cat) {
+    var catNo = String(cat.no);
+    var progress = idbMap[catNo];
+    var incomplete = isCategoryIdbProgressIncomplete(progress);
     var label = document.createElement('label');
     label.className = 'visible-categories-check-item';
+    if (incomplete) {
+      label.classList.add('is-idb-incomplete');
+    }
     var input = document.createElement('input');
     input.type = 'checkbox';
-    input.value = String(cat.no);
-    input.checked = isCategoryNoVisible(cat.no);
+    input.value = catNo;
+    input.disabled = incomplete;
+    input.checked = !incomplete && isCategoryNoInVisiblePreference(cat.no);
     input.addEventListener('change', function() {
       updateVisibleCategoriesCount();
     });
     var text = document.createElement('span');
-    text.textContent = formatCategoryOptionText(cat);
+    text.className = 'visible-categories-check-text';
+    var main = document.createElement('span');
+    main.className = 'visible-categories-check-main';
+    main.textContent = formatCategoryOptionText(cat);
+    var idb = document.createElement('span');
+    idb.className = 'visible-categories-check-idb';
+    idb.setAttribute('data-category-no', catNo);
+    idb.textContent = formatVisibleCategoryIdbSuffix(progress);
+    text.appendChild(main);
+    text.appendChild(idb);
     label.appendChild(input);
     label.appendChild(text);
     container.appendChild(label);
@@ -630,7 +846,7 @@ function getCheckedVisibleCategoryNosFromUi() {
 }
 
 /**
- * チェックリストの全選択／全解除
+ * チェックリストの全選択／全解除（IdB未完了＝disabled は対象外）
  * @param {boolean} checked
  */
 function setAllVisibleCategoryChecks(checked) {
@@ -641,81 +857,96 @@ function setAllVisibleCategoryChecks(checked) {
   hideVisibleCategoriesError();
   var inputs = container.querySelectorAll('input[type="checkbox"]');
   for (var i = 0; i < inputs.length; i++) {
+    if (inputs[i].disabled) {
+      continue;
+    }
     inputs[i].checked = !!checked;
   }
   updateVisibleCategoriesCount();
 }
 
 /**
- * 表示カテゴリサブメニューをトグル（HOME 時のみ）
+ * 保存用番号：UIでONの完了分 ＋ IdB未完了だが希望ONの分（端末差で希望を消さない）
+ * @returns {string[]}
  */
-function toggleVisibleCategoriesSubmenu() {
+function getVisibleCategoryNosForSaveFromUi() {
+  var checked = getCheckedVisibleCategoryNosFromUi();
+  var merged = {};
+  var i;
+  for (i = 0; i < checked.length; i++) {
+    merged[String(checked[i])] = true;
+  }
+  var idbMap = (typeof buildCategoryIdbProgressMap === 'function')
+    ? buildCategoryIdbProgressMap()
+    : {};
+  var list = getConfigurableCategories();
+  for (i = 0; i < list.length; i++) {
+    var no = String(list[i].no);
+    if (!isCategoryIdbProgressIncomplete(idbMap[no])) {
+      continue;
+    }
+    if (isCategoryNoInVisiblePreference(no)) {
+      merged[no] = true;
+    }
+  }
+  return list.filter(function(cat) {
+    return !!merged[String(cat.no)];
+  }).map(function(cat) {
+    return String(cat.no);
+  });
+}
+
+/**
+ * 表示カテゴリの全画面パネルを開く（HOME 時のみ）
+ */
+function openVisibleCategoriesOverlay() {
   if (!isHomeScreenActive()) {
     return;
   }
-  var submenu = dom.visibleCategoriesSubmenu;
-  var parentButton = dom.visibleCategoriesButton;
-  if (!submenu || !parentButton) {
-    return;
+  closeSideMenu();
+  renderVisibleCategoriesChecklist();
+  var overlay = dom.visibleCategoriesOverlay;
+  if (overlay) {
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
   }
-  var isActive = submenu.classList.contains('active');
-  if (isActive) {
-    closeVisibleCategoriesSubmenu();
-  } else {
-    renderVisibleCategoriesChecklist();
-    submenu.classList.add('active');
-    parentButton.classList.add('active');
+  if (typeof refreshAudioIdbStats === 'function') {
+    refreshAudioIdbStats();
   }
 }
 
 /**
- * 表示カテゴリ設定の保存を反映（TOP UI・横断モード）
+ * 互換名（開閉。開いていれば閉じ、閉じていれば開く）
+ */
+function toggleVisibleCategoriesSubmenu() {
+  if (isVisibleCategoriesOverlayOpen()) {
+    closeVisibleCategoriesOverlay();
+    return;
+  }
+  openVisibleCategoriesOverlay();
+}
+
+/**
+ * 表示カテゴリの希望変更・全問反映後の反映（シート突合＋実行時 UI）
  */
 function applyVisibleCategoriesChange() {
   reconcileVisibleCategorySetting();
-  
-  var select = dom.categorySelect;
-  var previousValue = select ? select.value : '';
-  var stillVisible = previousValue && isCategoryNoVisible(previousValue);
-  
-  if (select) {
-    populateCategorySelectOptions(select, stillVisible ? previousValue : '');
-  }
-  
-  if (previousValue && !stillVisible) {
-    categoryCatalog.no = null;
-    categoryCatalog.items = [];
-    questionList.selected = [];
-    questionList.original = [];
-    hideCategoryLoadingSpinner();
-    if (!isDurationQuestionMethod() && !isLastDateQuestionMethod()) {
-      resetListDisplay();
-    }
-  }
-  
-  if (isDurationQuestionMethod()) {
-    loadDurationModeData({ resetPage: true, resort: true, forceFetch: true, pageLoading: true });
-  } else if (isLastDateQuestionMethod()) {
-    loadLastDateModeData({ regenerate: true, forceFetch: true, pageLoading: true });
-  } else {
-    updateListNavButtons();
-  }
-  syncDailyStudyStatsDisplay();
+  refreshVisibleCategoriesRuntimeUi();
 }
 
 /**
  * 表示カテゴリ設定を保存ボタン処理
  */
 function saveVisibleCategoriesFromUi() {
-  var nos = getCheckedVisibleCategoryNosFromUi();
-  if (nos.length === 0) {
+  var checked = getCheckedVisibleCategoryNosFromUi();
+  if (checked.length === 0) {
     showVisibleCategoriesError('一つ以上選択してください。');
     return;
   }
-  saveVisibleCategoryNos(nos);
+  saveVisibleCategoryNos(getVisibleCategoryNosForSaveFromUi());
   hideVisibleCategoriesError();
   applyVisibleCategoriesChange();
-  closeVisibleCategoriesSubmenu();
+  closeVisibleCategoriesOverlay();
 }
 
 /**

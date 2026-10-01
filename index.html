@@ -1,6 +1,3 @@
-
-
-
 <!DOCTYPE html>
 <html>
 <head>
@@ -10,7 +7,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202609301807';
+    var FRONT_VERSION = '202610012146';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -49,7 +46,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202609301807">
+  <link rel="stylesheet" href="style.css?v=202610012146">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -137,25 +134,9 @@
           </div>
         </div>
         <div class="side-menu-item-container" id="visibleCategoriesItemContainer">
-          <button class="side-menu-item side-menu-item-parent" type="button" id="visibleCategoriesButton">
+          <button class="side-menu-item" type="button" id="visibleCategoriesButton">
             <span class="side-menu-item-text">表示カテゴリ</span>
-            <span class="side-menu-item-arrow">▼</span>
           </button>
-          <div class="side-menu-submenu side-menu-submenu-tall" id="visibleCategoriesSubmenu">
-            <div class="side-menu-submenu-item visible-categories-panel">
-              <div class="visible-categories-toolbar">
-                <button class="visible-categories-tool-button" type="button" id="visibleCategoriesSelectAllButton">全選択</button>
-                <button class="visible-categories-tool-button" type="button" id="visibleCategoriesClearAllButton">全解除</button>
-                <span class="visible-categories-count" id="visibleCategoriesCount" aria-live="polite">0 / 0</span>
-              </div>
-              <div id="visibleCategoriesChecklist" class="visible-categories-checklist" role="group" aria-label="表示するカテゴリ"></div>
-              <div id="visibleCategoriesError" class="visible-categories-error" style="display: none;" role="alert"></div>
-              <div class="visible-categories-actions">
-                <button class="visible-categories-action-button visible-categories-action-save" type="button" id="visibleCategoriesSaveButton">保存</button>
-                <button class="visible-categories-action-button" type="button" id="visibleCategoriesCancelButton">キャンセル</button>
-              </div>
-            </div>
-          </div>
         </div>
         <div class="side-menu-item-container">
           <button class="side-menu-item side-menu-item-parent" type="button" id="questionSettingsButton">
@@ -546,6 +527,27 @@
     </div>
   </div>
 
+  <!-- 表示カテゴリ（全画面） -->
+  <div id="visibleCategoriesOverlay" class="visible-categories-overlay" style="display: none;" aria-hidden="true">
+    <div class="visible-categories-panel" role="dialog" aria-labelledby="visibleCategoriesTitle" aria-modal="true">
+      <div class="visible-categories-header">
+        <h2 id="visibleCategoriesTitle" class="visible-categories-title">表示カテゴリ</h2>
+        <button type="button" id="visibleCategoriesCloseButton" class="visible-categories-close" aria-label="閉じる">×</button>
+      </div>
+      <div class="visible-categories-toolbar">
+        <button class="visible-categories-tool-button" type="button" id="visibleCategoriesSelectAllButton">全選択</button>
+        <button class="visible-categories-tool-button" type="button" id="visibleCategoriesClearAllButton">全解除</button>
+        <span class="visible-categories-count" id="visibleCategoriesCount" aria-live="polite">0 / 0</span>
+      </div>
+      <div id="visibleCategoriesChecklist" class="visible-categories-checklist" role="group" aria-label="表示するカテゴリ"></div>
+      <div id="visibleCategoriesError" class="visible-categories-error" style="display: none;" role="alert"></div>
+      <div class="visible-categories-actions">
+        <button class="visible-categories-action-button visible-categories-action-save" type="button" id="visibleCategoriesSaveButton">保存</button>
+        <button class="visible-categories-action-button" type="button" id="visibleCategoriesCancelButton">キャンセル</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 問題追加 -->
   <div id="addStudyItemOverlay" class="add-study-overlay" style="display: none;" aria-hidden="true">
     <div class="add-study-panel" role="dialog" aria-labelledby="addStudyItemTitle" aria-modal="true">
@@ -625,35 +627,35 @@
     </div>
   </div>
 
-  <script src="js/app-state.js?v=202609301807"></script>
-  <script src="js/app-gas.js?v=202609301807"></script>
-  <script src="js/app-auth.js?v=202609301807"></script>
-  <script src="js/app-settings.js?v=202609301807"></script>
-  <script src="js/app-question.js?v=202609301807"></script>
-  <script src="js/app-practice.js?v=202609301807"></script>
-  <script src="js/app-learning.js?v=202609301807"></script>
-  <script src="js/app-audio.js?v=202609301807"></script>
-  <script src="js/app-nav.js?v=202609301807"></script>
-  <script src="js/app-modal.js?v=202609301807"></script>
-  <script src="js/app-update.js?v=202609301807"></script>
-  <script src="js/app-boot.js?v=202609301807"></script>
-  <script src="js/app-category.js?v=202609301807"></script>
-  <script src="js/app-events.js?v=202609301807"></script>
-  <script src="js/app-menu.js?v=202609301807"></script>
-  <script src="js/app-session.js?v=202609301807"></script>
-  <script src="js/app-add-study.js?v=202609301807"></script>
-  <script src="js/app-sort.js?v=202609301807"></script>
-  <script src="js/app-study-load.js?v=202609301807"></script>
-  <script src="js/app-mode-page.js?v=202609301807"></script>
-  <script src="js/app-background.js?v=202609301807"></script>
-  <script src="js/app-error.js?v=202609301807"></script>
-  <script src="js/app-list.js?v=202609301807"></script>
-  <script src="js/app-list-nav.js?v=202609301807"></script>
-  <script src="js/app-field-edit.js?v=202609301807"></script>
-  <script src="js/app-format.js?v=202609301807"></script>
-  <script src="js/app-image.js?v=202609301807"></script>
-  <script src="js/app-sheet.js?v=202609301807"></script>
-  <script src="js/app-gesture.js?v=202609301807"></script>
+  <script src="js/app-state.js?v=202610012146"></script>
+  <script src="js/app-gas.js?v=202610012146"></script>
+  <script src="js/app-auth.js?v=202610012146"></script>
+  <script src="js/app-settings.js?v=202610012146"></script>
+  <script src="js/app-question.js?v=202610012146"></script>
+  <script src="js/app-practice.js?v=202610012146"></script>
+  <script src="js/app-learning.js?v=202610012146"></script>
+  <script src="js/app-audio.js?v=202610012146"></script>
+  <script src="js/app-nav.js?v=202610012146"></script>
+  <script src="js/app-modal.js?v=202610012146"></script>
+  <script src="js/app-update.js?v=202610012146"></script>
+  <script src="js/app-boot.js?v=202610012146"></script>
+  <script src="js/app-category.js?v=202610012146"></script>
+  <script src="js/app-events.js?v=202610012146"></script>
+  <script src="js/app-menu.js?v=202610012146"></script>
+  <script src="js/app-session.js?v=202610012146"></script>
+  <script src="js/app-add-study.js?v=202610012146"></script>
+  <script src="js/app-sort.js?v=202610012146"></script>
+  <script src="js/app-study-load.js?v=202610012146"></script>
+  <script src="js/app-mode-page.js?v=202610012146"></script>
+  <script src="js/app-background.js?v=202610012146"></script>
+  <script src="js/app-error.js?v=202610012146"></script>
+  <script src="js/app-list.js?v=202610012146"></script>
+  <script src="js/app-list-nav.js?v=202610012146"></script>
+  <script src="js/app-field-edit.js?v=202610012146"></script>
+  <script src="js/app-format.js?v=202610012146"></script>
+  <script src="js/app-image.js?v=202610012146"></script>
+  <script src="js/app-sheet.js?v=202610012146"></script>
+  <script src="js/app-gesture.js?v=202610012146"></script>
 </body>
 </html>
 
