@@ -163,7 +163,7 @@ function restartCurrentCategoryLearning() {
     studyEnd.durationSession = false;
     studyEnd.categorySession = false;
     hideCompletionMessage();
-    startLearning();
+    startLearningAfterAudioPrepare();
     return;
   }
   if (isLastDateQuestionMethod()) {
@@ -176,7 +176,7 @@ function restartCurrentCategoryLearning() {
     studyEnd.lastDateSession = false;
     studyEnd.categorySession = false;
     hideCompletionMessage();
-    startLearning();
+    startLearningAfterAudioPrepare();
     return;
   }
   var targetNo = studyEnd.categoryNo != null ? studyEnd.categoryNo : categoryCatalog.no;
@@ -787,7 +787,7 @@ function startLearningFromCompletion() {
   studyEnd.durationSession = false;
   studyEnd.lastDateSession = false;
   studyEnd.categorySession = false;
-  startLearning();
+  startLearningAfterAudioPrepare();
 }
 
 /**
@@ -856,7 +856,7 @@ function loadCategoryDataAndStartLearning(categoryNo, forceAllQuestions) {
       studyEnd.durationSession = false;
       studyEnd.lastDateSession = false;
       studyEnd.categorySession = false;
-      startLearning();
+      startLearningAfterAudioPrepare();
 }
 
 // プラスボタンの状態を更新

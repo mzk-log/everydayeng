@@ -1,3 +1,37 @@
+function hideAddStudyItemStatusProgress() {
+  var wrap = dom.addStudyItemStatusProgress;
+  var bar = dom.addStudyItemStatusProgressBar;
+  if (wrap) {
+    wrap.hidden = true;
+    wrap.setAttribute('aria-hidden', 'true');
+  }
+  if (bar) {
+    bar.style.width = '0%';
+  }
+}
+
+/**
+ * 音声準備の進捗バー（0〜1）
+ * @param {number} ratio
+ */
+function updateAddStudyItemStatusProgress(ratio) {
+  var wrap = dom.addStudyItemStatusProgress;
+  var bar = dom.addStudyItemStatusProgressBar;
+  if (!wrap || !bar) {
+    return;
+  }
+  var n = Number(ratio);
+  if (isNaN(n) || n < 0) {
+    n = 0;
+  }
+  if (n > 1) {
+    n = 1;
+  }
+  wrap.hidden = false;
+  wrap.setAttribute('aria-hidden', 'false');
+  bar.style.width = Math.round(n * 100) + '%';
+}
+
 function setAddStudyItemStatus(message, isOk) {
   var el = dom.addStudyItemStatus;
   if (!el) return;
@@ -8,6 +42,9 @@ function setAddStudyItemStatus(message, isOk) {
   } else {
     el.classList.remove('is-ok');
   }
+  if (!addStudy.awaitingAudioPrepare && !addStudy.statusProgressVisible) {
+    hideAddStudyItemStatusProgress();
+  }
 }
 
 function setAddStudyItemAskStatus(message) {
@@ -16,6 +53,22 @@ function setAddStudyItemAskStatus(message) {
   el.textContent = message || '';
   el.classList.remove('is-ok');
   el.classList.add('is-ask');
+  if (!addStudy.awaitingAudioPrepare && !addStudy.statusProgressVisible) {
+    hideAddStudyItemStatusProgress();
+  }
+}
+
+/**
+ * 追加中／更新中の表示と同時に進捗バーを出す（0%）
+ */
+function beginAddStudyItemSaveProgress_() {
+  addStudy.statusProgressVisible = true;
+  updateAddStudyItemStatusProgress(0);
+}
+
+function endAddStudyItemSaveProgress_() {
+  addStudy.statusProgressVisible = false;
+  hideAddStudyItemStatusProgress();
 }
 
 function isAddStudyItemNewCategorySelected() {
@@ -641,8 +694,10 @@ function addStudyItemBusyMessage() {
 function cancelAddStudyItemFormConfirm() {
   addStudy.formConfirming = false;
   addStudy.formBusy = false;
+  addStudy.awaitingAudioPrepare = false;
   addStudy.confirmPending = false;
   addStudy.confirmKind = '';
+  endAddStudyItemSaveProgress_();
   setAddStudyItemStatus('', false);
   syncAddStudyItemEditorUi();
 }
@@ -650,12 +705,47 @@ function cancelAddStudyItemFormConfirm() {
 function finishAddStudyItemFormConfirm() {
   addStudy.formConfirming = false;
   addStudy.formBusy = false;
+  addStudy.awaitingAudioPrepare = false;
   addStudy.confirmPending = false;
   addStudy.confirmKind = '';
+  endAddStudyItemSaveProgress_();
   syncAddStudyItemEditorUi();
   if (typeof notifyAddStudyAudioGateChanged === 'function') {
     notifyAddStudyAudioGateChanged();
   }
+}
+
+/**
+ * 保存成功後：対象問題の音声準備が終わるまで待ってからフォームを解放する（案E）
+ * @param {Object|null} item
+ * @param {string} successMessage
+ * @param {{scrollEnd?: boolean}} [options]
+ */
+function finishAddStudyItemAfterAudioPrepare_(item, successMessage, options) {
+  options = options || {};
+  function finishUi() {
+    addStudy.awaitingAudioPrepare = false;
+    endAddStudyItemSaveProgress_();
+    resetAddStudyItemEditor({ keepCategory: true, clearFields: true });
+    renderAddStudyItemList();
+    if (options.scrollEnd) {
+      scrollAddStudyItemListToEnd();
+    }
+    setAddStudyItemStatus(successMessage, true);
+    finishAddStudyItemFormConfirm();
+  }
+  if (!item || typeof prepareStudyItemsAudio !== 'function') {
+    finishUi();
+    return;
+  }
+  addStudy.awaitingAudioPrepare = true;
+  setAddStudyItemAskStatus('音声準備中...');
+  // バーは「追加中...」から出している。ここでは消さず、準備進捗の更新に引き継ぐ
+  if (!addStudy.statusProgressVisible) {
+    beginAddStudyItemSaveProgress_();
+  }
+  syncAddStudyItemEditorUi();
+  prepareStudyItemsAudio([item], finishUi);
 }
 
 function showAddStudyItemRenameConfirm() {
@@ -848,6 +938,7 @@ function submitUpdateStudyItem() {
     pauseBackgroundAudioForAddStudy_();
   }
   setAddStudyItemAskStatus(addStudyItemBusyMessage());
+  beginAddStudyItemSaveProgress_();
   syncAddStudyItemEditorUi();
   var oldQuestion = item.question != null ? String(item.question) : '';
   var oldAnswer = item.answer != null ? String(item.answer) : '';
@@ -892,18 +983,24 @@ function submitUpdateStudyItem() {
         prepareFields.push('answer');
       }
       return Promise.all(deleteJobs).then(function() {
-        if (prepareFields.length && typeof enqueueStudyItemAudioPrepare === 'function') {
-          enqueueStudyItemAudioPrepare(item, { fields: prepareFields });
+        if (prepareFields.length) {
+          finishAddStudyItemAfterAudioPrepare_(item, '更新しました。');
+          return { audioWait: true };
         }
         resetAddStudyItemEditor({ keepCategory: true, clearFields: true });
         renderAddStudyItemList();
         setAddStudyItemStatus('更新しました。', true);
+        return { audioWait: false };
       });
     })
     .catch(function(error) {
       setAddStudyItemStatus(String(error && (error.message || error) || '更新に失敗しました'), false);
+      return { audioWait: false, failed: true };
     })
-    .then(function() {
+    .then(function(result) {
+      if (result && result.audioWait) {
+        return;
+      }
       finishAddStudyItemFormConfirm();
     });
 }
@@ -1049,6 +1146,7 @@ function submitAddStudyItem() {
     pauseBackgroundAudioForAddStudy_();
   }
   setAddStudyItemAskStatus(addStudyItemBusyMessage());
+  beginAddStudyItemSaveProgress_();
   syncAddStudyItemEditorUi();
   var params = new URLSearchParams();
   params.append('action', 'addStudyItem');
@@ -1092,15 +1190,12 @@ function submitAddStudyItem() {
         items.push(data.item);
         applyAddStudyItemLocalItems(items, data.dataGeneration, keepCat);
       }
-      if (typeof enqueueStudyItemAudioPrepare === 'function') {
-        enqueueStudyItemAudioPrepare(data.item);
-      }
-      resetAddStudyItemEditor({ keepCategory: true, clearFields: true });
-      renderAddStudyItemList();
-      if (!isInsert) {
-        scrollAddStudyItemListToEnd();
-      }
-      setAddStudyItemStatus(isInsert ? '挿入しました。続けて入力できます。' : '追加しました。続けて入力できます。', true);
+      finishAddStudyItemAfterAudioPrepare_(
+        data.item,
+        isInsert ? '挿入しました。続けて入力できます。' : '追加しました。続けて入力できます。',
+        { scrollEnd: !isInsert }
+      );
+      return { audioWait: true };
     })
     .catch(function(error) {
       var msg = String(error && (error.message || error) || (isInsert ? '挿入に失敗しました' : '追加に失敗しました'));
@@ -1110,8 +1205,12 @@ function submitAddStudyItem() {
         msg = '保存が混み合っています。もう一度追加してください。';
       }
       setAddStudyItemStatus(msg, false);
+      return { audioWait: false, failed: true };
     })
-    .then(function() {
+    .then(function(result) {
+      if (result && result.audioWait) {
+        return;
+      }
       finishAddStudyItemFormConfirm();
     });
 }

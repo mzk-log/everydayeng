@@ -475,11 +475,32 @@ function enqueueGasAudioFetch(taskFn, options) {
 }
 
 /**
- * 問題追加の GAS 待ち中は、先読み／準備音声を動かさない
+ * 問題追加の GAS 待ち中は、先読み／準備音声を動かさない。
+ * 保存後の音声準備待ち（awaitingAudioPrepare）のあいだは準備を動かす。
  * @returns {boolean}
  */
 function isAddStudyDeferringAudio_() {
+  if (addStudy.awaitingAudioPrepare) {
+    return false;
+  }
   return !!(addStudy.formBusy || addStudy.moveBusy || addStudy.modalBusy);
+}
+
+/**
+ * 学習中または追加の音声準備待ち中は、全カテゴリ先読みを動かさない
+ * @returns {boolean}
+ */
+function shouldSuppressAudioPrefetch_() {
+  if (addStudy.awaitingAudioPrepare) {
+    return true;
+  }
+  if (startAudioPrepare && startAudioPrepare.busy) {
+    return true;
+  }
+  if (typeof isActiveLearningSession === 'function' && isActiveLearningSession()) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -540,12 +561,14 @@ function processGasAudioFetchQueue() {
           }
         }
         notifyAddStudyAudioPrepareProgress_();
+        notifyStudyAudioPrepareMaybeIdle_();
         done();
       });
     };
     isPrefetch = true;
   } else if (
     !isAddStudyDeferringAudio_() &&
+    !shouldSuppressAudioPrefetch_() &&
     ENABLE_AUDIO_PREFETCH &&
     !audioPrefetch.stopped &&
     !audioPrefetch.playBlocked &&
@@ -1236,8 +1259,18 @@ function notifyVisibleCategoriesAfterIdbStats() {
   }
 }
 
+function invalidateCategoryIdbProgressCache() {
+  categoryIdbProgressCache.key = '';
+  categoryIdbProgressCache.map = null;
+}
+
 function refreshAudioIdbStats(onDone) {
   var done = typeof onDone === 'function' ? onDone : function() {};
+  // 学習中は IdB 全件 getAll を抑止（タップ応答性優先。Mem キャッシュは別途更新される）
+  if (typeof isActiveLearningSession === 'function' && isActiveLearningSession()) {
+    done();
+    return;
+  }
   var targets = collectAudioPrefetchJobs();
   audioStock.idbTarget = targets.length;
   openAudioIdb().then(function(db) {
@@ -1246,6 +1279,7 @@ function refreshAudioIdbStats(onDone) {
       audioStock.idbReady = 0;
       audioStock.idbBytes = 0;
       audioStock.idbInventoryReady = true;
+      invalidateCategoryIdbProgressCache();
       refreshLoadDiagUi();
       notifyVisibleCategoriesAfterIdbStats();
       done();
@@ -1274,6 +1308,7 @@ function refreshAudioIdbStats(onDone) {
         audioStock.idbBytes = bytes;
         audioStock.idbReady = ready;
         audioStock.idbInventoryReady = true;
+        invalidateCategoryIdbProgressCache();
         refreshLoadDiagUi();
         notifyVisibleCategoriesAfterIdbStats();
         done();
@@ -1299,19 +1334,34 @@ function refreshAudioIdbStats(onDone) {
  * @returns {Object.<string, {ready: number, target: number}>}
  */
 function buildCategoryIdbProgressMap() {
-  var map = {};
   var qVoice = getAudioVoice('question');
   var qSpeed = getAudioSpeed('question');
   var aVoice = getAudioVoice('answer');
   var aSpeed = getAudioSpeed('answer');
   var have = audioStock.idbIds || {};
+  var items = getMemoryAllStudyItems();
+  var cacheKey = [
+    qVoice,
+    qSpeed,
+    aVoice,
+    aSpeed,
+    audioStock.idbReady,
+    audioStock.idbTarget,
+    items.length,
+    Object.keys(have).length
+  ].join('|');
+  if (categoryIdbProgressCache.map && categoryIdbProgressCache.key === cacheKey) {
+    return categoryIdbProgressCache.map;
+  }
+
+  var map = {};
 
   function addField(catKey, text, voice, speed) {
     if (!text || isImageUrl(text)) {
       return;
     }
-    var cacheKey = normalizeTextForTTS(text) + '_' + voice + '_' + speed;
-    var idbId = audioIdbRecordId(cacheKey);
+    var key = normalizeTextForTTS(text) + '_' + voice + '_' + speed;
+    var idbId = audioIdbRecordId(key);
     if (!map[catKey]) {
       map[catKey] = { ready: 0, target: 0 };
     }
@@ -1321,7 +1371,7 @@ function buildCategoryIdbProgressMap() {
     }
   }
 
-  getMemoryAllStudyItems().forEach(function(item) {
+  items.forEach(function(item) {
     if (!item || item.category_no == null || item.category_no === '') {
       return;
     }
@@ -1329,6 +1379,8 @@ function buildCategoryIdbProgressMap() {
     addField(catKey, getEffectiveQuestion(item), qVoice, qSpeed);
     addField(catKey, getEffectiveAnswer(item), aVoice, aSpeed);
   });
+  categoryIdbProgressCache.key = cacheKey;
+  categoryIdbProgressCache.map = map;
   return map;
 }
 
@@ -1385,14 +1437,26 @@ function saveAudioToCache(text, audioContent, voiceGender, speed) {
   };
   ensureMp3BlobOnAudioData(audioData);
   audioCache[cacheKey] = audioData;
+  var idbId = audioIdbRecordId(cacheKey);
   putAudioIdbRecord({
-    id: audioIdbRecordId(cacheKey),
+    id: idbId,
     audioContent: audioContent,
     timestamp: audioData.timestamp,
     textHash: audioData.textHash,
     byteLength: String(audioContent || '').length
   });
-  setTimeout(refreshAudioIdbStats, 0);
+  if (!audioStock.idbIds) {
+    audioStock.idbIds = {};
+  }
+  if (!audioStock.idbIds[idbId]) {
+    audioStock.idbIds[idbId] = true;
+    audioStock.idbReady = (audioStock.idbReady || 0) + 1;
+  }
+  invalidateCategoryIdbProgressCache();
+  // 学習中は全件 getAll を避け、アイドル時のみ診断用に更新
+  if (!(typeof isActiveLearningSession === 'function' && isActiveLearningSession())) {
+    setTimeout(refreshAudioIdbStats, 0);
+  }
   return audioData;
 }
 
@@ -2036,6 +2100,9 @@ function scheduleAudioPrefetch() {
   if (!googleAuth.email || !hasUsableAuth()) {
     return;
   }
+  if (shouldSuppressAudioPrefetch_()) {
+    return;
+  }
   if (isAddStudyDeferringAudio_()) {
     armAudioPrefetchRecheck_(AUDIO_PREFETCH_RECHECK_MS);
     return;
@@ -2282,9 +2349,126 @@ function flushStudyAudioPrepareQueue_() {
     return;
   }
   if (!studyAudioPrepare.queue.length) {
+    notifyStudyAudioPrepareMaybeIdle_();
     return;
   }
   processGasAudioFetchQueue();
+}
+
+/**
+ * 音声準備が動いているか
+ * @returns {boolean}
+ */
+function isStudyAudioPrepareBusy() {
+  return studyAudioPrepare.queue.length > 0 || !!studyAudioPrepare.activeItemId;
+}
+
+/**
+ * 準備キューが空になったら待ちコールバックを実行
+ */
+function notifyStudyAudioPrepareMaybeIdle_() {
+  if (isStudyAudioPrepareBusy()) {
+    return;
+  }
+  var waiters = studyAudioPrepare.waiters.slice();
+  studyAudioPrepare.waiters = [];
+  for (var i = 0; i < waiters.length; i++) {
+    try {
+      waiters[i]();
+    } catch (e) {
+      // ignore
+    }
+  }
+}
+
+/**
+ * 追加画面の進捗バーを更新（準備待ち中のみ）
+ */
+function refreshAddStudyAudioPrepareProgressUi_() {
+  if (!studyAudioPrepare.progressActive) {
+    return;
+  }
+  if (typeof updateAddStudyItemStatusProgress !== 'function') {
+    return;
+  }
+  if (!addStudy.awaitingAudioPrepare) {
+    return;
+  }
+  var total = studyAudioPrepare.progressTotal || 0;
+  if (total <= 0) {
+    updateAddStudyItemStatusProgress(1);
+    return;
+  }
+  updateAddStudyItemStatusProgress(studyAudioPrepare.progressDone / total);
+}
+
+/**
+ * 準備1本が完了（再キューしない経路）したときの進捗
+ */
+function noteStudyAudioPrepareProgressStep_() {
+  if (!studyAudioPrepare.progressActive) {
+    return;
+  }
+  studyAudioPrepare.progressDone += 1;
+  if (studyAudioPrepare.progressDone > studyAudioPrepare.progressTotal) {
+    studyAudioPrepare.progressDone = studyAudioPrepare.progressTotal;
+  }
+  refreshAddStudyAudioPrepareProgressUi_();
+}
+
+/**
+ * 進捗トラッキング終了
+ */
+function clearStudyAudioPrepareProgress_() {
+  studyAudioPrepare.progressActive = false;
+  studyAudioPrepare.progressTotal = 0;
+  studyAudioPrepare.progressDone = 0;
+  if (typeof hideAddStudyItemStatusProgress === 'function' && !addStudy.awaitingAudioPrepare) {
+    hideAddStudyItemStatusProgress();
+  }
+}
+
+/**
+ * 複数問題の不足音声を準備し、完了後に onDone
+ * @param {Object[]} items
+ * @param {function(): void} [onDone]
+ */
+function prepareStudyItemsAudio(items, onDone) {
+  var done = typeof onDone === 'function' ? onDone : function() {};
+  var list = items || [];
+  if (!list.length) {
+    done();
+    return;
+  }
+  var total = 0;
+  for (var i = 0; i < list.length; i++) {
+    var missing = getStudyItemMissingAudioFields(list[i]);
+    total += missing.length;
+    if (missing.length) {
+      enqueueStudyItemAudioPrepare(list[i], { fields: missing });
+    }
+  }
+  // 追加画面：シート保存完了を1ステップ数え、音声準備中に入った時点でバーを進める
+  if (addStudy.awaitingAudioPrepare) {
+    studyAudioPrepare.progressActive = true;
+    studyAudioPrepare.progressTotal = total + 1;
+    studyAudioPrepare.progressDone = 1;
+    refreshAddStudyAudioPrepareProgressUi_();
+  }
+  if (!isStudyAudioPrepareBusy()) {
+    if (addStudy.awaitingAudioPrepare) {
+      studyAudioPrepare.progressDone = studyAudioPrepare.progressTotal;
+      refreshAddStudyAudioPrepareProgressUi_();
+      clearStudyAudioPrepareProgress_();
+    }
+    done();
+    return;
+  }
+  studyAudioPrepare.waiters.push(function() {
+    clearStudyAudioPrepareProgress_();
+    done();
+  });
+  flushStudyAudioPrepareQueue_();
 }
 
 /**
@@ -2373,30 +2557,48 @@ function notifyAddStudyAudioPrepareProgress_() {
  * @param {function(): void} done
  */
 function ensureStudyItemFieldAudio_(job, signal, generation, done) {
-  if (!job || generation !== audioFetch.generation) {
+  var settled = false;
+  var requeued = false;
+  function finish() {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    if (!requeued) {
+      noteStudyAudioPrepareProgressStep_();
+    }
     done();
+  }
+  function requeueAndFinish() {
+    requeued = true;
+    studyAudioPrepare.queue.unshift(job);
+    finish();
+  }
+
+  if (!job || generation !== audioFetch.generation) {
+    finish();
     return;
   }
   if (isAddStudyDeferringAudio_()) {
-    studyAudioPrepare.queue.unshift(job);
-    done();
+    requeueAndFinish();
     return;
   }
   if (getCachedAudio(job.text, job.voice, job.speed)) {
-    done();
+    finish();
     return;
   }
   getCachedAudioFromIdb(job.text, job.voice, job.speed, function(cached) {
     if (cached) {
-      done();
+      finish();
       return;
     }
     ensureFreshGoogleAuthToken(function() {
-      if (generation !== audioFetch.generation || isAddStudyDeferringAudio_()) {
-        if (isAddStudyDeferringAudio_()) {
-          studyAudioPrepare.queue.unshift(job);
-        }
-        done();
+      if (generation !== audioFetch.generation) {
+        finish();
+        return;
+      }
+      if (isAddStudyDeferringAudio_()) {
+        requeueAndFinish();
         return;
       }
       beginLoadDiag('run', '準備', 1, {
@@ -2420,7 +2622,7 @@ function ensureStudyItemFieldAudio_(job, signal, generation, done) {
       })
         .then(function(data) {
           if (generation !== audioFetch.generation) {
-            done();
+            finish();
             return;
           }
           if (data && data.success && data.found && data.audioContent) {
@@ -2429,14 +2631,14 @@ function ensureStudyItemFieldAudio_(job, signal, generation, done) {
               ok: true,
               bytes: String(data.audioContent).length
             });
-            done();
+            finish();
             return;
           }
           updateLoadDiag('run', { phase: 'TTS', status: '取得中' });
           return synthesizeTtsAudioContent_(job.text, job.voice, job.speed, signal)
             .then(function(audioContent) {
               if (generation !== audioFetch.generation) {
-                done();
+                finish();
                 return;
               }
               saveAudioToCache(job.text, audioContent, job.voice, job.speed);
@@ -2451,29 +2653,28 @@ function ensureStudyItemFieldAudio_(job, signal, generation, done) {
                   ok: true,
                   bytes: String(audioContent).length
                 });
-                done();
+                finish();
               });
             });
         })
         .catch(function(error) {
           if (generation !== audioFetch.generation) {
             finishLoadDiag('run', loadDiagStatusFromError(error), { ok: false });
-            done();
+            finish();
             return;
           }
           if (isAbortError(error)) {
             // 本問再生や追加待ちで中断：キューに戻して再開を待つ
-            studyAudioPrepare.queue.unshift(job);
             finishLoadDiag('run', 'abort', { ok: false });
-            done();
+            requeueAndFinish();
             return;
           }
           finishLoadDiag('run', loadDiagStatusFromError(error), { ok: false });
           console.warn('study audio prepare failed:', error);
-          done();
+          finish();
         });
     }, function() {
-      done();
+      finish();
     });
   });
 }

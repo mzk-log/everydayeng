@@ -126,12 +126,25 @@ var addStudy = {
   confirmKind: '', // add | update | insert | delete
   pendingDeleteId: '',
   moveBusy: false,
-  modalBusy: false // 確認モーダルの処理中
+  modalBusy: false, // 確認モーダルの処理中
+  awaitingAudioPrepare: false, // 保存成功後、音声準備完了待ち（この間だけ準備を動かす）
+  statusProgressVisible: false // 追加中…から音声準備までの進捗バー表示中
 };
-// 問題追加の保存成功後／手動TTS：Drive／TTS→IdB（追加の GAS 待ち・本問再生中は動かさない）
+// 問題追加の保存成功後／手動TTS／Start前準備：Drive／TTS→IdB
 var studyAudioPrepare = {
   queue: [], // { item, text, voice, speed, field, idbId }
-  activeItemId: '' // いま実行中の問題 ID（追加画面の「TTS中」表示用）
+  activeItemId: '', // いま実行中の問題 ID（追加画面の「TTS中」表示用）
+  waiters: [], // 準備アイドル待ちコールバック
+  progressActive: false, // 追加画面の進捗バー表示中
+  progressTotal: 0,
+  progressDone: 0
+};
+var startAudioPrepare = {
+  busy: false // Start 押下後の不足音声準備中
+};
+var categoryIdbProgressCache = {
+  key: '',
+  map: null
 };
 var isRefreshingAdvanceNavControls = false; // refreshAdvanceNavControls の再入防止
 var CROSS_CATEGORY_LIST_SIZE = 7; // カテゴリ横断モード：List表示件数
@@ -317,6 +330,8 @@ var dom = {
   addStudyItemRenameName: document.getElementById('addStudyItemRenameName'),
   addStudyItemSaveButton: document.getElementById('addStudyItemSaveButton'),
   addStudyItemStatus: document.getElementById('addStudyItemStatus'),
+  addStudyItemStatusProgress: document.getElementById('addStudyItemStatusProgress'),
+  addStudyItemStatusProgressBar: document.getElementById('addStudyItemStatusProgressBar'),
   categoryLoadingSpinner: document.getElementById('categoryLoadingSpinner'),
   currentCategory: document.getElementById('currentCategory'),
   learningCategoryNavInfo: document.getElementById('learningCategoryNavInfo'),

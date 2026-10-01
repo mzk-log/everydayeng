@@ -352,17 +352,6 @@
   background: #f5f5f5;
 }
 
-.visible-categories-check-item.is-idb-incomplete {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.visible-categories-check-item.is-idb-incomplete:hover,
-.visible-categories-check-item.is-idb-incomplete:focus,
-.visible-categories-check-item.is-idb-incomplete:focus-within {
-  background: transparent;
-}
-
 .visible-categories-check-item:focus,
 .visible-categories-check-item:focus-within {
   outline: none;
@@ -2719,9 +2708,18 @@ body:has(#screen2.active) .answer-text-edit {
   cursor: not-allowed;
 }
 
-.add-study-status {
-  min-height: 1.2em;
+.add-study-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 6px 0 0;
+  min-height: 1.2em;
+}
+
+.add-study-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
   font-size: 13px;
   color: #c0392b;
 }
@@ -2732,6 +2730,27 @@ body:has(#screen2.active) .answer-text-edit {
 
 .add-study-status.is-ask {
   color: #333;
+}
+
+.add-study-status-progress {
+  flex: 0 0 72px;
+  width: 72px;
+  height: 6px;
+  border-radius: 999px;
+  background: #e0e0e0;
+  overflow: hidden;
+}
+
+.add-study-status-progress[hidden] {
+  display: none !important;
+}
+
+.add-study-status-progress-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: #2f6fed;
+  transition: width 0.2s ease-out;
 }
 
 .add-study-actions {
@@ -2794,9 +2813,15 @@ body:has(#screen2.active) .answer-text-edit {
     padding-bottom: 6px;
   }
 
-  .add-study-status {
+  .add-study-status-row {
     min-height: 1em;
     margin-top: 4px;
+    gap: 8px;
+  }
+
+  .add-study-status-progress {
+    flex-basis: 64px;
+    width: 64px;
   }
 
   .add-study-actions {

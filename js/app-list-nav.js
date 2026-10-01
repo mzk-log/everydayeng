@@ -376,7 +376,8 @@ function updateStartButtonEnabled() {
   }
   var spinner = dom.categoryLoadingSpinner;
   var loading = !!(spinner && spinner.style.display === 'block');
-  startButton.disabled = loading || isNavActionLockedByAudio();
+  var preparing = !!(typeof startAudioPrepare !== 'undefined' && startAudioPrepare.busy);
+  startButton.disabled = loading || preparing || isNavActionLockedByAudio();
 }
 
 // リスト表示をリセット

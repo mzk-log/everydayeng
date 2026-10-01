@@ -64,7 +64,7 @@ function setupEventListeners() {
   
   dom.startButton.addEventListener('click', function() {
     if (this.disabled) return;
-    playStartSfxThen(startLearning);
+    playStartSfxThen(startLearningAfterAudioPrepare);
   });
   
   // ナビゲーションバー中央ボタン（Ans / Next）

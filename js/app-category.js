@@ -475,16 +475,17 @@ function isCategoryIdbReadyForVisible(no) {
 }
 
 /**
- * カテゴリ番号が実行時の表示対象か（希望ONかつこの端末で IdB 完了。END は常に false）
+ * カテゴリ番号が表示対象か（希望ON。END は常に false）。
+ * IdB 未完了でも一覧には出す（Start 前準備で埋める）
  * @param {string|number} no
  * @returns {boolean}
  */
 function isCategoryNoVisible(no) {
-  return isCategoryNoInVisiblePreference(no) && isCategoryIdbReadyForVisible(no);
+  return isCategoryNoInVisiblePreference(no);
 }
 
 /**
- * ドロップダウン／ナビ用の表示カテゴリ一覧（実行時＝希望∩IdB完了）
+ * ドロップダウン／ナビ用の表示カテゴリ一覧（希望ON）
  * @returns {Object[]}
  */
 function getVisibleCategories() {
@@ -618,35 +619,24 @@ function formatVisibleCategoryIdbSuffix(progress) {
 }
 
 /**
- * 表示カテゴリ1行の IdB ラベル／選択可否を同期
+ * 表示カテゴリ1行の IdB ラベルを同期（未完了でも選択可。Start 前準備で埋める）
  * @param {HTMLInputElement} input
  * @param {HTMLElement} idbEl
  * @param {string} catNo
  * @param {{ready: number, target: number}|null|undefined} progress
  */
 function syncVisibleCategoryRowIdbState(input, idbEl, catNo, progress) {
-  if (!input || !idbEl) {
+  if (!idbEl) {
     return;
   }
   var incomplete = isCategoryIdbProgressIncomplete(progress);
   idbEl.textContent = formatVisibleCategoryIdbSuffix(progress);
-  var label = input.closest ? input.closest('label') : input.parentNode;
-  if (incomplete) {
-    input.disabled = true;
-    input.checked = false;
-    if (label && label.classList) {
-      label.classList.add('is-idb-incomplete');
-    }
-    return;
-  }
-  var wasDisabled = !!input.disabled;
-  input.disabled = false;
+  var label = input && (input.closest ? input.closest('label') : input.parentNode);
   if (label && label.classList) {
-    label.classList.remove('is-idb-incomplete');
+    label.classList.toggle('is-idb-incomplete', incomplete);
   }
-  // 未完了→完了になった行だけ希望を反映（編集中の完了行は触らない）
-  if (wasDisabled) {
-    input.checked = isCategoryNoInVisiblePreference(catNo);
+  if (input) {
+    input.disabled = false;
   }
 }
 
@@ -779,8 +769,7 @@ function renderVisibleCategoriesChecklist() {
     var input = document.createElement('input');
     input.type = 'checkbox';
     input.value = catNo;
-    input.disabled = incomplete;
-    input.checked = !incomplete && isCategoryNoInVisiblePreference(cat.no);
+    input.checked = isCategoryNoInVisiblePreference(cat.no);
     input.addEventListener('change', function() {
       updateVisibleCategoriesCount();
     });
@@ -846,7 +835,7 @@ function getCheckedVisibleCategoryNosFromUi() {
 }
 
 /**
- * チェックリストの全選択／全解除（IdB未完了＝disabled は対象外）
+ * チェックリストの全選択／全解除
  * @param {boolean} checked
  */
 function setAllVisibleCategoryChecks(checked) {
@@ -857,43 +846,9 @@ function setAllVisibleCategoryChecks(checked) {
   hideVisibleCategoriesError();
   var inputs = container.querySelectorAll('input[type="checkbox"]');
   for (var i = 0; i < inputs.length; i++) {
-    if (inputs[i].disabled) {
-      continue;
-    }
     inputs[i].checked = !!checked;
   }
   updateVisibleCategoriesCount();
-}
-
-/**
- * 保存用番号：UIでONの完了分 ＋ IdB未完了だが希望ONの分（端末差で希望を消さない）
- * @returns {string[]}
- */
-function getVisibleCategoryNosForSaveFromUi() {
-  var checked = getCheckedVisibleCategoryNosFromUi();
-  var merged = {};
-  var i;
-  for (i = 0; i < checked.length; i++) {
-    merged[String(checked[i])] = true;
-  }
-  var idbMap = (typeof buildCategoryIdbProgressMap === 'function')
-    ? buildCategoryIdbProgressMap()
-    : {};
-  var list = getConfigurableCategories();
-  for (i = 0; i < list.length; i++) {
-    var no = String(list[i].no);
-    if (!isCategoryIdbProgressIncomplete(idbMap[no])) {
-      continue;
-    }
-    if (isCategoryNoInVisiblePreference(no)) {
-      merged[no] = true;
-    }
-  }
-  return list.filter(function(cat) {
-    return !!merged[String(cat.no)];
-  }).map(function(cat) {
-    return String(cat.no);
-  });
 }
 
 /**
@@ -943,7 +898,7 @@ function saveVisibleCategoriesFromUi() {
     showVisibleCategoriesError('一つ以上選択してください。');
     return;
   }
-  saveVisibleCategoryNos(getVisibleCategoryNosForSaveFromUi());
+  saveVisibleCategoryNos(checked);
   hideVisibleCategoriesError();
   applyVisibleCategoriesChange();
   closeVisibleCategoriesOverlay();

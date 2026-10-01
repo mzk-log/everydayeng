@@ -1,3 +1,63 @@
+/**
+ * Start 時点で学習対象になる問題一覧（categoryCatalog.items はまだ変えない）
+ * @returns {Object[]}
+ */
+function getItemsForStartLearning() {
+  if (!categoryCatalog.items || categoryCatalog.items.length === 0) {
+    return [];
+  }
+  if (questionList.selected.length === 0) {
+    return categoryCatalog.items.slice();
+  }
+  var filtered = [];
+  var selected = questionList.selected.slice().sort(function(a, b) { return a - b; });
+  selected.forEach(function(index) {
+    if (index >= 0 && index < categoryCatalog.items.length) {
+      filtered.push(categoryCatalog.items[index]);
+    }
+  });
+  if (filtered.length === 0) {
+    return categoryCatalog.items.slice();
+  }
+  return filtered;
+}
+
+/**
+ * 不足音声を準備してから学習開始（画面を見ない運用向け。警告に頼らない）
+ */
+function startLearningAfterAudioPrepare() {
+  if (startAudioPrepare.busy) {
+    return;
+  }
+  if (!categoryCatalog.items || categoryCatalog.items.length === 0) {
+    return;
+  }
+  var items = getItemsForStartLearning();
+  if (!items.length) {
+    return;
+  }
+  var needsPrepare = false;
+  if (typeof getStudyItemMissingAudioFields === 'function') {
+    for (var i = 0; i < items.length; i++) {
+      if (getStudyItemMissingAudioFields(items[i]).length) {
+        needsPrepare = true;
+        break;
+      }
+    }
+  }
+  if (!needsPrepare || typeof prepareStudyItemsAudio !== 'function') {
+    startLearning();
+    return;
+  }
+  startAudioPrepare.busy = true;
+  updateStartButtonEnabled();
+  prepareStudyItemsAudio(items, function() {
+    startAudioPrepare.busy = false;
+    updateStartButtonEnabled();
+    startLearning();
+  });
+}
+
 // 学習開始
 function startLearning() {
   if (categoryCatalog.items.length === 0) {
