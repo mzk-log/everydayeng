@@ -2017,6 +2017,7 @@ tr:last-child td {
 /* ナビゲーションバー（画面下端固定） */
 .navigation-bar {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-around;  /* 等間隔配置 */
   align-items: center;
   padding: 14px 20px 8px;  /* 上を厚くし Q/Ans ラベル用余白。ボタンは相対的にやや下へ */
@@ -2029,6 +2030,15 @@ tr:last-child td {
   bottom: 0;
   transform: translateX(-50%);
   z-index: 150;
+  box-sizing: border-box;
+}
+
+/* 学習／完了画面：Start前準備の進捗（TOP の start-prepare-status と同型） */
+.learning-prepare-status {
+  flex: 1 0 100%;
+  order: -1;
+  margin: 0 0 8px;
+  padding: 0 2px;
   box-sizing: border-box;
 }
 
@@ -2707,17 +2717,6 @@ body:has(#screen2.active) .answer-text-edit {
 .add-study-list-mini-del {
   border-color: #e0b4b4;
   color: #c0392b;
-}
-
-.add-study-list-mini-tts {
-  border-color: #90caf9;
-  color: #1565C0;
-}
-
-.add-study-list-mini-tts.is-busy,
-.add-study-list-mini-tts:disabled {
-  opacity: 0.7;
-  cursor: default;
 }
 
 .add-study-list-start {

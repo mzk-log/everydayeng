@@ -389,23 +389,26 @@ function updateNavAnswerButton() {
   var navAnswerButton = dom.navAnswerButton;
   var navAnswerText = dom.navAnswerText;
   if (!navAnswerButton || !navAnswerText) return;
+
+  // Plus／次カテゴリ開始など、Start 表示条件外でも準備中は中央に出す（TOP と視覚を揃える）
+  if (startAudioPrepare && startAudioPrepare.busy) {
+    navAnswerText.textContent = '準備中...';
+    navAnswerText.classList.remove('blinking');
+    navAnswerButton.disabled = true;
+    navAnswerButton.title = '音声を準備しています';
+    return;
+  }
   
   if (studyEnd.done) {
     if (shouldShowCompletionStartButton()) {
-      if (startAudioPrepare && startAudioPrepare.busy) {
-        navAnswerText.textContent = '準備中...';
-        navAnswerButton.disabled = true;
-        navAnswerButton.title = '音声を準備しています';
+      navAnswerText.textContent = 'Start';
+      navAnswerButton.disabled = isCategoryTransitionInProgress || isNavActionLockedByAudio();
+      if (isCategoryTransitionInProgress) {
+        navAnswerButton.title = 'カテゴリの切り替え中です';
+      } else if (isNavActionLockedByAudio()) {
+        navAnswerButton.title = '音声の再生が終わるまでお待ちください';
       } else {
-        navAnswerText.textContent = 'Start';
-        navAnswerButton.disabled = isCategoryTransitionInProgress || isNavActionLockedByAudio();
-        if (isCategoryTransitionInProgress) {
-          navAnswerButton.title = 'カテゴリの切り替え中です';
-        } else if (isNavActionLockedByAudio()) {
-          navAnswerButton.title = '音声の再生が終わるまでお待ちください';
-        } else {
-          navAnswerButton.removeAttribute('title');
-        }
+        navAnswerButton.removeAttribute('title');
       }
     } else {
       navAnswerText.textContent = 'Next';

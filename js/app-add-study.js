@@ -363,18 +363,6 @@ function renderAddStudyItemList() {
       escapeAddStudyItemHtml(id) + '">下に挿入</button>';
     html += '<button type="button" class="add-study-list-mini add-study-list-mini-del" data-add-del="' +
       escapeAddStudyItemHtml(id) + '">削除</button>';
-    var ttsPending = typeof isStudyItemAudioPreparePending === 'function' &&
-      isStudyItemAudioPreparePending(id);
-    var ttsMissing = (typeof getStudyItemMissingAudioFields === 'function')
-      ? getStudyItemMissingAudioFields(it)
-      : [];
-    if (ttsPending) {
-      html += '<button type="button" class="add-study-list-mini add-study-list-mini-tts is-busy" data-add-tts="' +
-        escapeAddStudyItemHtml(id) + '" disabled>TTS中...</button>';
-    } else if (ttsMissing.length) {
-      html += '<button type="button" class="add-study-list-mini add-study-list-mini-tts" data-add-tts="' +
-        escapeAddStudyItemHtml(id) + '">TTS実行</button>';
-    }
     html += '</div></div>';
     html += '<div class="add-study-list-move">';
     html += '<button type="button" class="add-study-list-move-btn" data-add-move="up" data-add-id="' +
@@ -387,81 +375,12 @@ function renderAddStudyItemList() {
   list.innerHTML = html;
 }
 
-/**
- * 追加画面が開いているか
- * @returns {boolean}
- */
-function isAddStudyItemOverlayOpen() {
-  var overlay = dom.addStudyItemOverlay;
-  return !!(overlay && overlay.style.display === 'flex');
-}
-
-/**
- * TTS ボタン表示だけ差し替える（一覧のスクロール位置を維持）
- */
-function refreshAddStudyItemAudioButtons() {
-  if (!isAddStudyItemOverlayOpen()) {
-    return;
-  }
-  var list = dom.addStudyItemList;
-  if (!list) {
-    return;
-  }
-  var scrollTop = list.scrollTop;
-  renderAddStudyItemList();
-  list.scrollTop = scrollTop;
-}
-
-/**
- * 未準備の欄だけ既存の音声準備キューへ積む（追加待ち・本問再生中は後回し）
- * @param {string} itemId
- */
-function requestAddStudyItemTts(itemId) {
-  if (!itemId || typeof enqueueStudyItemAudioPrepare !== 'function') {
-    return;
-  }
-  if (typeof getStudyItemMissingAudioFields !== 'function') {
-    return;
-  }
-  var select = dom.addStudyItemCategorySelect;
-  var categoryNo = select ? String(select.value || '') : '';
-  var items = getAddStudyItemItemsSorted(categoryNo);
-  var item = null;
-  for (var i = 0; i < items.length; i++) {
-    if (String(items[i].id) === String(itemId)) {
-      item = items[i];
-      break;
-    }
-  }
-  if (!item) {
-    setAddStudyItemStatus('TTS対象の問題が見つかりません。', false);
-    return;
-  }
-  var missing = getStudyItemMissingAudioFields(item);
-  if (!missing.length) {
-    refreshAddStudyItemAudioButtons();
-    return;
-  }
-  enqueueStudyItemAudioPrepare(item, { fields: missing });
-  refreshAddStudyItemAudioButtons();
-}
-
 function handleAddStudyItemListClick(e) {
   if (addStudy.formConfirming || addStudy.formBusy) {
     return;
   }
   var target = e.target;
   if (!target) return;
-  var ttsBtn = target.closest ? target.closest('[data-add-tts]') : null;
-  if (ttsBtn) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (ttsBtn.disabled) {
-      return;
-    }
-    requestAddStudyItemTts(ttsBtn.getAttribute('data-add-tts'));
-    return;
-  }
   var delBtn = target.closest ? target.closest('[data-add-del]') : null;
   if (delBtn) {
     e.preventDefault();
@@ -591,11 +510,6 @@ function openAddStudyItemOverlay() {
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
   }
-  if (typeof refreshAudioIdbStats === 'function') {
-    refreshAudioIdbStats(function() {
-      refreshAddStudyItemAudioButtons();
-    });
-  }
 }
 
 function closeAddStudyItemOverlay() {
@@ -700,6 +614,8 @@ function cancelAddStudyItemFormConfirm() {
   endAddStudyItemSaveProgress_();
   setAddStudyItemStatus('', false);
   syncAddStudyItemEditorUi();
+  // 保存待ち中は fill が抑止されるため、解除後に既存カテゴリ名を再表示
+  syncAddStudyItemRenameFields(true);
 }
 
 function finishAddStudyItemFormConfirm() {
@@ -710,6 +626,8 @@ function finishAddStudyItemFormConfirm() {
   addStudy.confirmKind = '';
   endAddStudyItemSaveProgress_();
   syncAddStudyItemEditorUi();
+  // 新規カテゴリ追加直後など：busy 解除後に「カテゴリ名」へ現在名を入れて編集可能にする
+  syncAddStudyItemRenameFields(true);
   if (typeof notifyAddStudyAudioGateChanged === 'function') {
     notifyAddStudyAudioGateChanged();
   }

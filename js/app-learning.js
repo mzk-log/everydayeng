@@ -41,21 +41,16 @@ function armStartPrepareWaitingSfx_() {
 }
 
 /**
- * Start 前準備の画面表示（TOP バー＋ボタン／完了画面中央）
+ * Start 前準備の進捗1系統を status／bar／count に反映
+ * @param {HTMLElement|null} status
+ * @param {HTMLElement|null} bar
+ * @param {HTMLElement|null} countEl
+ * @param {boolean} busy
+ * @param {number} ratio
+ * @param {number} done
+ * @param {number} total
  */
-function syncStartAudioPrepareUi() {
-  var busy = !!startAudioPrepare.busy;
-  var status = dom.startPrepareStatus;
-  var bar = dom.startPrepareProgressBar;
-  var countEl = dom.startPrepareCount;
-  var startButton = dom.startButton;
-  var total = studyAudioPrepare.progressActive ? (studyAudioPrepare.progressTotal || 0) : 0;
-  var done = studyAudioPrepare.progressActive ? (studyAudioPrepare.progressDone || 0) : 0;
-  if (done > total) {
-    done = total;
-  }
-  var ratio = total > 0 ? (done / total) : 0;
-
+function applyStartPrepareProgressToUi_(status, bar, countEl, busy, ratio, done, total) {
   if (status) {
     status.hidden = !busy;
     status.setAttribute('aria-hidden', busy ? 'false' : 'true');
@@ -66,6 +61,39 @@ function syncStartAudioPrepareUi() {
   if (countEl) {
     countEl.textContent = busy && total > 0 ? (done + '/' + total) : '0/0';
   }
+}
+
+/**
+ * Start 前準備の画面表示（TOP バー＋学習／完了ナビ上バー＋中央ボタン）
+ */
+function syncStartAudioPrepareUi() {
+  var busy = !!startAudioPrepare.busy;
+  var startButton = dom.startButton;
+  var total = studyAudioPrepare.progressActive ? (studyAudioPrepare.progressTotal || 0) : 0;
+  var done = studyAudioPrepare.progressActive ? (studyAudioPrepare.progressDone || 0) : 0;
+  if (done > total) {
+    done = total;
+  }
+  var ratio = total > 0 ? (done / total) : 0;
+
+  applyStartPrepareProgressToUi_(
+    dom.startPrepareStatus,
+    dom.startPrepareProgressBar,
+    dom.startPrepareCount,
+    busy,
+    ratio,
+    done,
+    total
+  );
+  applyStartPrepareProgressToUi_(
+    dom.learningPrepareStatus,
+    dom.learningPrepareProgressBar,
+    dom.learningPrepareCount,
+    busy,
+    ratio,
+    done,
+    total
+  );
   if (startButton) {
     if (busy) {
       if (startButton.textContent === 'START' || startButton.textContent === 'Start') {

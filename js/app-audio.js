@@ -538,7 +538,7 @@ function processGasAudioFetchQueue() {
     !isFieldAudioBusy() &&
     studyAudioPrepare.queue.length > 0
   ) {
-    // 保存後準備／手動TTS：先読みより前。queue に残すので本問再生の abort で消えない
+    // 保存後準備／Start前準備：先読みより前。queue に残すので本問再生の abort で消えない
     var prepJob = studyAudioPrepare.queue.shift();
     studyAudioPrepare.activeItemId = prepJob && prepJob.item
       ? String(prepJob.item.id)
@@ -2520,7 +2520,7 @@ function prepareStudyItemsAudio(items, onDone, options) {
 }
 
 /**
- * 追加画面向け：当該問題で IdB／Mem に無い欄（sheet 基準）
+ * 当該問題で IdB／Mem に無い欄（sheet 基準。Start前準備・追加保存後準備で使用）
  * @param {Object} item
  * @returns {string[]} 'question'|'answer'
  */
@@ -2556,41 +2556,16 @@ function getStudyItemMissingAudioFields(item) {
 }
 
 /**
- * 準備キュー／実行中に当該問題があるか
- * @param {string|number} itemId
- * @returns {boolean}
- */
-function isStudyItemAudioPreparePending(itemId) {
-  if (itemId == null || itemId === '') {
-    return false;
-  }
-  var key = String(itemId);
-  if (studyAudioPrepare.activeItemId && studyAudioPrepare.activeItemId === key) {
-    return true;
-  }
-  for (var i = 0; i < studyAudioPrepare.queue.length; i++) {
-    var pending = studyAudioPrepare.queue[i];
-    if (pending && pending.item && String(pending.item.id) === key) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * 追加画面の TTS 表示を IdB 集計と合わせて更新
+ * 追加の音声準備進捗に合わせ、表示カテゴリの IdB ラベル等を更新
  */
 function notifyAddStudyAudioPrepareProgress_() {
   if (typeof refreshAudioIdbStats !== 'function') {
-    if (typeof refreshAddStudyItemAudioButtons === 'function') {
-      refreshAddStudyItemAudioButtons();
+    if (typeof updateVisibleCategoriesIdbLabels === 'function') {
+      updateVisibleCategoriesIdbLabels();
     }
     return;
   }
   refreshAudioIdbStats(function() {
-    if (typeof refreshAddStudyItemAudioButtons === 'function') {
-      refreshAddStudyItemAudioButtons();
-    }
     if (typeof updateVisibleCategoriesIdbLabels === 'function') {
       updateVisibleCategoriesIdbLabels();
     }

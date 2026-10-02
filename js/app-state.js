@@ -141,10 +141,10 @@ var addStudy = {
   awaitingAudioPrepare: false, // 保存成功後、音声準備完了待ち（この間だけ準備を動かす）
   statusProgressVisible: false // 追加中…から音声準備までの進捗バー表示中
 };
-// 問題追加の保存成功後／手動TTS／Start前準備：Drive／TTS→IdB
+// 問題追加の保存成功後／Start前準備：Drive／TTS→IdB
 var studyAudioPrepare = {
   queue: [], // { item, text, voice, speed, field, idbId }
-  activeItemId: '', // いま実行中の問題 ID（追加画面の「TTS中」表示用）
+  activeItemId: '', // いま実行中の問題 ID（追加保存後準備の追跡用）
   waiters: [], // 準備アイドル待ちコールバック
   progressActive: false, // 追加画面の進捗バー表示中
   progressTotal: 0,
@@ -361,6 +361,10 @@ var dom = {
   startPrepareStatusText: document.getElementById('startPrepareStatusText'),
   startPrepareProgressBar: document.getElementById('startPrepareProgressBar'),
   startPrepareCount: document.getElementById('startPrepareCount'),
+  learningPrepareStatus: document.getElementById('learningPrepareStatus'),
+  learningPrepareStatusText: document.getElementById('learningPrepareStatusText'),
+  learningPrepareProgressBar: document.getElementById('learningPrepareProgressBar'),
+  learningPrepareCount: document.getElementById('learningPrepareCount'),
   backgroundImage: document.getElementById('backgroundImage'),
   backgroundImageGrid: document.getElementById('backgroundImageGrid'),
   backgroundPreviewCancelButton: document.getElementById('backgroundPreviewCancelButton'),
