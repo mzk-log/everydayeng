@@ -64,7 +64,8 @@ function setupEventListeners() {
   
   dom.startButton.addEventListener('click', function() {
     if (this.disabled) return;
-    playStartSfxThen(startLearningAfterAudioPrepare);
+    // start のタイミングは準備の有無で分岐（準備ありは完了直前）
+    startLearningAfterAudioPrepare({ playStartIfNoPrepare: true });
   });
   
   // ナビゲーションバー中央ボタン（Ans / Next）

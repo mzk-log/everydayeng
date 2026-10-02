@@ -353,7 +353,8 @@ function handleNavAnswerButtonClick() {
       }
     };
     if (shouldShowCompletionStartButton()) {
-      playStartSfxThen(afterCompletionNavClick);
+      // start は startLearningAfterAudioPrepare 側（準備なし＝すぐ／準備あり＝完了直前）
+      afterCompletionNavClick();
     } else {
       uiSfx.pendingCharge = true;
       if (isCategoryTransitionInProgress) {
@@ -391,14 +392,20 @@ function updateNavAnswerButton() {
   
   if (studyEnd.done) {
     if (shouldShowCompletionStartButton()) {
-      navAnswerText.textContent = 'Start';
-      navAnswerButton.disabled = isCategoryTransitionInProgress || isNavActionLockedByAudio();
-      if (isCategoryTransitionInProgress) {
-        navAnswerButton.title = 'カテゴリの切り替え中です';
-      } else if (isNavActionLockedByAudio()) {
-        navAnswerButton.title = '音声の再生が終わるまでお待ちください';
+      if (startAudioPrepare && startAudioPrepare.busy) {
+        navAnswerText.textContent = '準備中...';
+        navAnswerButton.disabled = true;
+        navAnswerButton.title = '音声を準備しています';
       } else {
-        navAnswerButton.removeAttribute('title');
+        navAnswerText.textContent = 'Start';
+        navAnswerButton.disabled = isCategoryTransitionInProgress || isNavActionLockedByAudio();
+        if (isCategoryTransitionInProgress) {
+          navAnswerButton.title = 'カテゴリの切り替え中です';
+        } else if (isNavActionLockedByAudio()) {
+          navAnswerButton.title = '音声の再生が終わるまでお待ちください';
+        } else {
+          navAnswerButton.removeAttribute('title');
+        }
       }
     } else {
       navAnswerText.textContent = 'Next';
@@ -787,7 +794,7 @@ function startLearningFromCompletion() {
   studyEnd.durationSession = false;
   studyEnd.lastDateSession = false;
   studyEnd.categorySession = false;
-  startLearningAfterAudioPrepare();
+  startLearningAfterAudioPrepare({ playStartIfNoPrepare: true });
 }
 
 /**
@@ -875,9 +882,16 @@ function updatePlusButton() {
   }
   
   if (studyEnd.done) {
-    plusButton.disabled = isCategoryTransitionInProgress || isNavActionLockedByAudio();
+    var prepareBusy = !!(startAudioPrepare && startAudioPrepare.busy);
+    plusButton.disabled = prepareBusy || isCategoryTransitionInProgress || isNavActionLockedByAudio();
     plusButton.setAttribute('aria-label', '同じカテゴリをもう一度');
-    plusButton.title = isCategoryTransitionInProgress ? 'カテゴリの切り替え中です' : '同じカテゴリをもう一度';
+    if (prepareBusy) {
+      plusButton.title = '音声を準備しています';
+    } else if (isCategoryTransitionInProgress) {
+      plusButton.title = 'カテゴリの切り替え中です';
+    } else {
+      plusButton.title = '同じカテゴリをもう一度';
+    }
     setRetrySlotInactive(plusButton.disabled);
     if (badge) badge.style.display = '';
     return;
@@ -1300,6 +1314,9 @@ function stopUiClickSfx() {
   stopSfxAudioElement_(uiSfx.start);
   stopSfxAudioElement_(uiSfx.retry);
   stopSfxAudioElement_(uiSfx.charge);
+  if (typeof stopStartPrepareWaitingSfx === 'function') {
+    stopStartPrepareWaitingSfx({ immediate: true });
+  }
   refreshAudioLockControls_();
 }
 
@@ -1351,6 +1368,7 @@ function preloadUiClickSfx() {
     ensureStartSfxAudio().load();
     ensureRetrySfxAudio().load();
     ensureChargeSfxAudio().load();
+    ensureWaitingSfxAudio().load();
   } catch (e) {}
 }
 
@@ -1405,6 +1423,9 @@ function playButtonSfxAudio_(audio) {
   }
   if (audio !== uiSfx.charge) {
     stopSfxAudioElement_(uiSfx.charge);
+  }
+  if (audio !== uiSfx.waiting && typeof stopStartPrepareWaitingSfx === 'function') {
+    stopStartPrepareWaitingSfx({ immediate: true });
   }
   try {
     audio.pause();
@@ -1466,6 +1487,197 @@ function ensureChargeSfxAudio() {
 
 function playChargeSfx() {
   playButtonSfxAudio_(ensureChargeSfxAudio());
+}
+
+function ensureWaitingSfxAudio() {
+  uiSfx.waiting = ensureStaticSfxAudio_(uiSfx.waiting, WAITING_SFX_URL);
+  return uiSfx.waiting;
+}
+
+/**
+ * waiting のフェード用タイマーを消す
+ */
+function clearWaitingSfxFadeTimer_() {
+  if (uiSfx.waitingFadeTimer) {
+    clearTimeout(uiSfx.waitingFadeTimer);
+    clearInterval(uiSfx.waitingFadeTimer);
+    uiSfx.waitingFadeTimer = null;
+  }
+}
+
+/**
+ * waiting の開始遅延タイマーを消す
+ */
+function clearWaitingSfxArmTimer_() {
+  if (uiSfx.waitingArmTimer) {
+    clearTimeout(uiSfx.waitingArmTimer);
+    uiSfx.waitingArmTimer = null;
+  }
+}
+
+/**
+ * volume を目標まで段階的に変える
+ * @param {HTMLAudioElement} audio
+ * @param {number} targetVol
+ * @param {number} fadeMs
+ * @param {function(): void} [onDone]
+ */
+function fadeSfxVolume_(audio, targetVol, fadeMs, onDone) {
+  clearWaitingSfxFadeTimer_();
+  if (!audio) {
+    if (typeof onDone === 'function') {
+      onDone();
+    }
+    return;
+  }
+  var steps = Math.max(4, Math.round((fadeMs || 300) / 50));
+  var from = Number(audio.volume) || 0;
+  var to = Math.max(0, Math.min(1, targetVol));
+  var i = 0;
+  if (fadeMs <= 0 || Math.abs(from - to) < 0.01) {
+    try {
+      audio.volume = to;
+    } catch (eVol) {}
+    if (typeof onDone === 'function') {
+      onDone();
+    }
+    return;
+  }
+  uiSfx.waitingFadeTimer = setInterval(function() {
+    i += 1;
+    var t = Math.min(1, i / steps);
+    try {
+      audio.volume = from + (to - from) * t;
+    } catch (eStep) {}
+    if (t >= 1) {
+      clearWaitingSfxFadeTimer_();
+      if (typeof onDone === 'function') {
+        onDone();
+      }
+    }
+  }, Math.max(16, Math.round((fadeMs || 300) / steps)));
+}
+
+/**
+ * Start前準備の waiting 1サイクル（末尾フェード→再送）
+ */
+/**
+ * waiting ループの次サイクルを間隔空けて予約
+ */
+function scheduleNextWaitingSfxCycle_() {
+  clearWaitingSfxArmTimer_();
+  uiSfx.waitingArmTimer = setTimeout(function() {
+    uiSfx.waitingArmTimer = null;
+    if (!uiSfx.waitingLoopActive || !startAudioPrepare.busy) {
+      return;
+    }
+    playWaitingSfxCycle_();
+  }, WAITING_SFX_GAP_MS);
+}
+
+function playWaitingSfxCycle_() {
+  if (!uiSfx.waitingLoopActive || !startAudioPrepare.busy) {
+    return;
+  }
+  var audio = ensureWaitingSfxAudio();
+  clearWaitingSfxFadeTimer_();
+  audio.onended = null;
+  audio.onerror = null;
+  try {
+    audio.pause();
+    audio.currentTime = 0;
+    audio.playbackRate = WAITING_SFX_PLAYBACK_RATE;
+    audio.volume = WAITING_SFX_VOLUME;
+  } catch (eReset) {}
+
+  function armFadeOutLoop_() {
+    if (!uiSfx.waitingLoopActive || !startAudioPrepare.busy) {
+      return;
+    }
+    var durSec = Number(audio.duration);
+    var rate = Number(audio.playbackRate) || WAITING_SFX_PLAYBACK_RATE;
+    if (!isFinite(durSec) || durSec <= 0.2) {
+      audio.onended = function() {
+        if (uiSfx.waitingLoopActive && startAudioPrepare.busy) {
+          scheduleNextWaitingSfxCycle_();
+        }
+      };
+      return;
+    }
+    // playbackRate を反映した実時間でフェード位置を決める
+    var wallDurMs = Math.floor((durSec / rate) * 1000);
+    var fadeMs = Math.min(WAITING_SFX_FADE_OUT_MS, Math.floor(wallDurMs * 0.45));
+    var startFadeMs = Math.max(0, wallDurMs - fadeMs);
+    uiSfx.waitingFadeTimer = setTimeout(function() {
+      uiSfx.waitingFadeTimer = null;
+      fadeSfxVolume_(audio, 0, fadeMs, function() {
+        if (!uiSfx.waitingLoopActive || !startAudioPrepare.busy) {
+          stopSfxAudioElement_(audio);
+          return;
+        }
+        scheduleNextWaitingSfxCycle_();
+      });
+    }, startFadeMs);
+  }
+
+  audio.onerror = function() {
+    clearWaitingSfxFadeTimer_();
+    uiSfx.waitingLoopActive = false;
+  };
+  var playPromise = audio.play();
+  if (audio.readyState >= 1 && isFinite(audio.duration) && audio.duration > 0) {
+    armFadeOutLoop_();
+  } else {
+    audio.onloadedmetadata = function() {
+      audio.onloadedmetadata = null;
+      armFadeOutLoop_();
+    };
+  }
+  if (playPromise && typeof playPromise.catch === 'function') {
+    playPromise.catch(function() {
+      clearWaitingSfxFadeTimer_();
+      uiSfx.waitingLoopActive = false;
+    });
+  }
+}
+
+/**
+ * Start前準備中：waiting.mp3 を控え目にフェードアウトループ
+ */
+function startStartPrepareWaitingSfx() {
+  stopStartPrepareWaitingSfx({ immediate: true });
+  uiSfx.waitingLoopActive = true;
+  clearWaitingSfxArmTimer_();
+  uiSfx.waitingArmTimer = setTimeout(function() {
+    uiSfx.waitingArmTimer = null;
+    if (!uiSfx.waitingLoopActive || !startAudioPrepare.busy) {
+      return;
+    }
+    playWaitingSfxCycle_();
+  }, WAITING_SFX_START_DELAY_MS);
+}
+
+/**
+ * Start前準備の waiting を止める
+ * @param {{immediate?: boolean}} [options]
+ */
+function stopStartPrepareWaitingSfx(options) {
+  options = options || {};
+  uiSfx.waitingLoopActive = false;
+  clearWaitingSfxArmTimer_();
+  var audio = uiSfx.waiting;
+  if (!audio) {
+    clearWaitingSfxFadeTimer_();
+    return;
+  }
+  if (options.immediate) {
+    clearWaitingSfxFadeTimer_();
+    stopSfxAudioElement_(audio);
+    return;
+  }
+  fadeSfxVolume_(audio, 0, WAITING_SFX_STOP_FADE_MS, function() {
+    stopSfxAudioElement_(audio);
+  });
 }
 
 function cancelStartWaitCharge() {

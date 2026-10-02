@@ -1408,8 +1408,11 @@ function getCachedAudioFromIdb(text, voiceGender, speed, onDone) {
     onDone(mem);
     return;
   }
-  getAudioIdbRecord(audioIdbRecordId(cacheKey), function(record) {
+  var idbId = audioIdbRecordId(cacheKey);
+  getAudioIdbRecord(idbId, function(record) {
     if (!record || !record.audioContent) {
+      // idbIds が残っていても実体が無いときは欠落とみなし、準備スキップを防ぐ
+      clearStaleAudioIdbId_(idbId);
       onDone(null);
       return;
     }
@@ -1422,6 +1425,21 @@ function getCachedAudioFromIdb(text, voiceGender, speed, onDone) {
     audioCache[cacheKey] = audioData;
     onDone({ audioData: audioData, source: 'indexedDB' });
   });
+}
+
+/**
+ * IdB 実体が無いのに idbIds だけ残っている場合の補正
+ * @param {string} idbId
+ */
+function clearStaleAudioIdbId_(idbId) {
+  if (!idbId || !audioStock.idbIds || !audioStock.idbIds[idbId]) {
+    return;
+  }
+  delete audioStock.idbIds[idbId];
+  if (audioStock.idbReady > 0) {
+    audioStock.idbReady -= 1;
+  }
+  invalidateCategoryIdbProgressCache();
 }
 
 /**
@@ -2403,6 +2421,15 @@ function refreshAddStudyAudioPrepareProgressUi_() {
 }
 
 /**
+ * Start 前準備の進捗表示を更新
+ */
+function refreshStartAudioPrepareProgressUi_() {
+  if (typeof syncStartAudioPrepareUi === 'function') {
+    syncStartAudioPrepareUi();
+  }
+}
+
+/**
  * 準備1本が完了（再キューしない経路）したときの進捗
  */
 function noteStudyAudioPrepareProgressStep_() {
@@ -2414,6 +2441,7 @@ function noteStudyAudioPrepareProgressStep_() {
     studyAudioPrepare.progressDone = studyAudioPrepare.progressTotal;
   }
   refreshAddStudyAudioPrepareProgressUi_();
+  refreshStartAudioPrepareProgressUi_();
 }
 
 /**
@@ -2426,49 +2454,69 @@ function clearStudyAudioPrepareProgress_() {
   if (typeof hideAddStudyItemStatusProgress === 'function' && !addStudy.awaitingAudioPrepare) {
     hideAddStudyItemStatusProgress();
   }
+  if (typeof syncStartAudioPrepareUi === 'function' && startAudioPrepare && !startAudioPrepare.busy) {
+    syncStartAudioPrepareUi();
+  }
 }
 
 /**
  * 複数問題の不足音声を準備し、完了後に onDone
  * @param {Object[]} items
  * @param {function(): void} [onDone]
+ * @param {{skipIdbRefresh?: boolean}} [options] Start 直前に既に再集計済みなら skip
  */
-function prepareStudyItemsAudio(items, onDone) {
+function prepareStudyItemsAudio(items, onDone, options) {
   var done = typeof onDone === 'function' ? onDone : function() {};
   var list = items || [];
   if (!list.length) {
     done();
     return;
   }
-  var total = 0;
-  for (var i = 0; i < list.length; i++) {
-    var missing = getStudyItemMissingAudioFields(list[i]);
-    total += missing.length;
-    if (missing.length) {
-      enqueueStudyItemAudioPrepare(list[i], { fields: missing });
+  options = options || {};
+  function runPrepare() {
+    var total = 0;
+    for (var i = 0; i < list.length; i++) {
+      var missing = getStudyItemMissingAudioFields(list[i]);
+      total += missing.length;
+      if (missing.length) {
+        enqueueStudyItemAudioPrepare(list[i], { fields: missing });
+      }
     }
-  }
-  // 追加画面：シート保存完了を1ステップ数え、音声準備中に入った時点でバーを進める
-  if (addStudy.awaitingAudioPrepare) {
-    studyAudioPrepare.progressActive = true;
-    studyAudioPrepare.progressTotal = total + 1;
-    studyAudioPrepare.progressDone = 1;
-    refreshAddStudyAudioPrepareProgressUi_();
-  }
-  if (!isStudyAudioPrepareBusy()) {
+    // 追加画面：シート保存完了を1ステップ数え、音声準備中に入った時点でバーを進める
     if (addStudy.awaitingAudioPrepare) {
-      studyAudioPrepare.progressDone = studyAudioPrepare.progressTotal;
+      studyAudioPrepare.progressActive = true;
+      studyAudioPrepare.progressTotal = total + 1;
+      studyAudioPrepare.progressDone = 1;
       refreshAddStudyAudioPrepareProgressUi_();
-      clearStudyAudioPrepareProgress_();
+    } else if (startAudioPrepare && startAudioPrepare.busy) {
+      // Start 前準備：不足欄数だけ（保存ステップは無し）
+      studyAudioPrepare.progressActive = true;
+      studyAudioPrepare.progressTotal = total;
+      studyAudioPrepare.progressDone = 0;
+      refreshStartAudioPrepareProgressUi_();
     }
-    done();
+    if (!isStudyAudioPrepareBusy()) {
+      if (addStudy.awaitingAudioPrepare || (startAudioPrepare && startAudioPrepare.busy)) {
+        studyAudioPrepare.progressDone = studyAudioPrepare.progressTotal;
+        refreshAddStudyAudioPrepareProgressUi_();
+        refreshStartAudioPrepareProgressUi_();
+        clearStudyAudioPrepareProgress_();
+      }
+      done();
+      return;
+    }
+    studyAudioPrepare.waiters.push(function() {
+      clearStudyAudioPrepareProgress_();
+      done();
+    });
+    flushStudyAudioPrepareQueue_();
+  }
+  // idbIds の陳腐化で不足判定を誤らないよう、準備前に IdB 実在を再集計する
+  if (!options.skipIdbRefresh && typeof refreshAudioIdbStats === 'function') {
+    refreshAudioIdbStats(runPrepare);
     return;
   }
-  studyAudioPrepare.waiters.push(function() {
-    clearStudyAudioPrepareProgress_();
-    done();
-  });
-  flushStudyAudioPrepareQueue_();
+  runPrepare();
 }
 
 /**

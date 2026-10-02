@@ -1507,6 +1507,48 @@ tr:last-child td {
   border-top: 1px solid rgba(0, 0, 0, 0.12);
 }
 
+.start-prepare-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #333;
+}
+
+.start-prepare-status[hidden] {
+  display: none !important;
+}
+
+.start-prepare-status-text {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.start-prepare-progress {
+  flex: 1 1 auto;
+  min-width: 48px;
+  height: 6px;
+  border-radius: 999px;
+  background: #e0e0e0;
+  overflow: hidden;
+}
+
+.start-prepare-progress-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: #2f6fed;
+  transition: width 0.2s ease-out;
+}
+
+.start-prepare-count {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: #555;
+  white-space: nowrap;
+}
+
 /* スタートボタン（ドック内） */
 .start-button {
   display: block;

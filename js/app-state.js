@@ -97,13 +97,24 @@ var UI_CLICK_SFX_URL = 'audio/buho.mp3';
 var START_SFX_URL = 'audio/start.mp3';
 var RETRY_SFX_URL = 'audio/retry.mp3';
 var CHARGE_SFX_URL = 'audio/charge.mp3';
+var WAITING_SFX_URL = 'audio/waiting.mp3';
 var UI_CLICK_SFX_VOLUME = 1.0;
+var WAITING_SFX_VOLUME = 0.28; // Start前準備の待ち音（控え目）
+var WAITING_SFX_PLAYBACK_RATE = 0.85; // 少しゆっくり
+var WAITING_SFX_GAP_MS = 400; // ループ間の無音
+var WAITING_SFX_FADE_OUT_MS = 900; // ループ末尾のフェードアウト
+var WAITING_SFX_STOP_FADE_MS = 350; // 準備完了時の短いフェード
+var WAITING_SFX_START_DELAY_MS = 200; // 準備開始直後のわずかな間
 var uiSfx = {
   completion: [], // 学習完了効果音（出題／解答音声とは別）
   click: null, // ボタン効果音（使い回し。Pages静的ファイル）
   start: null, // START効果音（使い回し。Pages静的ファイル）
   retry: null, // リトライ効果音（使い回し。Pages静的ファイル）
   charge: null, // START待ち効果音（使い回し。Pages静的ファイル）
+  waiting: null, // Start前準備の待ち音（audio/waiting.mp3）
+  waitingLoopActive: false,
+  waitingFadeTimer: null,
+  waitingArmTimer: null,
   pendingCharge: false, // 完了画面Nextのあと。Startと一覧が得られたときは charge のみ。そうでなければ buho
   clickPlaying: false,
   clickWaiters: []
@@ -140,7 +151,8 @@ var studyAudioPrepare = {
   progressDone: 0
 };
 var startAudioPrepare = {
-  busy: false // Start 押下後の不足音声準備中
+  busy: false, // Start 押下後の不足音声準備中
+  buttonLabel: 'START' // 準備中に退避するボタン文言
 };
 var categoryIdbProgressCache = {
   key: '',
@@ -344,6 +356,11 @@ var dom = {
   screen2ListNavContainer: document.getElementById('screen2ListNavContainer'),
   selectionCount: document.getElementById('selectionCount'),
   startButton: document.getElementById('startButton'),
+  startButtonDock: document.getElementById('startButtonDock'),
+  startPrepareStatus: document.getElementById('startPrepareStatus'),
+  startPrepareStatusText: document.getElementById('startPrepareStatusText'),
+  startPrepareProgressBar: document.getElementById('startPrepareProgressBar'),
+  startPrepareCount: document.getElementById('startPrepareCount'),
   backgroundImage: document.getElementById('backgroundImage'),
   backgroundImageGrid: document.getElementById('backgroundImageGrid'),
   backgroundPreviewCancelButton: document.getElementById('backgroundPreviewCancelButton'),
@@ -439,7 +456,6 @@ var dom = {
   listTableBody: document.getElementById('listTableBody'),
   listTableHeader: document.getElementById('listTableHeader'),
   listTableHeaderRight: document.getElementById('listTableHeaderRight'),
-  startButtonDock: document.getElementById('startButtonDock'),
   completionClearSelectionButton: document.getElementById('completionClearSelectionButton'),
   completionListTableBody: document.getElementById('completionListTableBody'),
   completionListTableHeader: document.getElementById('completionListTableHeader'),

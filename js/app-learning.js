@@ -23,12 +23,94 @@ function getItemsForStartLearning() {
 }
 
 /**
- * 不足音声を準備してから学習開始（画面を見ない運用向け。警告に頼らない）
+ * Start 前準備の waiting ループ音を止める
  */
-function startLearningAfterAudioPrepare() {
+function clearStartPrepareWaitingSfx_() {
+  if (typeof stopStartPrepareWaitingSfx === 'function') {
+    stopStartPrepareWaitingSfx();
+  }
+}
+
+/**
+ * 準備中は waiting.mp3 を控え目にフェードアウトループ
+ */
+function armStartPrepareWaitingSfx_() {
+  if (typeof startStartPrepareWaitingSfx === 'function') {
+    startStartPrepareWaitingSfx();
+  }
+}
+
+/**
+ * Start 前準備の画面表示（TOP バー＋ボタン／完了画面中央）
+ */
+function syncStartAudioPrepareUi() {
+  var busy = !!startAudioPrepare.busy;
+  var status = dom.startPrepareStatus;
+  var bar = dom.startPrepareProgressBar;
+  var countEl = dom.startPrepareCount;
+  var startButton = dom.startButton;
+  var total = studyAudioPrepare.progressActive ? (studyAudioPrepare.progressTotal || 0) : 0;
+  var done = studyAudioPrepare.progressActive ? (studyAudioPrepare.progressDone || 0) : 0;
+  if (done > total) {
+    done = total;
+  }
+  var ratio = total > 0 ? (done / total) : 0;
+
+  if (status) {
+    status.hidden = !busy;
+    status.setAttribute('aria-hidden', busy ? 'false' : 'true');
+  }
+  if (bar) {
+    bar.style.width = busy ? (Math.round(ratio * 100) + '%') : '0%';
+  }
+  if (countEl) {
+    countEl.textContent = busy && total > 0 ? (done + '/' + total) : '0/0';
+  }
+  if (startButton) {
+    if (busy) {
+      if (startButton.textContent === 'START' || startButton.textContent === 'Start') {
+        startAudioPrepare.buttonLabel = startButton.textContent;
+      }
+      startButton.textContent = '準備中...';
+    } else if (startButton.textContent === '準備中...') {
+      startButton.textContent = startAudioPrepare.buttonLabel || 'START';
+    }
+  }
+  if (typeof updateNavAnswerButton === 'function') {
+    updateNavAnswerButton();
+  }
+  if (typeof updateStartButtonEnabled === 'function') {
+    updateStartButtonEnabled();
+  }
+  if (typeof updatePlusButton === 'function') {
+    updatePlusButton();
+  }
+}
+
+/**
+ * 学習開始の直前に start 効果音を鳴らしてから進む
+ * @param {function(): void} thenFn
+ */
+function playStartSfxThenStartLearning_(thenFn) {
+  var go = typeof thenFn === 'function' ? thenFn : startLearning;
+  if (typeof playStartSfxThen === 'function') {
+    playStartSfxThen(go);
+    return;
+  }
+  go();
+}
+
+/**
+ * 不足音声を準備してから学習開始（画面を見ない運用向け。警告に頼らない）
+ * @param {{playStartIfNoPrepare?: boolean}} [options]
+ *   playStartIfNoPrepare: 準備不要時も start を鳴らす（TOP／完了 Start）。Plus 再学習は false
+ */
+function startLearningAfterAudioPrepare(options) {
   if (startAudioPrepare.busy) {
     return;
   }
+  options = options || {};
+  var playStartIfNoPrepare = !!options.playStartIfNoPrepare;
   if (!categoryCatalog.items || categoryCatalog.items.length === 0) {
     return;
   }
@@ -36,26 +118,44 @@ function startLearningAfterAudioPrepare() {
   if (!items.length) {
     return;
   }
-  var needsPrepare = false;
-  if (typeof getStudyItemMissingAudioFields === 'function') {
-    for (var i = 0; i < items.length; i++) {
-      if (getStudyItemMissingAudioFields(items[i]).length) {
-        needsPrepare = true;
-        break;
+  function beginAfterIdbSync() {
+    var needsPrepare = false;
+    if (typeof getStudyItemMissingAudioFields === 'function') {
+      for (var i = 0; i < items.length; i++) {
+        if (getStudyItemMissingAudioFields(items[i]).length) {
+          needsPrepare = true;
+          break;
+        }
       }
     }
+    if (!needsPrepare || typeof prepareStudyItemsAudio !== 'function') {
+      if (playStartIfNoPrepare) {
+        playStartSfxThenStartLearning_(startLearning);
+      } else {
+        startLearning();
+      }
+      return;
+    }
+    startAudioPrepare.busy = true;
+    syncStartAudioPrepareUi();
+    armStartPrepareWaitingSfx_();
+    // Start 直前で再集計済みのため、prepare 側の二重 getAll は避ける
+    prepareStudyItemsAudio(items, function() {
+      if (typeof stopStartPrepareWaitingSfx === 'function') {
+        stopStartPrepareWaitingSfx({ immediate: true });
+      }
+      startAudioPrepare.busy = false;
+      syncStartAudioPrepareUi();
+      // 準備あり：学習開始直前に start（押下時は鳴らさない）
+      playStartSfxThenStartLearning_(startLearning);
+    }, { skipIdbRefresh: true });
   }
-  if (!needsPrepare || typeof prepareStudyItemsAudio !== 'function') {
-    startLearning();
+  // idbIds が古いと不足を見逃して Drv 再生になるため、判定前に IdB を再集計する
+  if (typeof refreshAudioIdbStats === 'function') {
+    refreshAudioIdbStats(beginAfterIdbSync);
     return;
   }
-  startAudioPrepare.busy = true;
-  updateStartButtonEnabled();
-  prepareStudyItemsAudio(items, function() {
-    startAudioPrepare.busy = false;
-    updateStartButtonEnabled();
-    startLearning();
-  });
+  beginAfterIdbSync();
 }
 
 // 学習開始
