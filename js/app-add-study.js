@@ -32,6 +32,30 @@ function updateAddStudyItemStatusProgress(ratio) {
   bar.style.width = Math.round(n * 100) + '%';
 }
 
+/**
+ * 追加画面の認証失敗：ログイン必須処理へ回し、画面内は短い日本語にする
+ * @param {string} rawMsg
+ * @returns {boolean} 認証失敗として処理したとき true
+ */
+function handleAddStudyItemAuthFailure_(rawMsg) {
+  var msg = String(rawMsg || '');
+  if (!msg || typeof isGoogleAuthFailureMessage !== 'function' || !isGoogleAuthFailureMessage(msg)) {
+    return false;
+  }
+  if (typeof showError === 'function') {
+    showError(msg);
+  } else if (typeof enforceGoogleAuthFailureLock === 'function') {
+    enforceGoogleAuthFailureLock(msg);
+  }
+  setAddStudyItemStatus(
+    msg.indexOf('Email not authorized') >= 0
+      ? 'このGoogleアカウントは利用許可されていません。'
+      : '認証に失敗しました。再度ログインしてください。',
+    false
+  );
+  return true;
+}
+
 function setAddStudyItemStatus(message, isOk) {
   var el = dom.addStudyItemStatus;
   if (!el) return;
@@ -728,6 +752,9 @@ function submitRenameStudyCategory() {
     })
     .catch(function(error) {
       var msg = String(error && (error.message || error) || '名前の更新に失敗しました');
+      if (handleAddStudyItemAuthFailure_(msg)) {
+        return;
+      }
       if (msg.indexOf('already exists') >= 0) {
         msg = 'このカテゴリ名は既にあります。';
       } else if (msg.indexOf('Invalid category') >= 0) {
@@ -912,7 +939,10 @@ function submitUpdateStudyItem() {
       });
     })
     .catch(function(error) {
-      setAddStudyItemStatus(String(error && (error.message || error) || '更新に失敗しました'), false);
+      var msg = String(error && (error.message || error) || '更新に失敗しました');
+      if (!handleAddStudyItemAuthFailure_(msg)) {
+        setAddStudyItemStatus(msg, false);
+      }
       return { audioWait: false, failed: true };
     })
     .then(function(result) {
@@ -963,6 +993,9 @@ function submitDeleteStudyItem() {
     })
     .catch(function(error) {
       var msg = String(error && (error.message || error) || '削除に失敗しました');
+      if (handleAddStudyItemAuthFailure_(msg)) {
+        return;
+      }
       if (msg.indexOf('Update busy') >= 0) {
         msg = '保存が混み合っています。もう一度お試しください。';
       }
@@ -1037,6 +1070,9 @@ function submitMoveStudyItem(id, direction) {
     })
     .catch(function(error) {
       var msg = String(error && (error.message || error) || '並べ替えに失敗しました');
+      if (handleAddStudyItemAuthFailure_(msg)) {
+        return;
+      }
       if (msg.indexOf('Update busy') >= 0) {
         msg = '保存が混み合っています。もう一度お試しください。';
       }
@@ -1117,6 +1153,9 @@ function submitAddStudyItem() {
     })
     .catch(function(error) {
       var msg = String(error && (error.message || error) || (isInsert ? '挿入に失敗しました' : '追加に失敗しました'));
+      if (handleAddStudyItemAuthFailure_(msg)) {
+        return { audioWait: false, failed: true };
+      }
       if (msg.indexOf('already exists') >= 0) {
         msg = 'このカテゴリ名は既にあります。';
       } else if (msg.indexOf('Update busy') >= 0) {

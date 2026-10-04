@@ -246,7 +246,8 @@ function writePersistedAuthValue(key, value) {
 }
 
 /**
- * GAS リクエストへ email と sessionToken（無ければ Google トークン）を付与
+ * GAS リクエストへ email・sessionToken・利用可能な Google トークンを付与
+ * session があっても id／access があれば併送する（session 無効時に同一リクエストで復旧しやすくする）
  * @param {URLSearchParams} params
  */
 function appendAuthParams(params) {
@@ -260,7 +261,6 @@ function appendAuthParams(params) {
   var sessionToken = getAppSessionToken();
   if (sessionToken) {
     params.append('sessionToken', sessionToken);
-    return;
   }
   var token = getGoogleIdToken();
   if (token) {
