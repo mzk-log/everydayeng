@@ -932,18 +932,19 @@ function playFieldAudio(fieldType, forceRefresh, options) {
         settleAudioNetwork();
       return;
     }
-      enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork);
+      enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork, forceRefresh);
     });
     return;
   }
 
-  enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork);
+  enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork, forceRefresh);
 }
 
 /**
  * 本問の Drive／TTS 取得をキューへ（トークン更新つき）
+ * @param {boolean} [forceRefresh=false] - true のとき Drive を読まず TTS で再作成（Drive 同名は TTS 成功後に上書き）
  */
-function enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork) {
+function enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork, forceRefresh) {
   enqueueGasAudioFetch(function(signal, generation, done) {
     ensureFreshGoogleAuthToken(function() {
       if (generation !== audioFetch.generation) {
@@ -955,10 +956,11 @@ function enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, 
         done();
         settleAudioNetwork();
       };
-      if (canUseDriveAudioMeta(item)) {
-        fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetField, item, signal, generation, after);
-      } else {
+      // 長押し再作成：古い Drive 音声を返さない（仕様：TTS → Drive 上書き）
+      if (forceRefresh || !canUseDriveAudioMeta(item)) {
         fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField, signal, generation, after);
+      } else {
+        fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetField, item, signal, generation, after);
       }
     }, function() {
       done();

@@ -235,6 +235,8 @@ function bindAnswerUpdateConfirmModalListeners() {
 var YOMIGANA_PHONEME_OPEN = '<phoneme alphabet="yomigana" ph="';
 var YOMIGANA_PHONEME_AFTER_PH = '">';
 var YOMIGANA_PHONEME_CLOSE = '</phoneme>';
+var ENGLISH_LANG_OPEN = '<lang xml:lang="en-US">';
+var ENGLISH_LANG_CLOSE = '</lang>';
 
 /**
  * ボタン押下でフォーカスが移る前に、選択範囲またはカーソル位置を覚える
@@ -331,7 +333,7 @@ function getYomiganaInsertRange_(editEl) {
 }
 
 /**
- * 選択範囲が既存の phoneme タグと重なるか
+ * 選択範囲が既存の読み指定タグ（phoneme／lang）と重なるか
  * @param {string} value
  * @param {number} start
  * @param {number} end
@@ -339,15 +341,20 @@ function getYomiganaInsertRange_(editEl) {
  */
 function selectionCrossesYomiganaPhoneme_(value, start, end) {
   var selected = value.substring(start, end);
-  if (selected.indexOf('<phoneme') >= 0 || selected.indexOf('</phoneme>') >= 0) {
+  if (selected.indexOf('<phoneme') >= 0 || selected.indexOf('</phoneme>') >= 0 ||
+      selected.indexOf('<lang') >= 0 || selected.indexOf('</lang>') >= 0) {
     return true;
   }
   var before = value.substring(0, start);
-  var openAt = before.lastIndexOf('<phoneme');
-  if (openAt < 0) {
-    return false;
+  var openPhoneme = before.lastIndexOf('<phoneme');
+  if (openPhoneme >= 0 && before.lastIndexOf('</phoneme>') < openPhoneme) {
+    return true;
   }
-  return before.lastIndexOf('</phoneme>') < openAt;
+  var openLang = before.lastIndexOf('<lang');
+  if (openLang >= 0 && before.lastIndexOf('</lang>') < openLang) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -390,6 +397,46 @@ function insertYomiganaPhoneme(displayTarget) {
   editEl.setSelectionRange(cursor, cursor);
 }
 
+/**
+ * 編集中の出題／解答へ英語読みタグを入れる
+ * 選択あり：その文字を包む。未選択：カーソル位置へ空タグを入れる
+ * @param {'question'|'answer'} displayTarget
+ */
+function insertEnglishLangTag(displayTarget) {
+  if (!updateMode.active || updateMode.displayTarget !== displayTarget) {
+    return;
+  }
+  if (displayTarget !== 'question' && displayTarget !== 'answer') {
+    return;
+  }
+  var ui = getUpdateUiConfig(displayTarget);
+  if (!ui) {
+    return;
+  }
+  var editEl = document.getElementById(ui.editId);
+  if (!editEl) {
+    return;
+  }
+  var range = getYomiganaInsertRange_(editEl);
+  if (!range) {
+    return;
+  }
+  var start = range.start;
+  var end = range.end;
+  var value = editEl.value || '';
+  if (selectionCrossesYomiganaPhoneme_(value, start, end)) {
+    return;
+  }
+  var selected = value.substring(start, end);
+  var wrapped = ENGLISH_LANG_OPEN + selected + ENGLISH_LANG_CLOSE;
+  editEl.value = value.substring(0, start) + wrapped + value.substring(end);
+  var cursor = start + ENGLISH_LANG_OPEN.length;
+  updateMode.selectionStart = cursor;
+  updateMode.selectionEnd = cursor;
+  editEl.focus();
+  editEl.setSelectionRange(cursor, cursor);
+}
+
 // 更新モード用のイベントリスナーを設定
 function setupUpdateModeEventListeners() {
   var updateButtonIds = ['questionUpdateButton', 'answerUpdateButton', 'noteUpdateButton'];
@@ -421,6 +468,29 @@ function setupUpdateModeEventListeners() {
           return;
         }
         insertYomiganaPhoneme(entry.target);
+      };
+    }
+  });
+
+  var englishButtons = [
+    { id: 'questionEnglishButton', target: 'question' },
+    { id: 'answerEnglishButton', target: 'answer' }
+  ];
+  englishButtons.forEach(function(entry) {
+    var englishButton = document.getElementById(entry.id);
+    if (englishButton) {
+      englishButton.onpointerdown = function(event) {
+        event.preventDefault();
+        var ui = getUpdateUiConfig(entry.target);
+        if (ui) {
+          rememberYomiganaSelection_(document.getElementById(ui.editId));
+        }
+      };
+      englishButton.onpointerup = function(event) {
+        if (event.button != null && event.button !== 0) {
+          return;
+        }
+        insertEnglishLangTag(entry.target);
       };
     }
   });
