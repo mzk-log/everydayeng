@@ -29,6 +29,7 @@ function buildCategoriesAndTodayStatsFromItems(items, todayYmd) {
     if (!categoryMap[categoryNo]) {
       categoryMap[categoryNo] = {
         name: categoryName,
+        order: getCategoryOrderSortValue(item),
         count: 0,
         hasEmptyLastDate: false,
         latestLastDate: '',
@@ -39,6 +40,10 @@ function buildCategoriesAndTodayStatsFromItems(items, todayYmd) {
     } else {
       if (!categoryMap[categoryNo].name && categoryName) {
         categoryMap[categoryNo].name = categoryName;
+      }
+      var itemOrder = getCategoryOrderSortValue(item);
+      if (itemOrder < categoryMap[categoryNo].order) {
+        categoryMap[categoryNo].order = itemOrder;
       }
       if (retryNum > categoryMap[categoryNo].maxRetryCount) {
         categoryMap[categoryNo].maxRetryCount = retryNum;
@@ -63,12 +68,21 @@ function buildCategoriesAndTodayStatsFromItems(items, todayYmd) {
     out.push({
       no: no,
       name: info.name,
+      order: info.order,
       count: info.count,
       last_date: info.hasEmptyLastDate ? '' : (info.latestLastDate || ''),
       max_retry_count: info.maxRetryCount,
       min_total_study_count: info.minTotalStudyCount
     });
   }
+  out.sort(function(a, b) {
+    var oa = getCategoryOrderSortValue(a);
+    var ob = getCategoryOrderSortValue(b);
+    if (oa !== ob) {
+      return oa - ob;
+    }
+    return getCategoryNoSortValue(a.no) - getCategoryNoSortValue(b.no);
+  });
   return {
     categories: out,
     today_ymd: today,
@@ -414,7 +428,7 @@ function findCategoryByNo(no) {
 }
 
 /**
- * END 以外の設定対象カテゴリ（シート順＝Category_No 昇順）
+ * END 以外の設定対象カテゴリ（Category_Order 昇順）
  * @returns {Object[]}
  */
 function getConfigurableCategories() {
@@ -422,6 +436,11 @@ function getConfigurableCategories() {
     return cat && !isEndCategory(cat);
   });
   list.sort(function(a, b) {
+    var oa = getCategoryOrderSortValue(a);
+    var ob = getCategoryOrderSortValue(b);
+    if (oa !== ob) {
+      return oa - ob;
+    }
     return getCategoryNoSortValue(a.no) - getCategoryNoSortValue(b.no);
   });
   return list;
@@ -1174,6 +1193,7 @@ function hideLearningCategorySelect() {
 /**
  * カテゴリドロップダウン用の表示文言を生成
  * 例）[1] 名前（5問）：2026/8/1 （3/1回） ／ 空欄ありは（5問）：-（回数なし）
+ * 括弧内は Category_Order（無ければ Category_No）
  * @param {Object} cat
  * @returns {string}
  */
@@ -1182,7 +1202,8 @@ function formatCategoryOptionText(cat) {
   if (isEndCategory(cat)) {
     return 'END';
   }
-  var displayText = '[' + cat.no + '] ' + cat.name;
+  var orderLabel = getCategoryOrderSortValue(cat);
+  var displayText = '[' + orderLabel + '] ' + cat.name;
   if (cat.count !== undefined && cat.count !== null) {
     displayText += '（' + cat.count + '問）';
     var lastDateValue = normalizeLastDate(cat.last_date || '');

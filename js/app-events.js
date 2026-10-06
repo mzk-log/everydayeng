@@ -358,6 +358,7 @@ function setupEventListeners() {
       renderAddStudyItemList();
       setAddStudyItemStatus('', false);
       syncAddStudyItemRenameFields(true);
+      syncAddStudyItemReorderFields(true);
     });
   }
   var addStudyItemBackToAddButton = dom.addStudyItemBackToAddButton;
@@ -379,7 +380,7 @@ function setupEventListeners() {
         return;
       }
       if (addStudy.formConfirming) {
-        if (addStudy.confirmKind === 'rename') {
+        if (addStudy.confirmKind === 'rename' || addStudy.confirmKind === 'reorder') {
           return;
         }
         submitAddStudyItemConfirm();
@@ -401,9 +402,26 @@ function setupEventListeners() {
       }
     });
   }
+  var addStudyItemReorderButton = dom.addStudyItemReorderButton;
+  if (addStudyItemReorderButton) {
+    addStudyItemReorderButton.addEventListener('click', function() {
+      if (addStudy.formBusy) {
+        return;
+      }
+      if (addStudy.formConfirming && addStudy.confirmKind === 'reorder') {
+        submitReorderStudyCategory();
+      } else if (!addStudy.formConfirming) {
+        showAddStudyItemReorderConfirm();
+      }
+    });
+  }
   var addStudyItemRenameName = dom.addStudyItemRenameName;
   if (addStudyItemRenameName) {
     addStudyItemRenameName.addEventListener('input', syncAddStudyItemEditorUi);
+  }
+  var addStudyItemReorderPosition = dom.addStudyItemReorderPosition;
+  if (addStudyItemReorderPosition) {
+    addStudyItemReorderPosition.addEventListener('change', syncAddStudyItemEditorUi);
   }
   var addStudyItemLiveIds = [
     'addStudyItemQuestion',

@@ -35,6 +35,25 @@ function getCategoryNoSortValue(value) {
 }
 
 /**
+ * カテゴリ表示順の数値化（order 優先、無ければ Category_No）
+ * @param {Object|null|undefined} catOrItem
+ * @returns {number}
+ */
+function getCategoryOrderSortValue(catOrItem) {
+  if (!catOrItem) {
+    return 0;
+  }
+  var raw = catOrItem.order != null ? catOrItem.order : catOrItem.category_order;
+  if (raw != null && raw !== '') {
+    var o = Number(raw);
+    if (!isNaN(o)) {
+      return o;
+    }
+  }
+  return getCategoryNoSortValue(catOrItem.no != null ? catOrItem.no : catOrItem.category_no);
+}
+
+/**
  * 解答時間優先のソート（破壊的）
  * Duration降順（空=MAX）→ LastDate昇順（空先頭）→ Category_No降順
  * @param {Array} items

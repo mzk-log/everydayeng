@@ -2505,6 +2505,11 @@ body:has(#screen2.active) .answer-text-edit {
   flex-shrink: 0;
 }
 
+.add-study-reorder {
+  flex-shrink: 0;
+  margin-top: 8px;
+}
+
 .add-study-rename-row {
   display: flex;
   align-items: center;

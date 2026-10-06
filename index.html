@@ -7,7 +7,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202610042004';
+    var FRONT_VERSION = '202610062037';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -46,7 +46,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202610042004">
+  <link rel="stylesheet" href="style.css?v=202610062037">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -578,9 +578,18 @@
           <button type="button" id="addStudyItemRenameButton" class="add-study-button add-study-button-save">名前を更新</button>
         </div>
       </div>
+      <div id="addStudyItemReorderFields" class="add-study-reorder" style="display: none;">
+        <label class="add-study-label" for="addStudyItemReorderPosition">カテゴリの並び</label>
+        <div class="add-study-rename-row">
+          <select id="addStudyItemReorderPosition" class="add-study-select"></select>
+          <button type="button" id="addStudyItemReorderButton" class="add-study-button add-study-button-save">移動</button>
+        </div>
+      </div>
       <div id="addStudyItemNewCategoryFields" class="add-study-new-cat" style="display: none;">
         <label class="add-study-label" for="addStudyItemCategoryName">新しいカテゴリ名</label>
         <input id="addStudyItemCategoryName" class="add-study-input" type="text" autocomplete="off">
+        <label class="add-study-label" for="addStudyItemNewOrderPosition">並び位置</label>
+        <select id="addStudyItemNewOrderPosition" class="add-study-select"></select>
         <label class="add-study-label" for="addStudyItemQTitle">出題の見出し（例：Japanese）</label>
         <input id="addStudyItemQTitle" class="add-study-input" type="text" autocomplete="off">
         <label class="add-study-label" for="addStudyItemATitle">解答の見出し（例：English）</label>
@@ -646,35 +655,35 @@
     </div>
   </div>
 
-  <script src="js/app-state.js?v=202610042004"></script>
-  <script src="js/app-gas.js?v=202610042004"></script>
-  <script src="js/app-auth.js?v=202610042004"></script>
-  <script src="js/app-settings.js?v=202610042004"></script>
-  <script src="js/app-question.js?v=202610042004"></script>
-  <script src="js/app-practice.js?v=202610042004"></script>
-  <script src="js/app-learning.js?v=202610042004"></script>
-  <script src="js/app-audio.js?v=202610042004"></script>
-  <script src="js/app-nav.js?v=202610042004"></script>
-  <script src="js/app-modal.js?v=202610042004"></script>
-  <script src="js/app-update.js?v=202610042004"></script>
-  <script src="js/app-boot.js?v=202610042004"></script>
-  <script src="js/app-category.js?v=202610042004"></script>
-  <script src="js/app-events.js?v=202610042004"></script>
-  <script src="js/app-menu.js?v=202610042004"></script>
-  <script src="js/app-session.js?v=202610042004"></script>
-  <script src="js/app-add-study.js?v=202610042004"></script>
-  <script src="js/app-sort.js?v=202610042004"></script>
-  <script src="js/app-study-load.js?v=202610042004"></script>
-  <script src="js/app-mode-page.js?v=202610042004"></script>
-  <script src="js/app-background.js?v=202610042004"></script>
-  <script src="js/app-error.js?v=202610042004"></script>
-  <script src="js/app-list.js?v=202610042004"></script>
-  <script src="js/app-list-nav.js?v=202610042004"></script>
-  <script src="js/app-field-edit.js?v=202610042004"></script>
-  <script src="js/app-format.js?v=202610042004"></script>
-  <script src="js/app-image.js?v=202610042004"></script>
-  <script src="js/app-sheet.js?v=202610042004"></script>
-  <script src="js/app-gesture.js?v=202610042004"></script>
+  <script src="js/app-state.js?v=202610062037"></script>
+  <script src="js/app-gas.js?v=202610062037"></script>
+  <script src="js/app-auth.js?v=202610062037"></script>
+  <script src="js/app-settings.js?v=202610062037"></script>
+  <script src="js/app-question.js?v=202610062037"></script>
+  <script src="js/app-practice.js?v=202610062037"></script>
+  <script src="js/app-learning.js?v=202610062037"></script>
+  <script src="js/app-audio.js?v=202610062037"></script>
+  <script src="js/app-nav.js?v=202610062037"></script>
+  <script src="js/app-modal.js?v=202610062037"></script>
+  <script src="js/app-update.js?v=202610062037"></script>
+  <script src="js/app-boot.js?v=202610062037"></script>
+  <script src="js/app-category.js?v=202610062037"></script>
+  <script src="js/app-events.js?v=202610062037"></script>
+  <script src="js/app-menu.js?v=202610062037"></script>
+  <script src="js/app-session.js?v=202610062037"></script>
+  <script src="js/app-add-study.js?v=202610062037"></script>
+  <script src="js/app-sort.js?v=202610062037"></script>
+  <script src="js/app-study-load.js?v=202610062037"></script>
+  <script src="js/app-mode-page.js?v=202610062037"></script>
+  <script src="js/app-background.js?v=202610062037"></script>
+  <script src="js/app-error.js?v=202610062037"></script>
+  <script src="js/app-list.js?v=202610062037"></script>
+  <script src="js/app-list-nav.js?v=202610062037"></script>
+  <script src="js/app-field-edit.js?v=202610062037"></script>
+  <script src="js/app-format.js?v=202610062037"></script>
+  <script src="js/app-image.js?v=202610062037"></script>
+  <script src="js/app-sheet.js?v=202610062037"></script>
+  <script src="js/app-gesture.js?v=202610062037"></script>
 </body>
 </html>
 

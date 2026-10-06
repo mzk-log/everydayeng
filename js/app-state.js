@@ -134,8 +134,10 @@ var addStudy = {
   editingId: '',
   insertAfterId: '',
   insertAtStart: false,
-  confirmKind: '', // add | update | insert | delete
+  confirmKind: '', // add | update | insert | delete | rename | reorder
   pendingDeleteId: '',
+  pendingReorderPosition: '',
+  pendingReorderRelativeNo: '',
   moveBusy: false,
   modalBusy: false, // 確認モーダルの処理中
   awaitingAudioPrepare: false, // 保存成功後、音声準備完了待ち（この間だけ準備を動かす）
@@ -340,6 +342,10 @@ var dom = {
   addStudyItemRenameButton: document.getElementById('addStudyItemRenameButton'),
   addStudyItemRenameFields: document.getElementById('addStudyItemRenameFields'),
   addStudyItemRenameName: document.getElementById('addStudyItemRenameName'),
+  addStudyItemReorderButton: document.getElementById('addStudyItemReorderButton'),
+  addStudyItemReorderFields: document.getElementById('addStudyItemReorderFields'),
+  addStudyItemReorderPosition: document.getElementById('addStudyItemReorderPosition'),
+  addStudyItemNewOrderPosition: document.getElementById('addStudyItemNewOrderPosition'),
   addStudyItemSaveButton: document.getElementById('addStudyItemSaveButton'),
   addStudyItemStatus: document.getElementById('addStudyItemStatus'),
   addStudyItemStatusProgress: document.getElementById('addStudyItemStatusProgress'),
