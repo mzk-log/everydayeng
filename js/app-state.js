@@ -141,7 +141,15 @@ var addStudy = {
   moveBusy: false,
   modalBusy: false, // 確認モーダルの処理中
   awaitingAudioPrepare: false, // 保存成功後、音声準備完了待ち（この間だけ準備を動かす）
-  statusProgressVisible: false // 追加中…から音声準備までの進捗バー表示中
+  statusProgressVisible: false, // 追加中…から音声準備までの進捗バー表示中
+  audioBusy: false, // 一覧からの再生／再TTS中（他操作停止。再生ボタンで中断可）
+  audioPlayId: '', // 再生中の問題 ID
+  audioPlayField: '' // 'question' | 'answer'
+};
+var addStudySsmlSelection = {
+  start: null,
+  end: null,
+  editId: ''
 };
 // 問題追加の保存成功後／Start前準備：Drive／TTS→IdB
 var studyAudioPrepare = {
@@ -212,9 +220,9 @@ var AUDIO_PREFETCH_FAIL_BACKOFF_MAX_MS = 60000;
 var AUTH_REFRESH_MARGIN_MS = 5 * 60 * 1000; // トークン残存がこれ未満なら静かに再取得
 var ENABLE_AUDIO_SOURCE_DEBUG = true;
 var ENABLE_LOAD_DIAG = true; // 通信のメモリ記録。画面表示は管理者かつ表示ONのときだけ
-var FIELD_PLAY_LONG_PRESS_MS = 700; // 再生ボタン長押しで音声再作成／本文長押しでリトライ
-var LEARNING_GESTURE_MOVE_PX = 12; // 本文タップ／長押しをスクロールと区別
-var LEARNING_BODY_DOUBLE_TAP_MS = 300;
+var FIELD_PLAY_LONG_PRESS_MS = 700; // 再生ボタン長押しで音声再作成
+var LEARNING_GESTURE_MOVE_PX = 12; // 本文タップをスクロールと区別
+var LEARNING_BODY_DOUBLE_TAP_MS = 300; // 本文の1／2／3タップを分ける間隔
 var GAS_UPDATE_MAX_ATTEMPTS = 5; // シート更新の最大試行回数（初回含む）
 var GAS_UPDATE_BASE_DELAY_MS = 700; // リトライの基本待機（指数バックオフ）
 var gasSheetUpdate = {
@@ -339,6 +347,10 @@ var dom = {
   addStudyItemOverlay: document.getElementById('addStudyItemOverlay'),
   addStudyItemQTitle: document.getElementById('addStudyItemQTitle'),
   addStudyItemQuestion: document.getElementById('addStudyItemQuestion'),
+  addStudyItemQuestionYomiganaButton: document.getElementById('addStudyItemQuestionYomiganaButton'),
+  addStudyItemQuestionEnglishButton: document.getElementById('addStudyItemQuestionEnglishButton'),
+  addStudyItemAnswerYomiganaButton: document.getElementById('addStudyItemAnswerYomiganaButton'),
+  addStudyItemAnswerEnglishButton: document.getElementById('addStudyItemAnswerEnglishButton'),
   addStudyItemRenameButton: document.getElementById('addStudyItemRenameButton'),
   addStudyItemRenameFields: document.getElementById('addStudyItemRenameFields'),
   addStudyItemRenameName: document.getElementById('addStudyItemRenameName'),

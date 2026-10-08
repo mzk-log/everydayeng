@@ -169,10 +169,29 @@ function resetAddStudyItemEditor(options) {
   syncAddStudyItemEditorUi();
 }
 
+/**
+ * 追加画面で追加／削除等を止めるか（再生中含む）
+ * @returns {boolean}
+ */
+function isAddStudyItemOpsLocked_() {
+  return !!(addStudy.formBusy || addStudy.formConfirming || addStudy.audioBusy ||
+    addStudy.moveBusy || addStudy.modalBusy);
+}
+
+/**
+ * 再生中以外の操作ロック（formBusy 等）
+ * @returns {boolean}
+ */
+function isAddStudyItemFormLocked_() {
+  return !!(addStudy.formBusy || addStudy.formConfirming);
+}
+
 function syncAddStudyItemEditorUi() {
   var confirming = addStudy.formConfirming;
   var confirmingRename = confirming && addStudy.confirmKind === 'rename';
   var confirmingReorder = confirming && addStudy.confirmKind === 'reorder';
+  var opsLocked = isAddStudyItemOpsLocked_();
+  var formLocked = isAddStudyItemFormLocked_();
   var saveBtn = dom.addStudyItemSaveButton;
   if (saveBtn) {
     var saveIsConfirm = confirming && !confirmingRename && !confirmingReorder;
@@ -186,12 +205,12 @@ function syncAddStudyItemEditorUi() {
   var renameBtn = dom.addStudyItemRenameButton;
   var renameInput = dom.addStudyItemRenameName;
   if (renameBtn) {
-    if (addStudy.formBusy || (confirming && !confirmingRename)) {
+    if (opsLocked && !confirmingRename) {
       renameBtn.disabled = true;
       renameBtn.textContent = '名前を更新';
       renameBtn.classList.remove('is-confirm');
     } else if (confirmingRename) {
-      renameBtn.disabled = false;
+      renameBtn.disabled = !!addStudy.audioBusy;
       renameBtn.textContent = '確定';
       renameBtn.classList.add('is-confirm');
     } else {
@@ -201,17 +220,17 @@ function syncAddStudyItemEditorUi() {
         renameInput ? renameInput.value : '',
         currentAddStudyItemCategoryName()
       );
-      renameBtn.disabled = !isAddStudyItemRenameVisible() || !!renameErr;
+      renameBtn.disabled = !isAddStudyItemRenameVisible() || !!renameErr || !!addStudy.audioBusy;
     }
   }
   var reorderBtn = dom.addStudyItemReorderButton;
   if (reorderBtn) {
-    if (addStudy.formBusy || (confirming && !confirmingReorder)) {
+    if (opsLocked && !confirmingReorder) {
       reorderBtn.disabled = true;
       reorderBtn.textContent = '移動';
       reorderBtn.classList.remove('is-confirm');
     } else if (confirmingReorder) {
-      reorderBtn.disabled = false;
+      reorderBtn.disabled = !!addStudy.audioBusy;
       reorderBtn.textContent = '確定';
       reorderBtn.classList.add('is-confirm');
     } else {
@@ -220,12 +239,14 @@ function syncAddStudyItemEditorUi() {
       var parsedPos = parseAddStudyItemOrderPositionValue(
         dom.addStudyItemReorderPosition ? dom.addStudyItemReorderPosition.value : ''
       );
-      reorderBtn.disabled = !isAddStudyItemReorderVisible() || !parsedPos.ok || parsedPos.noop;
+      reorderBtn.disabled = !isAddStudyItemReorderVisible() || !parsedPos.ok ||
+        parsedPos.noop || !!addStudy.audioBusy;
     }
   }
   var cancelBtn = dom.addStudyItemCancelButton;
   if (cancelBtn) {
     cancelBtn.textContent = confirming ? 'キャンセル' : '閉じる';
+    // 再生中は閉じ可（停止して閉じる）。formBusy のみ不可
     cancelBtn.disabled = !!addStudy.formBusy;
   }
   var closeBtn = dom.addStudyItemCloseButton;
@@ -235,14 +256,36 @@ function syncAddStudyItemEditorUi() {
   var backBtn = dom.addStudyItemBackToAddButton;
   if (backBtn) {
     backBtn.style.display = (!confirming && addStudy.mode !== 'add') ? 'inline-block' : 'none';
+    backBtn.disabled = !!opsLocked;
   }
   var select = dom.addStudyItemCategorySelect;
   if (select) {
-    select.disabled = addStudy.mode !== 'add' || addStudy.formConfirming || addStudy.formBusy;
+    select.disabled = addStudy.mode !== 'add' || formLocked || !!addStudy.audioBusy;
   }
   syncAddStudyItemInputLock();
   syncAddStudyItemRenameFields(false);
   syncAddStudyItemReorderFields(false);
+  syncAddStudyItemSsmlControls_();
+  refreshAddStudyListPlayButtons();
+}
+
+/**
+ * 読み／英語ボタンの有効状態
+ */
+function syncAddStudyItemSsmlControls_() {
+  var enabled = isAddStudyItemCategoryChosen() && !isAddStudyItemFormLocked_() && !addStudy.audioBusy;
+  var ids = [
+    'addStudyItemQuestionYomiganaButton',
+    'addStudyItemQuestionEnglishButton',
+    'addStudyItemAnswerYomiganaButton',
+    'addStudyItemAnswerEnglishButton'
+  ];
+  for (var i = 0; i < ids.length; i++) {
+    var btn = document.getElementById(ids[i]);
+    if (btn) {
+      btn.disabled = !enabled;
+    }
+  }
 }
 
 function syncAddStudyItemNewCategoryFields() {
@@ -404,6 +447,8 @@ function validateAddStudyItemRenameName(name, currentName) {
 
 function syncAddStudyItemInputLock() {
   var enabled = isAddStudyItemCategoryChosen();
+  var formLocked = isAddStudyItemFormLocked_();
+  var audioLocked = !!addStudy.audioBusy;
   var ids = [
     'addStudyItemQuestion',
     'addStudyItemAnswer',
@@ -412,31 +457,31 @@ function syncAddStudyItemInputLock() {
   for (var i = 0; i < ids.length; i++) {
     var el = document.getElementById(ids[i]);
     if (el) {
-      el.disabled = !enabled || addStudy.formConfirming || addStudy.formBusy;
+      el.disabled = !enabled || formLocked || audioLocked;
     }
   }
   var renameInput = dom.addStudyItemRenameName;
   if (renameInput) {
-    renameInput.disabled = addStudy.formConfirming || addStudy.formBusy || !isAddStudyItemRenameVisible();
+    renameInput.disabled = formLocked || audioLocked || !isAddStudyItemRenameVisible();
   }
   var newIds = ['addStudyItemCategoryName', 'addStudyItemQTitle', 'addStudyItemATitle'];
   for (var n = 0; n < newIds.length; n++) {
     var newEl = document.getElementById(newIds[n]);
     if (newEl) {
-      newEl.disabled = addStudy.formConfirming || addStudy.formBusy;
+      newEl.disabled = formLocked || audioLocked;
     }
   }
   var newOrder = dom.addStudyItemNewOrderPosition;
   if (newOrder) {
-    newOrder.disabled = addStudy.formConfirming || addStudy.formBusy;
+    newOrder.disabled = formLocked || audioLocked;
   }
   var reorderPos = dom.addStudyItemReorderPosition;
   if (reorderPos) {
-    reorderPos.disabled = addStudy.formConfirming || addStudy.formBusy || !isAddStudyItemReorderVisible();
+    reorderPos.disabled = formLocked || audioLocked || !isAddStudyItemReorderVisible();
   }
   var saveBtn = dom.addStudyItemSaveButton;
   if (saveBtn) {
-    if (addStudy.formBusy ||
+    if (addStudy.formBusy || audioLocked ||
         (addStudy.formConfirming && (addStudy.confirmKind === 'rename' || addStudy.confirmKind === 'reorder'))) {
       saveBtn.disabled = true;
     } else if (addStudy.formConfirming) {
@@ -482,6 +527,7 @@ function renderAddStudyItemList() {
     list.innerHTML = '<p class="add-study-list-empty">このカテゴリには問題がありません。</p>';
     return;
   }
+  var showPlay = canShowAddStudyListPlayButtons_();
   var html = '';
   html += '<div class="add-study-list-start' +
     (addStudy.mode === 'insert' && addStudy.insertAtStart ? ' is-selected' : '') + '">';
@@ -498,8 +544,20 @@ function renderAddStudyItemList() {
     html += '<div class="add-study-list-row-main">';
     html += '<span class="add-study-list-no">' + escapeAddStudyItemHtml(it.no) + '</span>';
     html += '<div class="add-study-list-texts">';
+    html += '<div class="add-study-list-field-row">';
     html += '<div class="add-study-list-q">' + escapeAddStudyItemHtml(previewAddStudyItemText(it.question)) + '</div>';
+    if (showPlay && canPlayAddStudyItemField_(it, 'question')) {
+      html += '<button type="button" class="add-study-list-play" data-add-play="question" data-add-id="' +
+        escapeAddStudyItemHtml(id) + '" aria-label="出題を再生">▶</button>';
+    }
+    html += '</div>';
+    html += '<div class="add-study-list-field-row">';
     html += '<div class="add-study-list-a">' + escapeAddStudyItemHtml(previewAddStudyItemText(it.answer)) + '</div>';
+    if (showPlay && canPlayAddStudyItemField_(it, 'answer')) {
+      html += '<button type="button" class="add-study-list-play" data-add-play="answer" data-add-id="' +
+        escapeAddStudyItemHtml(id) + '" aria-label="解答を再生">▶</button>';
+    }
+    html += '</div>';
     if (String(it.note || '').trim()) {
       html += '<span class="add-study-list-note">noteあり</span>';
     }
@@ -519,10 +577,205 @@ function renderAddStudyItemList() {
     html += '</div></div>';
   }
   list.innerHTML = html;
+  bindAddStudyListPlayButtons_();
+  refreshAddStudyListPlayButtons();
+}
+
+/**
+ * 音声準備中などで一覧再生ボタンを出してよいか
+ * @returns {boolean}
+ */
+function canShowAddStudyListPlayButtons_() {
+  return !addStudy.awaitingAudioPrepare && !addStudy.formBusy;
+}
+
+/**
+ * 当該欄を再生できる本文があるか（保存済み item）
+ * @param {Object} item
+ * @param {'question'|'answer'} field
+ * @returns {boolean}
+ */
+function canPlayAddStudyItemField_(item, field) {
+  if (!item) {
+    return false;
+  }
+  var text = field === 'answer'
+    ? (item.answer != null ? String(item.answer) : '')
+    : (item.question != null ? String(item.question) : '');
+  text = String(text || '').trim();
+  if (!text) {
+    return false;
+  }
+  if (typeof isImageUrl === 'function' && isImageUrl(text)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 一覧の再生ボタンに短押し／長押しを割り当て
+ */
+function bindAddStudyListPlayButtons_() {
+  var list = dom.addStudyItemList;
+  if (!list) {
+    return;
+  }
+  var buttons = list.querySelectorAll('.add-study-list-play[data-add-play]');
+  for (var i = 0; i < buttons.length; i++) {
+    bindAddStudyListPlayButton_(buttons[i]);
+  }
+}
+
+/**
+ * @param {HTMLElement} button
+ */
+function bindAddStudyListPlayButton_(button) {
+  if (!button || button.getAttribute('data-add-play-bound') === '1') {
+    return;
+  }
+  button.setAttribute('data-add-play-bound', '1');
+  var pressTimer = null;
+  var longPressFired = false;
+  var pressActive = false;
+  var activePointerId = null;
+
+  function clearPressTimer() {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+    button.classList.remove('is-long-pressing');
+  }
+
+  button.addEventListener('pointerdown', function(e) {
+    if (button.disabled) {
+      return;
+    }
+    if (typeof e.button === 'number' && e.button !== 0) {
+      return;
+    }
+    e.stopPropagation();
+    pressActive = true;
+    longPressFired = false;
+    activePointerId = e.pointerId;
+    clearPressTimer();
+    try {
+      button.setPointerCapture(e.pointerId);
+    } catch (err) {
+      // ignore
+    }
+    pressTimer = setTimeout(function() {
+      pressTimer = null;
+      if (!pressActive || button.disabled) {
+        return;
+      }
+      longPressFired = true;
+      button.classList.add('is-long-pressing');
+      if (navigator.vibrate) {
+        try { navigator.vibrate(30); } catch (vErr) { /* ignore */ }
+      }
+      runAddStudyItemFieldPlay_(button, true);
+      button.classList.remove('is-long-pressing');
+    }, FIELD_PLAY_LONG_PRESS_MS);
+  });
+
+  function handlePressEnd(e) {
+    if (activePointerId != null && e.pointerId != null && e.pointerId !== activePointerId) {
+      return;
+    }
+    var wasActive = pressActive;
+    var wasLong = longPressFired;
+    clearPressTimer();
+    pressActive = false;
+    activePointerId = null;
+    try {
+      if (e.pointerId != null && button.hasPointerCapture && button.hasPointerCapture(e.pointerId)) {
+        button.releasePointerCapture(e.pointerId);
+      }
+    } catch (err) {
+      // ignore
+    }
+    if (!wasActive || wasLong || button.disabled) {
+      return;
+    }
+    runAddStudyItemFieldPlay_(button, false);
+  }
+
+  button.addEventListener('pointerup', handlePressEnd);
+  button.addEventListener('pointercancel', function(e) {
+    if (activePointerId != null && e.pointerId != null && e.pointerId !== activePointerId) {
+      return;
+    }
+    longPressFired = true;
+    clearPressTimer();
+    pressActive = false;
+    activePointerId = null;
+  });
+  button.addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  button.addEventListener('contextmenu', function(e) {
+    e.preventDefault();
+  });
+}
+
+/**
+ * @param {HTMLElement} button
+ * @param {boolean} forceRefresh
+ */
+function runAddStudyItemFieldPlay_(button, forceRefresh) {
+  var id = button.getAttribute('data-add-id');
+  var field = button.getAttribute('data-add-play');
+  if (!id || (field !== 'question' && field !== 'answer')) {
+    return;
+  }
+  var item = findAddStudyItemById(id);
+  if (!item || !canPlayAddStudyItemField_(item, field)) {
+    return;
+  }
+  if (typeof playAddStudyItemFieldAudio === 'function') {
+    playAddStudyItemFieldAudio(item, field, !!forceRefresh);
+  }
+}
+
+/**
+ * 再生中表示・無効状態を一覧ボタンへ反映
+ */
+function refreshAddStudyListPlayButtons() {
+  var list = dom.addStudyItemList;
+  if (!list) {
+    return;
+  }
+  var buttons = list.querySelectorAll('.add-study-list-play[data-add-play]');
+  var opsBlocked = !!(addStudy.formBusy || addStudy.formConfirming || addStudy.awaitingAudioPrepare);
+  for (var i = 0; i < buttons.length; i++) {
+    var btn = buttons[i];
+    var id = String(btn.getAttribute('data-add-id') || '');
+    var field = btn.getAttribute('data-add-play');
+    var isCurrent = addStudy.audioBusy && addStudy.audioPlayId === id && addStudy.audioPlayField === field;
+    btn.classList.toggle('is-playing', !!isCurrent);
+    // 再生中も中断のため押せる。formBusy／確認中のみ不可
+    btn.disabled = opsBlocked;
+    btn.classList.toggle('is-inactive', opsBlocked);
+  }
+}
+
+/**
+ * 追加画面の再生ビジーを解除
+ */
+function clearAddStudyAudioBusy_() {
+  if (!addStudy.audioBusy && !addStudy.audioPlayId && !addStudy.audioPlayField) {
+    return;
+  }
+  addStudy.audioBusy = false;
+  addStudy.audioPlayId = '';
+  addStudy.audioPlayField = '';
+  syncAddStudyItemEditorUi();
 }
 
 function handleAddStudyItemListClick(e) {
-  if (addStudy.formConfirming || addStudy.formBusy) {
+  if (addStudy.formConfirming || addStudy.formBusy || addStudy.audioBusy) {
     return;
   }
   var target = e.target;
@@ -660,7 +913,13 @@ function openAddStudyItemOverlay() {
 }
 
 function closeAddStudyItemOverlay() {
+  if (addStudy.audioBusy || fieldPlay.field) {
+    stopCurrentAudioPlayback({ skipButtonUpdate: true });
+  }
   addStudy.confirmPending = false;
+  addStudy.audioBusy = false;
+  addStudy.audioPlayId = '';
+  addStudy.audioPlayField = '';
   resetAddStudyItemEditor({ clearFields: true });
   var overlay = dom.addStudyItemOverlay;
   if (overlay) {

@@ -37,30 +37,18 @@ function bindLearningBodyGestures() {
   }
   root.setAttribute('data-learn-gesture-bound', '1');
 
-  var pressTimer = null;
   var pressActive = false;
-  var longPressFired = false;
   var startX = 0;
   var startY = 0;
   var moved = false;
-  var singleTapTimer = null;
+  var tapCount = 0;
+  var tapTimer = null;
 
-  function clearPressTimer() {
-    if (pressTimer) {
-      clearTimeout(pressTimer);
-      pressTimer = null;
+  function clearTapTimer_() {
+    if (tapTimer) {
+      clearTimeout(tapTimer);
+      tapTimer = null;
     }
-  }
-
-  function clearSingleTapTimer() {
-    if (singleTapTimer) {
-      clearTimeout(singleTapTimer);
-      singleTapTimer = null;
-    }
-  }
-
-  function shouldDelayBodyTapForDoubleTap_() {
-    return !studyEnd.done;
   }
 
   function replayFieldFromBodyDoubleTap_() {
@@ -77,6 +65,38 @@ function bindLearningBodyGestures() {
     return !!(s2 && s2.classList.contains('active'));
   }
 
+  function fireBodyTapSequence_() {
+    var count = tapCount;
+    tapTimer = null;
+    tapCount = 0;
+    if (!isLearningScreenActive() || updateMode.active) {
+      return;
+    }
+    if (count >= 3) {
+      var plus = dom.plusButton;
+      if (!plus || plus.disabled) {
+        return;
+      }
+      playRetrySfxThen(handlePlusButtonClick);
+      return;
+    }
+    if (count === 2 && !studyEnd.done) {
+      replayFieldFromBodyDoubleTap_();
+      return;
+    }
+    if (count >= 1) {
+      handleNavAnswerButtonClick();
+    }
+  }
+
+  function armBodyTapTimer_() {
+    clearTapTimer_();
+    if (tapCount <= 0) {
+      return;
+    }
+    tapTimer = setTimeout(fireBodyTapSequence_, LEARNING_BODY_DOUBLE_TAP_MS);
+  }
+
   root.addEventListener('pointerdown', function(e) {
     if (typeof e.button === 'number' && e.button !== 0) {
       return;
@@ -85,34 +105,14 @@ function bindLearningBodyGestures() {
       return;
     }
     var el = getEventElement_(e.target);
-    if (singleTapTimer) {
-      clearSingleTapTimer();
-      if (!isLearningBodyGestureIgnoreTarget_(el)) {
-        replayFieldFromBodyDoubleTap_();
-      }
-      return;
-    }
     if (isLearningBodyGestureIgnoreTarget_(el)) {
       return;
     }
     pressActive = true;
-    longPressFired = false;
     moved = false;
     startX = e.clientX;
     startY = e.clientY;
-    clearPressTimer();
-    pressTimer = setTimeout(function() {
-      pressTimer = null;
-      if (!pressActive || moved || updateMode.active) {
-        return;
-      }
-      var plus = dom.plusButton;
-      if (!plus || plus.disabled) {
-        return;
-      }
-      longPressFired = true;
-      playRetrySfxThen(handlePlusButtonClick);
-    }, FIELD_PLAY_LONG_PRESS_MS);
+    clearTapTimer_();
   });
 
   root.addEventListener('pointermove', function(e) {
@@ -123,49 +123,40 @@ function bindLearningBodyGestures() {
     var dy = e.clientY - startY;
     if ((dx * dx + dy * dy) > (LEARNING_GESTURE_MOVE_PX * LEARNING_GESTURE_MOVE_PX)) {
       moved = true;
-      clearPressTimer();
     }
   });
 
   function endPress(e) {
     var wasActive = pressActive;
-    var wasLong = longPressFired;
     var wasMoved = moved;
     pressActive = false;
-    clearPressTimer();
-    if (!wasActive || wasLong || wasMoved || updateMode.active) {
+    if (!wasActive) {
       return;
     }
-    if (!isLearningScreenActive()) {
+    if (!isLearningScreenActive() || updateMode.active) {
+      armBodyTapTimer_();
       return;
     }
     var el = getEventElement_(e && e.target);
-    if (isLearningBodyGestureIgnoreTarget_(el)) {
+    if (wasMoved || isLearningBodyGestureIgnoreTarget_(el)) {
+      armBodyTapTimer_();
       return;
     }
-    if (shouldDelayBodyTapForDoubleTap_()) {
-      clearSingleTapTimer();
-      singleTapTimer = setTimeout(function() {
-        singleTapTimer = null;
-        if (!isLearningScreenActive() || updateMode.active || studyEnd.done) {
-          return;
-        }
-        handleNavAnswerButtonClick();
-      }, LEARNING_BODY_DOUBLE_TAP_MS);
+    tapCount += 1;
+    if (tapCount >= 3) {
+      fireBodyTapSequence_();
       return;
     }
-    handleNavAnswerButtonClick();
+    armBodyTapTimer_();
   }
 
   root.addEventListener('pointerup', endPress);
   root.addEventListener('pointercancel', function() {
-    pressActive = false;
-    clearPressTimer();
-  });
-  root.addEventListener('contextmenu', function(e) {
-    if (longPressFired) {
-      e.preventDefault();
+    if (!pressActive) {
+      return;
     }
+    pressActive = false;
+    armBodyTapTimer_();
   });
 }
 

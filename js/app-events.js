@@ -460,6 +460,10 @@ function setupEventListeners() {
     });
   }
   bindAnswerUpdateConfirmModalListeners();
+  // 学習中の鉛筆編集＋問題追加フォームの読み／英語
+  if (typeof setupUpdateModeEventListeners === 'function') {
+    setupUpdateModeEventListeners();
+  }
   dom.visibleCategoriesCancelButton.addEventListener('click', function() {
     closeVisibleCategoriesOverlay();
   });

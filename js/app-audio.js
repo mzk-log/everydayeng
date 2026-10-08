@@ -634,8 +634,15 @@ function processGasAudioFetchQueue() {
  */
 function handleAudioFetchAbortOrTimeout(fieldType) {
   hidePlayButtonLoading(fieldType);
-  fieldPlay.field = null;
+  // 切替直後は新再生が fieldPlay／addStudy busy を立て直していることがあるため、
+  // ここでは addStudy busy を触らない（停止は stopCurrentAudioPlayback／再生終了側）
+  if (fieldPlay.field === fieldType) {
+    fieldPlay.field = null;
+  }
   updateFieldPlayButtons();
+  if (typeof refreshAddStudyListPlayButtons === 'function') {
+    refreshAddStudyListPlayButtons();
+  }
   refreshAdvanceNavControls();
   if (fieldType === 'question') {
     onQuestionAudioSettled('abort');
@@ -669,6 +676,9 @@ function stopCurrentAudioPlayback(options) {
   releaseCurrentAudioElement();
   if (!options.preserveBusy) {
     fieldPlay.field = null;
+    if (!options.keepAddStudyAudioBusy && typeof clearAddStudyAudioBusy_ === 'function') {
+      clearAddStudyAudioBusy_();
+    }
   }
   if (!options.keepAudioQueue) {
     invalidateGasAudioFetches();
@@ -938,6 +948,121 @@ function playFieldAudio(fieldType, forceRefresh, options) {
   }
 
   enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork, forceRefresh);
+}
+
+/**
+ * 問題追加一覧：保存済み本文の出題／解答を再生（自動再生なし）
+ * 短押しで同一欄再押しなら停止。長押し（forceRefresh）は Drive を読まず再TTS
+ * @param {Object} item
+ * @param {'question'|'answer'} fieldType - シート列（入替設定の影響を受けない）
+ * @param {boolean} [forceRefresh=false]
+ */
+function playAddStudyItemFieldAudio(item, fieldType, forceRefresh) {
+  if (!item || (fieldType !== 'question' && fieldType !== 'answer')) {
+    return;
+  }
+  var itemId = String(item.id);
+  if (!forceRefresh && addStudy.audioBusy && addStudy.audioPlayId === itemId &&
+      addStudy.audioPlayField === fieldType) {
+    stopCurrentAudioPlayback();
+    return;
+  }
+
+  var text = fieldType === 'answer'
+    ? (item.answer != null ? String(item.answer) : '')
+    : (item.question != null ? String(item.question) : '');
+  if (!text || !String(text).trim() || isImageUrl(text)) {
+    return;
+  }
+  if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
+    showError('音声読み上げの設定が完了していません。WebアプリURLを設定してください。');
+    return;
+  }
+
+  // 切替時は addStudy busy をいったん残し、すぐ下で付け直す
+  stopCurrentAudioPlayback({ skipButtonUpdate: true, keepAudioQueue: false, keepAddStudyAudioBusy: true });
+  addStudy.audioBusy = true;
+  addStudy.audioPlayId = itemId;
+  addStudy.audioPlayField = fieldType;
+  fieldPlay.field = fieldType;
+  if (typeof syncAddStudyItemEditorUi === 'function') {
+    syncAddStudyItemEditorUi();
+  } else {
+    updateFieldPlayButtons();
+  }
+
+  var voiceGender = fieldType === 'question' ? getAudioVoice('question') : getAudioVoice('answer');
+  var speed = fieldType === 'question' ? getAudioSpeed('question') : getAudioSpeed('answer');
+  var sheetField = fieldType;
+
+  function settleAudioNetwork() {
+    // ネット取得完了。再生開始／失敗は playAudioFromCache／fail 側で busy 解除
+  }
+
+  function stillSameTarget_() {
+    return addStudy.audioBusy && addStudy.audioPlayId === itemId &&
+      addStudy.audioPlayField === fieldType;
+  }
+
+  if (!forceRefresh) {
+    var cachedResult = getCachedAudio(text, voiceGender, speed);
+    if (cachedResult && cachedResult.audioData) {
+      beginLoadDiag('run', 'Mem', 0, {
+        status: 'OK',
+        bytes: cachedResult.audioData.audioContent
+          ? String(cachedResult.audioData.audioContent).length
+          : null
+      });
+      finishLoadDiag('run', 'OK', {
+        ok: true,
+        bytes: cachedResult.audioData.audioContent
+          ? String(cachedResult.audioData.audioContent).length
+          : null
+      });
+      setTimeout(function() {
+        if (!stillSameTarget_()) {
+          return;
+        }
+        playAudioFromCache(cachedResult.audioData, fieldType, cachedResult.source);
+      }, 0);
+      settleAudioNetwork();
+      return;
+    }
+    getCachedAudioFromIdb(text, voiceGender, speed, function(idbResult) {
+      if (!stillSameTarget_()) {
+        settleAudioNetwork();
+        return;
+      }
+      if (idbResult && idbResult.audioData) {
+        beginLoadDiag('run', 'IdB', 0, {
+          status: 'OK',
+          bytes: idbResult.audioData.audioContent
+            ? String(idbResult.audioData.audioContent).length
+            : null
+        });
+        finishLoadDiag('run', 'OK', {
+          ok: true,
+          bytes: idbResult.audioData.audioContent
+            ? String(idbResult.audioData.audioContent).length
+            : null
+        });
+        setTimeout(function() {
+          if (!stillSameTarget_()) {
+            return;
+          }
+          playAudioFromCache(idbResult.audioData, fieldType, 'indexedDB');
+        }, 0);
+        settleAudioNetwork();
+        return;
+      }
+      enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork, forceRefresh);
+    });
+    return;
+  }
+
+  // 長押し再TTS：ローカルキャッシュ削除のうえ Drive スキップ
+  removeCachedAudio(text, voiceGender, speed);
+  enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork, true);
 }
 
 /**
@@ -1530,6 +1655,9 @@ function playAudioFromCache(audioData, fieldType, source) {
     if (fieldPlay.field === fieldType) {
       clearAudioBusyWatchdogs_();
       fieldPlay.field = null;
+      if (typeof clearAddStudyAudioBusy_ === 'function') {
+        clearAddStudyAudioBusy_();
+      }
       updateFieldPlayButtons();
     }
     return;
@@ -1547,6 +1675,9 @@ function playAudioFromCache(audioData, fieldType, source) {
     fieldPlay.audio = audio;
     fieldPlay.field = fieldType || null;
     updateFieldPlayButtons();
+    if (typeof refreshAddStudyListPlayButtons === 'function') {
+      refreshAddStudyListPlayButtons();
+    }
     
     var playbackStarted = false;
 
@@ -1564,6 +1695,9 @@ function playAudioFromCache(audioData, fieldType, source) {
       releaseCurrentAudioElement();
       } else if (fieldPlay.field === fieldType) {
         fieldPlay.field = null;
+      }
+      if (typeof clearAddStudyAudioBusy_ === 'function') {
+        clearAddStudyAudioBusy_();
       }
       updateFieldPlayButtons();
       if (fieldType === 'question') {
@@ -1648,6 +1782,9 @@ function playAudioFromCache(audioData, fieldType, source) {
     clearAudioBusyWatchdogs_();
     fieldPlay.field = null;
     releaseCurrentAudioElement();
+    if (typeof clearAddStudyAudioBusy_ === 'function') {
+      clearAddStudyAudioBusy_();
+    }
     updateFieldPlayButtons();
     if (fieldType === 'question') onQuestionAudioSettled('fail');
   }
@@ -1833,6 +1970,9 @@ function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField
     finishLoadDiag('run', loadDiagStatusFromError(errorText), { ok: false });
     hidePlayButtonLoading(fieldType);
     fieldPlay.field = null;
+    if (typeof clearAddStudyAudioBusy_ === 'function') {
+      clearAddStudyAudioBusy_();
+    }
     updateFieldPlayButtons();
     showError(errorText);
     if (fieldType === 'question') onQuestionAudioSettled('fail');

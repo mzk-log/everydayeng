@@ -1635,11 +1635,11 @@ tr:last-child td {
   display: none;
 }
 
-/* 質問テキスト */
+/* 質問テキスト（右余白は鉛筆 28px+8px と重ならない幅） */
 .question-text {
   font-size: 18px;
   margin: 10px 0;
-  padding: 12px;
+  padding: 12px 42px 12px 12px;
   background-color: rgba(255, 255, 255, 0.9);
   border-radius: 8px;
   white-space: pre-line;
@@ -1753,11 +1753,11 @@ tr:last-child td {
   color: #000;
 }
 
-/* Answerボタン押下後の回答テキスト */
+/* Answerボタン押下後の回答テキスト（右余白は鉛筆と重ならない幅） */
 #answerTextDisplay {
   color: #0066cc !important;
   font-weight: bold !important;
-  padding: 15px 20px !important;
+  padding: 15px 42px 15px 20px !important;
   margin: 0 !important;
   min-height: 50px;
   display: flex;
@@ -1997,12 +1997,12 @@ tr:last-child td {
   margin: 10px 0;
 }
 
-/* ノートテキスト */
+/* ノートテキスト（右余白は目／鉛筆と重ならない幅） */
 .note-text {
   font-size: 16px;
   color: #666;
   margin: 5px 0;
-  padding: 8px;
+  padding: 8px 42px 8px 8px;
   background-color: rgba(255, 255, 255, 0.9);
   border-radius: 8px;
   white-space: pre-line;
@@ -2454,24 +2454,24 @@ body:has(#screen2.active) .answer-text-edit {
   z-index: 580;
   display: flex;
   align-items: stretch;
-  justify-content: center;
-  padding: 8px 8px max(8px, env(safe-area-inset-bottom, 0px));
+  justify-content: stretch;
+  padding: 0;
   box-sizing: border-box;
-  background-color: rgba(0, 0, 0, 0.45);
+  background-color: #fff;
   overflow: hidden;
 }
 
 .add-study-panel {
   width: 100%;
-  max-width: 480px;
+  max-width: none;
   flex: 1;
   min-height: 0;
   max-height: 100%;
-  margin: 0 auto;
-  padding: 8px 10px 4px;
-  border-radius: 10px;
+  margin: 0;
+  padding: max(8px, env(safe-area-inset-top, 0px)) 12px max(8px, env(safe-area-inset-bottom, 0px));
+  border-radius: 0;
   background-color: #fff;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
   text-align: left;
   box-sizing: border-box;
   display: flex;
@@ -2755,10 +2755,88 @@ body:has(#screen2.active) .answer-text-edit {
   margin-top: auto;
 }
 
+/* 出題／解答：ラベル左・読み／英語を右に横並び（ボタン専用行を避ける） */
+.add-study-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 6px 0 3px;
+}
+
+.add-study-field-head .add-study-label {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.add-study-ssml-controls {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.add-study-ssml-controls .field-yomigana-button,
+.add-study-ssml-controls .field-english-button {
+  min-width: 44px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
 .add-study-form .add-study-textarea {
-  min-height: 3.2em;
-  height: 3.2em;
-  max-height: 28vh;
+  min-height: 4.2em;
+  height: 4.8em;
+  max-height: 32vh;
+}
+
+.add-study-list-field-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.add-study-list-field-row .add-study-list-q,
+.add-study-list-field-row .add-study-list-a {
+  flex: 1;
+  min-width: 0;
+}
+
+.add-study-list-play {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #bbb;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  color: #333;
+}
+
+/* 解答の再生は解答本文色に合わせる */
+.add-study-list-play[data-add-play="answer"] {
+  color: #1565c0;
+  border-color: #90caf9;
+}
+
+.add-study-list-play:disabled,
+.add-study-list-play.is-inactive {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.add-study-list-play.is-long-pressing {
+  background: #fff3e0;
+  border-color: #ff9800;
+}
+
+.add-study-list-play.is-playing {
+  background: #e3f2fd;
+  border-color: #1976d2;
 }
 
 .add-study-input:disabled,
@@ -3343,11 +3421,11 @@ body:has(#screen2.active) .answer-text-edit {
   line-height: 1.5;
 }
 
-/* 学習画面の質問テキスト */
+/* 学習画面の質問テキスト（右余白は鉛筆と重ならない幅） */
 #screen2 .question-text {
   font-size: 16px;
   margin: 5px 0;
-  padding: 8px;
+  padding: 8px 42px 8px 8px;
   border-radius: 6px;
 }
 
@@ -3390,9 +3468,9 @@ body:has(#screen2.active) .answer-text-edit {
   border-radius: 6px;
 }
 
-/* 学習画面のAnswerボタン押下後の回答テキスト */
+/* 学習画面のAnswerボタン押下後の回答テキスト（右余白は鉛筆と重ならない幅） */
 #screen2 #answerTextDisplay {
-  padding: 12px 16px !important;
+  padding: 12px 42px 12px 16px !important;
   min-height: 40px;
 }
 

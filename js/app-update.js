@@ -239,22 +239,53 @@ var ENGLISH_LANG_OPEN = '<lang xml:lang="en-US">';
 var ENGLISH_LANG_CLOSE = '</lang>';
 
 /**
+ * 選択記憶の格納先（学習中の鉛筆編集／問題追加フォーム）
+ * @param {HTMLTextAreaElement} editEl
+ * @returns {{start: *, end: *, editId?: string}|null}
+ */
+function getSsmlSelectionStore_(editEl) {
+  if (!editEl) {
+    return null;
+  }
+  if (updateMode.active && (editEl.id === 'questionTextEdit' || editEl.id === 'answerTextEdit')) {
+    return updateMode;
+  }
+  if (editEl.id === 'addStudyItemQuestion' || editEl.id === 'addStudyItemAnswer') {
+    return addStudySsmlSelection;
+  }
+  return null;
+}
+
+/**
  * ボタン押下でフォーカスが移る前に、選択範囲またはカーソル位置を覚える
  * @param {HTMLTextAreaElement} editEl
  */
 function rememberYomiganaSelection_(editEl) {
-  if (!editEl || !updateMode.active) {
+  var store = getSsmlSelectionStore_(editEl);
+  if (!editEl || !store) {
     return;
   }
   var start = editEl.selectionStart;
   var end = editEl.selectionEnd;
-  if (start == null || end == null) {
-    updateMode.selectionStart = null;
-    updateMode.selectionEnd = null;
+  if (store === addStudySsmlSelection) {
+    if (start == null || end == null) {
+      store.start = null;
+      store.end = null;
+      store.editId = '';
+      return;
+    }
+    store.start = start;
+    store.end = end;
+    store.editId = editEl.id || '';
     return;
   }
-  updateMode.selectionStart = start;
-  updateMode.selectionEnd = end;
+  if (start == null || end == null) {
+    store.selectionStart = null;
+    store.selectionEnd = null;
+    return;
+  }
+  store.selectionStart = start;
+  store.selectionEnd = end;
 }
 
 /**
@@ -285,8 +316,18 @@ function clearYomiganaSelectionMemory_(editEl) {
   editEl.onmouseup = null;
   editEl.ontouchend = null;
   editEl.onkeyup = null;
-  updateMode.selectionStart = null;
-  updateMode.selectionEnd = null;
+  var store = getSsmlSelectionStore_(editEl);
+  if (!store) {
+    return;
+  }
+  if (store === addStudySsmlSelection) {
+    store.start = null;
+    store.end = null;
+    store.editId = '';
+  } else {
+    store.selectionStart = null;
+    store.selectionEnd = null;
+  }
 }
 
 /**
@@ -302,6 +343,25 @@ function isValidYomiganaRange_(value, start, end) {
 }
 
 /**
+ * 記憶している選択範囲を取り出す
+ * @param {HTMLTextAreaElement} editEl
+ * @returns {{start: number|null, end: number|null}}
+ */
+function getStoredSsmlSelection_(editEl) {
+  var store = getSsmlSelectionStore_(editEl);
+  if (!store) {
+    return { start: null, end: null };
+  }
+  if (store === addStudySsmlSelection) {
+    if (store.editId && store.editId !== editEl.id) {
+      return { start: null, end: null };
+    }
+    return { start: store.start, end: store.end };
+  }
+  return { start: store.selectionStart, end: store.selectionEnd };
+}
+
+/**
  * いまの選択／カーソル。ボタンで消えていれば、直前の位置を使う
  * @param {HTMLTextAreaElement} editEl
  * @returns {{start: number, end: number}|null}
@@ -310,8 +370,9 @@ function getYomiganaInsertRange_(editEl) {
   var value = editEl.value || '';
   var liveStart = editEl.selectionStart;
   var liveEnd = editEl.selectionEnd;
-  var memStart = updateMode.selectionStart;
-  var memEnd = updateMode.selectionEnd;
+  var stored = getStoredSsmlSelection_(editEl);
+  var memStart = stored.start;
+  var memEnd = stored.end;
 
   if (isValidYomiganaRange_(value, liveStart, liveEnd) && liveStart < liveEnd) {
     return { start: liveStart, end: liveEnd };
@@ -330,6 +391,26 @@ function getYomiganaInsertRange_(editEl) {
     return { start: liveStart, end: liveEnd };
   }
   return null;
+}
+
+/**
+ * 挿入後の選択記憶を更新
+ * @param {HTMLTextAreaElement} editEl
+ * @param {number} cursor
+ */
+function storeSsmlCursorAfterInsert_(editEl, cursor) {
+  var store = getSsmlSelectionStore_(editEl);
+  if (!store) {
+    return;
+  }
+  if (store === addStudySsmlSelection) {
+    store.start = cursor;
+    store.end = cursor;
+    store.editId = editEl.id || '';
+  } else {
+    store.selectionStart = cursor;
+    store.selectionEnd = cursor;
+  }
 }
 
 /**
@@ -358,6 +439,41 @@ function selectionCrossesYomiganaPhoneme_(value, start, end) {
 }
 
 /**
+ * textarea へ読み／英語タグを入れる共通処理
+ * @param {HTMLTextAreaElement} editEl
+ * @param {'yomigana'|'english'} kind
+ */
+function insertSsmlTagIntoTextarea_(editEl, kind) {
+  if (!editEl || editEl.disabled) {
+    return;
+  }
+  var range = getYomiganaInsertRange_(editEl);
+  if (!range) {
+    return;
+  }
+  var start = range.start;
+  var end = range.end;
+  var value = editEl.value || '';
+  if (selectionCrossesYomiganaPhoneme_(value, start, end)) {
+    return;
+  }
+  var selected = value.substring(start, end);
+  var wrapped;
+  var cursor;
+  if (kind === 'english') {
+    wrapped = ENGLISH_LANG_OPEN + selected + ENGLISH_LANG_CLOSE;
+    cursor = start + ENGLISH_LANG_OPEN.length;
+  } else {
+    wrapped = YOMIGANA_PHONEME_OPEN + YOMIGANA_PHONEME_AFTER_PH + selected + YOMIGANA_PHONEME_CLOSE;
+    cursor = start + YOMIGANA_PHONEME_OPEN.length;
+  }
+  editEl.value = value.substring(0, start) + wrapped + value.substring(end);
+  storeSsmlCursorAfterInsert_(editEl, cursor);
+  editEl.focus();
+  editEl.setSelectionRange(cursor, cursor);
+}
+
+/**
  * 編集中の出題／解答へ読み指定タグを入れる
  * 選択あり：その文字を包む。未選択：カーソル位置へ空タグを入れる
  * @param {'question'|'answer'} displayTarget
@@ -373,28 +489,7 @@ function insertYomiganaPhoneme(displayTarget) {
   if (!ui) {
     return;
   }
-  var editEl = document.getElementById(ui.editId);
-  if (!editEl) {
-    return;
-  }
-  var range = getYomiganaInsertRange_(editEl);
-  if (!range) {
-    return;
-  }
-  var start = range.start;
-  var end = range.end;
-  var value = editEl.value || '';
-  if (selectionCrossesYomiganaPhoneme_(value, start, end)) {
-    return;
-  }
-  var selected = value.substring(start, end);
-  var wrapped = YOMIGANA_PHONEME_OPEN + YOMIGANA_PHONEME_AFTER_PH + selected + YOMIGANA_PHONEME_CLOSE;
-  editEl.value = value.substring(0, start) + wrapped + value.substring(end);
-  var cursor = start + YOMIGANA_PHONEME_OPEN.length;
-  updateMode.selectionStart = cursor;
-  updateMode.selectionEnd = cursor;
-  editEl.focus();
-  editEl.setSelectionRange(cursor, cursor);
+  insertSsmlTagIntoTextarea_(document.getElementById(ui.editId), 'yomigana');
 }
 
 /**
@@ -413,28 +508,22 @@ function insertEnglishLangTag(displayTarget) {
   if (!ui) {
     return;
   }
-  var editEl = document.getElementById(ui.editId);
-  if (!editEl) {
-    return;
+  insertSsmlTagIntoTextarea_(document.getElementById(ui.editId), 'english');
+}
+
+/**
+ * 問題追加フォームの出題／解答へ読み／英語タグを入れる
+ * @param {'question'|'answer'} field
+ * @param {'yomigana'|'english'} kind
+ */
+function insertAddStudyItemSsmlTag(field, kind) {
+  var editEl = document.getElementById(
+    field === 'answer' ? 'addStudyItemAnswer' : 'addStudyItemQuestion'
+  );
+  insertSsmlTagIntoTextarea_(editEl, kind);
+  if (typeof syncAddStudyItemEditorUi === 'function') {
+    syncAddStudyItemEditorUi();
   }
-  var range = getYomiganaInsertRange_(editEl);
-  if (!range) {
-    return;
-  }
-  var start = range.start;
-  var end = range.end;
-  var value = editEl.value || '';
-  if (selectionCrossesYomiganaPhoneme_(value, start, end)) {
-    return;
-  }
-  var selected = value.substring(start, end);
-  var wrapped = ENGLISH_LANG_OPEN + selected + ENGLISH_LANG_CLOSE;
-  editEl.value = value.substring(0, start) + wrapped + value.substring(end);
-  var cursor = start + ENGLISH_LANG_OPEN.length;
-  updateMode.selectionStart = cursor;
-  updateMode.selectionEnd = cursor;
-  editEl.focus();
-  editEl.setSelectionRange(cursor, cursor);
 }
 
 // 更新モード用のイベントリスナーを設定
@@ -504,6 +593,34 @@ function setupUpdateModeEventListeners() {
       };
     }
   });
+
+  var addStudySsmlButtons = [
+    { id: 'addStudyItemQuestionYomiganaButton', field: 'question', kind: 'yomigana' },
+    { id: 'addStudyItemQuestionEnglishButton', field: 'question', kind: 'english' },
+    { id: 'addStudyItemAnswerYomiganaButton', field: 'answer', kind: 'yomigana' },
+    { id: 'addStudyItemAnswerEnglishButton', field: 'answer', kind: 'english' }
+  ];
+  addStudySsmlButtons.forEach(function(entry) {
+    var btn = document.getElementById(entry.id);
+    if (!btn) {
+      return;
+    }
+    btn.onpointerdown = function(event) {
+      event.preventDefault();
+      var editEl = document.getElementById(
+        entry.field === 'answer' ? 'addStudyItemAnswer' : 'addStudyItemQuestion'
+      );
+      rememberYomiganaSelection_(editEl);
+    };
+    btn.onpointerup = function(event) {
+      if (event.button != null && event.button !== 0) {
+        return;
+      }
+      insertAddStudyItemSsmlTag(entry.field, entry.kind);
+    };
+  });
+  bindYomiganaSelectionMemory_(document.getElementById('addStudyItemQuestion'));
+  bindYomiganaSelectionMemory_(document.getElementById('addStudyItemAnswer'));
   
   var micButton = dom.answerMicButton;
   if (micButton) {
