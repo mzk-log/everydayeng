@@ -7,7 +7,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202610082040';
+    var FRONT_VERSION = '202610100745';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -46,7 +46,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202610082040">
+  <link rel="stylesheet" href="style.css?v=202610100745">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -573,18 +573,21 @@
       </div>
       <label class="add-study-label" for="addStudyItemCategorySelect">カテゴリ</label>
       <select id="addStudyItemCategorySelect" class="add-study-select"></select>
-      <div id="addStudyItemRenameFields" class="add-study-rename" style="display: none;">
-        <label class="add-study-label" for="addStudyItemRenameName">カテゴリ名</label>
-        <div class="add-study-rename-row">
-          <input id="addStudyItemRenameName" class="add-study-input" type="text" autocomplete="off">
-          <button type="button" id="addStudyItemRenameButton" class="add-study-button add-study-button-save">名前を更新</button>
+      <button type="button" id="addStudyItemCategorySettingsToggle" class="add-study-disclosure" hidden aria-expanded="false" aria-controls="addStudyItemCategorySettings">カテゴリ設定</button>
+      <div id="addStudyItemCategorySettings" hidden>
+        <div id="addStudyItemRenameFields" class="add-study-rename" style="display: none;">
+          <label class="add-study-label" for="addStudyItemRenameName">カテゴリ名</label>
+          <div class="add-study-rename-row">
+            <input id="addStudyItemRenameName" class="add-study-input" type="text" autocomplete="off">
+            <button type="button" id="addStudyItemRenameButton" class="add-study-button add-study-button-save">名前を更新</button>
+          </div>
         </div>
-      </div>
-      <div id="addStudyItemReorderFields" class="add-study-reorder" style="display: none;">
-        <label class="add-study-label" for="addStudyItemReorderPosition">カテゴリの並び</label>
-        <div class="add-study-rename-row">
-          <select id="addStudyItemReorderPosition" class="add-study-select"></select>
-          <button type="button" id="addStudyItemReorderButton" class="add-study-button add-study-button-save">移動</button>
+        <div id="addStudyItemReorderFields" class="add-study-reorder" style="display: none;">
+          <label class="add-study-label" for="addStudyItemReorderPosition">カテゴリの並び</label>
+          <div class="add-study-rename-row">
+            <select id="addStudyItemReorderPosition" class="add-study-select"></select>
+            <button type="button" id="addStudyItemReorderButton" class="add-study-button add-study-button-save">移動</button>
+          </div>
         </div>
       </div>
       <div id="addStudyItemNewCategoryFields" class="add-study-new-cat" style="display: none;">
@@ -621,8 +624,8 @@
           </div>
         </div>
         <textarea id="addStudyItemAnswer" class="add-study-textarea" rows="3"></textarea>
-        <label class="add-study-label" for="addStudyItemNote">note（任意）</label>
-        <textarea id="addStudyItemNote" class="add-study-textarea" rows="2"></textarea>
+        <button type="button" id="addStudyItemNoteToggle" class="add-study-disclosure" aria-expanded="false" aria-controls="addStudyItemNote">note（任意）</button>
+        <textarea id="addStudyItemNote" class="add-study-textarea" rows="2" hidden></textarea>
         <div class="add-study-status-row">
           <p id="addStudyItemStatus" class="add-study-status" aria-live="polite"></p>
           <div id="addStudyItemStatusProgress" class="add-study-status-progress" hidden aria-hidden="true">
@@ -669,35 +672,35 @@
     </div>
   </div>
 
-  <script src="js/app-state.js?v=202610082040"></script>
-  <script src="js/app-gas.js?v=202610082040"></script>
-  <script src="js/app-auth.js?v=202610082040"></script>
-  <script src="js/app-settings.js?v=202610082040"></script>
-  <script src="js/app-question.js?v=202610082040"></script>
-  <script src="js/app-practice.js?v=202610082040"></script>
-  <script src="js/app-learning.js?v=202610082040"></script>
-  <script src="js/app-audio.js?v=202610082040"></script>
-  <script src="js/app-nav.js?v=202610082040"></script>
-  <script src="js/app-modal.js?v=202610082040"></script>
-  <script src="js/app-update.js?v=202610082040"></script>
-  <script src="js/app-boot.js?v=202610082040"></script>
-  <script src="js/app-category.js?v=202610082040"></script>
-  <script src="js/app-events.js?v=202610082040"></script>
-  <script src="js/app-menu.js?v=202610082040"></script>
-  <script src="js/app-session.js?v=202610082040"></script>
-  <script src="js/app-add-study.js?v=202610082040"></script>
-  <script src="js/app-sort.js?v=202610082040"></script>
-  <script src="js/app-study-load.js?v=202610082040"></script>
-  <script src="js/app-mode-page.js?v=202610082040"></script>
-  <script src="js/app-background.js?v=202610082040"></script>
-  <script src="js/app-error.js?v=202610082040"></script>
-  <script src="js/app-list.js?v=202610082040"></script>
-  <script src="js/app-list-nav.js?v=202610082040"></script>
-  <script src="js/app-field-edit.js?v=202610082040"></script>
-  <script src="js/app-format.js?v=202610082040"></script>
-  <script src="js/app-image.js?v=202610082040"></script>
-  <script src="js/app-sheet.js?v=202610082040"></script>
-  <script src="js/app-gesture.js?v=202610082040"></script>
+  <script src="js/app-state.js?v=202610100745"></script>
+  <script src="js/app-gas.js?v=202610100745"></script>
+  <script src="js/app-auth.js?v=202610100745"></script>
+  <script src="js/app-settings.js?v=202610100745"></script>
+  <script src="js/app-question.js?v=202610100745"></script>
+  <script src="js/app-practice.js?v=202610100745"></script>
+  <script src="js/app-learning.js?v=202610100745"></script>
+  <script src="js/app-audio.js?v=202610100745"></script>
+  <script src="js/app-nav.js?v=202610100745"></script>
+  <script src="js/app-modal.js?v=202610100745"></script>
+  <script src="js/app-update.js?v=202610100745"></script>
+  <script src="js/app-boot.js?v=202610100745"></script>
+  <script src="js/app-category.js?v=202610100745"></script>
+  <script src="js/app-events.js?v=202610100745"></script>
+  <script src="js/app-menu.js?v=202610100745"></script>
+  <script src="js/app-session.js?v=202610100745"></script>
+  <script src="js/app-add-study.js?v=202610100745"></script>
+  <script src="js/app-sort.js?v=202610100745"></script>
+  <script src="js/app-study-load.js?v=202610100745"></script>
+  <script src="js/app-mode-page.js?v=202610100745"></script>
+  <script src="js/app-background.js?v=202610100745"></script>
+  <script src="js/app-error.js?v=202610100745"></script>
+  <script src="js/app-list.js?v=202610100745"></script>
+  <script src="js/app-list-nav.js?v=202610100745"></script>
+  <script src="js/app-field-edit.js?v=202610100745"></script>
+  <script src="js/app-format.js?v=202610100745"></script>
+  <script src="js/app-image.js?v=202610100745"></script>
+  <script src="js/app-sheet.js?v=202610100745"></script>
+  <script src="js/app-gesture.js?v=202610100745"></script>
 </body>
 </html>
 

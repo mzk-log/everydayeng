@@ -144,7 +144,14 @@ var addStudy = {
   statusProgressVisible: false, // 追加中…から音声準備までの進捗バー表示中
   audioBusy: false, // 一覧からの再生／再TTS中（他操作停止。再生ボタンで中断可）
   audioPlayId: '', // 再生中の問題 ID
-  audioPlayField: '' // 'question' | 'answer'
+  audioPlayField: '', // 'question' | 'answer'
+  categorySettingsOpen: false, // 既存カテゴリの名前・並び
+  noteOpen: false, // note 入力欄
+  discardAction: '', // close | back | category
+  pendingCategoryValue: '',
+  committedCategoryValue: '',
+  baseline: null, // 未保存判定の基準
+  lastUpdatedId: '' // 更新完了後も一覧で薄緑にする問題 ID
 };
 var addStudySsmlSelection = {
   start: null,
@@ -336,6 +343,9 @@ var dom = {
   addStudyItemCancelButton: document.getElementById('addStudyItemCancelButton'),
   addStudyItemCategoryName: document.getElementById('addStudyItemCategoryName'),
   addStudyItemCategorySelect: document.getElementById('addStudyItemCategorySelect'),
+  addStudyItemCategorySettingsToggle: document.getElementById('addStudyItemCategorySettingsToggle'),
+  addStudyItemCategorySettings: document.getElementById('addStudyItemCategorySettings'),
+  addStudyItemNoteToggle: document.getElementById('addStudyItemNoteToggle'),
   addStudyItemCloseButton: document.getElementById('addStudyItemCloseButton'),
   addStudyItemItemContainer: document.getElementById('addStudyItemItemContainer'),
   addStudyItemList: document.getElementById('addStudyItemList'),

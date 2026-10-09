@@ -2504,6 +2504,38 @@ body:has(#screen2.active) .answer-text-edit {
   padding: 0 4px;
 }
 
+.add-study-panel :focus-visible {
+  outline: 2px solid #2f6fed;
+  outline-offset: 2px;
+}
+
+.add-study-disclosure {
+  display: inline-flex;
+  align-items: center;
+  margin: 4px 0 2px;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  color: #1565c0;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.add-study-disclosure[aria-expanded="true"] {
+  color: #333;
+  font-weight: 700;
+}
+
+.add-study-disclosure:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+#addStudyItemCategorySettings {
+  flex-shrink: 0;
+}
+
 .add-study-panel > .add-study-label,
 .add-study-panel > .add-study-select {
   flex-shrink: 0;
@@ -2837,6 +2869,7 @@ body:has(#screen2.active) .answer-text-edit {
 .add-study-list-play.is-playing {
   background: #e3f2fd;
   border-color: #1976d2;
+  font-size: 14px;
 }
 
 .add-study-input:disabled,

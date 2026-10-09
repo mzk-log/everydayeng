@@ -646,10 +646,19 @@ function showUpdateConfirmModal() {
 function closeUpdateConfirmModal() {
   addStudy.confirmPending = false;
   addStudy.confirmKind = '';
+  addStudy.discardAction = '';
+  addStudy.pendingCategoryValue = '';
   setConfirmModalBusy(false);
+  var okButton = dom.answerUpdateConfirmOkButton;
+  if (okButton) {
+    okButton.textContent = '確定';
+  }
   var modal = dom.answerUpdateConfirmModal;
   if (modal) {
     modal.classList.remove('active');
+  }
+  if (typeof syncAddStudyItemEditorUi === 'function') {
+    syncAddStudyItemEditorUi();
   }
 }
 

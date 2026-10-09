@@ -352,21 +352,49 @@ function setupEventListeners() {
   var addStudyItemCategorySelect = dom.addStudyItemCategorySelect;
   if (addStudyItemCategorySelect) {
     addStudyItemCategorySelect.addEventListener('change', function() {
-      resetAddStudyItemEditor({ keepCategory: true, clearFields: true });
-      syncAddStudyItemNewCategoryFields();
-      syncAddStudyItemInputLock();
-      renderAddStudyItemList();
-      setAddStudyItemStatus('', false);
-      syncAddStudyItemRenameFields(true);
-      syncAddStudyItemReorderFields(true);
+      if (addStudy.formBusy || addStudy.formConfirming || isAddStudyItemDiscardConfirming_()) {
+        this.value = addStudy.committedCategoryValue || '';
+        return;
+      }
+      var next = String(this.value || '');
+      if (isAddStudyItemDirty_()) {
+        this.value = addStudy.committedCategoryValue || '';
+        requestAddStudyItemDiscard_('category', next);
+        return;
+      }
+      applyAddStudyItemCategorySelection_();
+    });
+  }
+  var addStudyItemCategorySettingsToggle = dom.addStudyItemCategorySettingsToggle;
+  if (addStudyItemCategorySettingsToggle) {
+    addStudyItemCategorySettingsToggle.addEventListener('click', function() {
+      if (!isAddStudyItemRenameVisible() || isAddStudyItemOpsLocked_()) {
+        return;
+      }
+      addStudy.categorySettingsOpen = !addStudy.categorySettingsOpen;
+      syncAddStudyItemCategorySettingsUi_();
+    });
+  }
+  var addStudyItemNoteToggle = dom.addStudyItemNoteToggle;
+  if (addStudyItemNoteToggle) {
+    addStudyItemNoteToggle.addEventListener('click', function() {
+      if (addStudyItemNoteToggle.disabled) {
+        return;
+      }
+      addStudy.noteOpen = !addStudy.noteOpen;
+      syncAddStudyItemNoteUi_();
+      if (addStudy.noteOpen && dom.addStudyItemNote) {
+        dom.addStudyItemNote.focus();
+      }
     });
   }
   var addStudyItemBackToAddButton = dom.addStudyItemBackToAddButton;
   if (addStudyItemBackToAddButton) {
     addStudyItemBackToAddButton.addEventListener('click', function() {
-      resetAddStudyItemEditor({ keepCategory: true, clearFields: true });
-      renderAddStudyItemList();
-      setAddStudyItemStatus('', false);
+      if (addStudy.formBusy || isAddStudyItemDiscardConfirming_()) {
+        return;
+      }
+      requestAddStudyItemDiscard_('back');
     });
   }
   var addStudyItemList = dom.addStudyItemList;
@@ -445,18 +473,18 @@ function setupEventListeners() {
       }
       if (addStudy.formConfirming) {
         cancelAddStudyItemFormConfirm();
-      } else {
-        closeAddStudyItemOverlay();
+      } else if (!isAddStudyItemDiscardConfirming_()) {
+        requestAddStudyItemDiscard_('close');
       }
     });
   }
   var addStudyItemCloseButton = dom.addStudyItemCloseButton;
   if (addStudyItemCloseButton) {
     addStudyItemCloseButton.addEventListener('click', function() {
-      if (addStudy.formBusy) {
+      if (addStudy.formBusy || isAddStudyItemDiscardConfirming_()) {
         return;
       }
-      closeAddStudyItemOverlay();
+      requestAddStudyItemDiscard_('close');
     });
   }
   bindAnswerUpdateConfirmModalListeners();
