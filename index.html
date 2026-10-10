@@ -7,7 +7,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202610100745';
+    var FRONT_VERSION = '202610102035';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -46,7 +46,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202610100745">
+  <link rel="stylesheet" href="style.css?v=202610102035">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -602,29 +602,35 @@
       </div>
       <div id="addStudyItemListWrap" class="add-study-list-wrap" style="display: none;">
         <div class="add-study-list-head">
-          <span class="add-study-list-title">既存の問題</span>
+          <div class="add-study-list-head-main">
+            <span class="add-study-list-title">既存の問題</span>
+            <div class="add-study-list-head-actions">
+              <button type="button" id="addStudyItemInsertBelowButton" class="add-study-list-mini" disabled>下に挿入</button>
+              <button type="button" id="addStudyItemDeleteButton" class="add-study-list-mini add-study-list-mini-del" disabled>削除</button>
+              <button type="button" id="addStudyItemMoveUpButton" class="add-study-list-move-btn" disabled aria-label="上へ">▲</button>
+              <button type="button" id="addStudyItemMoveDownButton" class="add-study-list-move-btn" disabled aria-label="下へ">▼</button>
+            </div>
+          </div>
           <span id="addStudyItemListCount" class="add-study-list-count"></span>
         </div>
         <div id="addStudyItemList" class="add-study-list" role="list"></div>
       </div>
       <div class="add-study-form">
-        <div class="add-study-field-head">
+        <div class="add-study-field-row">
           <label class="add-study-label" for="addStudyItemQuestion">出題</label>
-          <div class="add-study-ssml-controls" id="addStudyItemQuestionSsmlControls">
-            <button type="button" class="field-yomigana-button" id="addStudyItemQuestionYomiganaButton">読み</button>
-            <button type="button" class="field-english-button" id="addStudyItemQuestionEnglishButton">英語</button>
-          </div>
+          <textarea id="addStudyItemQuestion" class="add-study-textarea" rows="3"></textarea>
         </div>
-        <textarea id="addStudyItemQuestion" class="add-study-textarea" rows="3"></textarea>
-        <div class="add-study-field-head">
+        <div class="add-study-field-row">
           <label class="add-study-label" for="addStudyItemAnswer">解答</label>
-          <div class="add-study-ssml-controls" id="addStudyItemAnswerSsmlControls">
-            <button type="button" class="field-yomigana-button" id="addStudyItemAnswerYomiganaButton">読み</button>
-            <button type="button" class="field-english-button" id="addStudyItemAnswerEnglishButton">英語</button>
+          <textarea id="addStudyItemAnswer" class="add-study-textarea" rows="5"></textarea>
+        </div>
+        <div class="add-study-note-head">
+          <button type="button" id="addStudyItemNoteToggle" class="add-study-disclosure" aria-expanded="false" aria-controls="addStudyItemNote">note（任意）</button>
+          <div class="add-study-ssml-controls" id="addStudyItemSsmlControls">
+            <button type="button" class="field-yomigana-button" id="addStudyItemYomiganaButton" disabled>読み</button>
+            <button type="button" class="field-english-button" id="addStudyItemEnglishButton" disabled>英語</button>
           </div>
         </div>
-        <textarea id="addStudyItemAnswer" class="add-study-textarea" rows="3"></textarea>
-        <button type="button" id="addStudyItemNoteToggle" class="add-study-disclosure" aria-expanded="false" aria-controls="addStudyItemNote">note（任意）</button>
         <textarea id="addStudyItemNote" class="add-study-textarea" rows="2" hidden></textarea>
         <div class="add-study-status-row">
           <p id="addStudyItemStatus" class="add-study-status" aria-live="polite"></p>
@@ -672,35 +678,35 @@
     </div>
   </div>
 
-  <script src="js/app-state.js?v=202610100745"></script>
-  <script src="js/app-gas.js?v=202610100745"></script>
-  <script src="js/app-auth.js?v=202610100745"></script>
-  <script src="js/app-settings.js?v=202610100745"></script>
-  <script src="js/app-question.js?v=202610100745"></script>
-  <script src="js/app-practice.js?v=202610100745"></script>
-  <script src="js/app-learning.js?v=202610100745"></script>
-  <script src="js/app-audio.js?v=202610100745"></script>
-  <script src="js/app-nav.js?v=202610100745"></script>
-  <script src="js/app-modal.js?v=202610100745"></script>
-  <script src="js/app-update.js?v=202610100745"></script>
-  <script src="js/app-boot.js?v=202610100745"></script>
-  <script src="js/app-category.js?v=202610100745"></script>
-  <script src="js/app-events.js?v=202610100745"></script>
-  <script src="js/app-menu.js?v=202610100745"></script>
-  <script src="js/app-session.js?v=202610100745"></script>
-  <script src="js/app-add-study.js?v=202610100745"></script>
-  <script src="js/app-sort.js?v=202610100745"></script>
-  <script src="js/app-study-load.js?v=202610100745"></script>
-  <script src="js/app-mode-page.js?v=202610100745"></script>
-  <script src="js/app-background.js?v=202610100745"></script>
-  <script src="js/app-error.js?v=202610100745"></script>
-  <script src="js/app-list.js?v=202610100745"></script>
-  <script src="js/app-list-nav.js?v=202610100745"></script>
-  <script src="js/app-field-edit.js?v=202610100745"></script>
-  <script src="js/app-format.js?v=202610100745"></script>
-  <script src="js/app-image.js?v=202610100745"></script>
-  <script src="js/app-sheet.js?v=202610100745"></script>
-  <script src="js/app-gesture.js?v=202610100745"></script>
+  <script src="js/app-state.js?v=202610102035"></script>
+  <script src="js/app-gas.js?v=202610102035"></script>
+  <script src="js/app-auth.js?v=202610102035"></script>
+  <script src="js/app-settings.js?v=202610102035"></script>
+  <script src="js/app-question.js?v=202610102035"></script>
+  <script src="js/app-practice.js?v=202610102035"></script>
+  <script src="js/app-learning.js?v=202610102035"></script>
+  <script src="js/app-audio.js?v=202610102035"></script>
+  <script src="js/app-nav.js?v=202610102035"></script>
+  <script src="js/app-modal.js?v=202610102035"></script>
+  <script src="js/app-update.js?v=202610102035"></script>
+  <script src="js/app-boot.js?v=202610102035"></script>
+  <script src="js/app-category.js?v=202610102035"></script>
+  <script src="js/app-events.js?v=202610102035"></script>
+  <script src="js/app-menu.js?v=202610102035"></script>
+  <script src="js/app-session.js?v=202610102035"></script>
+  <script src="js/app-add-study.js?v=202610102035"></script>
+  <script src="js/app-sort.js?v=202610102035"></script>
+  <script src="js/app-study-load.js?v=202610102035"></script>
+  <script src="js/app-mode-page.js?v=202610102035"></script>
+  <script src="js/app-background.js?v=202610102035"></script>
+  <script src="js/app-error.js?v=202610102035"></script>
+  <script src="js/app-list.js?v=202610102035"></script>
+  <script src="js/app-list-nav.js?v=202610102035"></script>
+  <script src="js/app-field-edit.js?v=202610102035"></script>
+  <script src="js/app-format.js?v=202610102035"></script>
+  <script src="js/app-image.js?v=202610102035"></script>
+  <script src="js/app-sheet.js?v=202610102035"></script>
+  <script src="js/app-gesture.js?v=202610102035"></script>
 </body>
 </html>
 

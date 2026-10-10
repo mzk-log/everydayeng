@@ -2624,10 +2624,24 @@ body:has(#screen2.active) .answer-text-edit {
 
 .add-study-list-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 4px;
+}
+
+.add-study-list-head-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.add-study-list-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .add-study-list-title {
@@ -2721,22 +2735,6 @@ body:has(#screen2.active) .answer-text-edit {
   color: #2e7d32;
 }
 
-.add-study-list-row-actions {
-  display: flex;
-  justify-content: flex-start;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.add-study-list-move {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  gap: 2px;
-  margin-left: 8px;
-}
-
 .add-study-list-move-btn {
   width: 32px;
   height: 32px;
@@ -2765,6 +2763,11 @@ body:has(#screen2.active) .answer-text-edit {
   cursor: pointer;
 }
 
+.add-study-list-mini:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .add-study-list-mini-del {
   border-color: #e0b4b4;
   color: #c0392b;
@@ -2787,19 +2790,51 @@ body:has(#screen2.active) .answer-text-edit {
   margin-top: auto;
 }
 
-/* 出題／解答：ラベル左・読み／英語を右に横並び（ボタン専用行を避ける） */
-.add-study-field-head {
+/* 出題／解答：見出しを左、入力欄を右。読み／英語は note 行の中央 */
+.add-study-field-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
   gap: 8px;
   margin: 6px 0 3px;
 }
 
-.add-study-field-head .add-study-label {
-  margin: 0;
-  flex: 1;
+.add-study-field-row .add-study-label {
+  flex: 0 0 auto;
+  margin: 8px 0 0;
+  white-space: nowrap;
+}
+
+.add-study-form .add-study-field-row .add-study-textarea {
+  flex: 1 1 auto;
+  width: auto;
   min-width: 0;
+}
+
+.add-study-form #addStudyItemQuestion {
+  min-height: 4.2em;
+  height: 4.8em;
+}
+
+.add-study-form #addStudyItemAnswer {
+  min-height: 6.6em;
+  height: 7.2em;
+}
+
+.add-study-note-head {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  margin: 4px 0 2px;
+}
+
+.add-study-note-head .add-study-disclosure {
+  justify-self: start;
+  margin: 0;
+}
+
+.add-study-note-head .add-study-ssml-controls {
+  grid-column: 2;
+  justify-self: center;
 }
 
 .add-study-ssml-controls {
@@ -2815,6 +2850,12 @@ body:has(#screen2.active) .answer-text-edit {
   min-width: 44px;
   padding: 3px 8px;
   font-size: 12px;
+}
+
+.add-study-ssml-controls .field-yomigana-button:disabled,
+.add-study-ssml-controls .field-english-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .add-study-form .add-study-textarea {
@@ -2982,6 +3023,20 @@ body:has(#screen2.active) .answer-text-edit {
     height: 2.8em;
     padding-top: 6px;
     padding-bottom: 6px;
+  }
+
+  .add-study-field-row .add-study-label {
+    margin-top: 6px;
+  }
+
+  .add-study-form #addStudyItemQuestion {
+    min-height: 2.8em;
+    height: 2.8em;
+  }
+
+  .add-study-form #addStudyItemAnswer {
+    min-height: 5.2em;
+    height: 5.2em;
   }
 
   .add-study-status-row {

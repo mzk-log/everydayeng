@@ -401,6 +401,30 @@ function setupEventListeners() {
   if (addStudyItemList) {
     addStudyItemList.addEventListener('click', handleAddStudyItemListClick);
   }
+  var addStudyItemInsertBelowButton = dom.addStudyItemInsertBelowButton;
+  if (addStudyItemInsertBelowButton) {
+    addStudyItemInsertBelowButton.addEventListener('click', function() {
+      requestAddStudyItemInsertBelow();
+    });
+  }
+  var addStudyItemDeleteButton = dom.addStudyItemDeleteButton;
+  if (addStudyItemDeleteButton) {
+    addStudyItemDeleteButton.addEventListener('click', function() {
+      requestAddStudyItemDeleteSelected();
+    });
+  }
+  var addStudyItemMoveUpButton = dom.addStudyItemMoveUpButton;
+  if (addStudyItemMoveUpButton) {
+    addStudyItemMoveUpButton.addEventListener('click', function() {
+      requestAddStudyItemMoveSelected('up');
+    });
+  }
+  var addStudyItemMoveDownButton = dom.addStudyItemMoveDownButton;
+  if (addStudyItemMoveDownButton) {
+    addStudyItemMoveDownButton.addEventListener('click', function() {
+      requestAddStudyItemMoveSelected('down');
+    });
+  }
   var addStudyItemSaveButton = dom.addStudyItemSaveButton;
   if (addStudyItemSaveButton) {
     addStudyItemSaveButton.addEventListener('click', function() {

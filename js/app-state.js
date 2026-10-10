@@ -147,7 +147,8 @@ var addStudy = {
   audioPlayField: '', // 'question' | 'answer'
   categorySettingsOpen: false, // 既存カテゴリの名前・並び
   noteOpen: false, // note 入力欄
-  discardAction: '', // close | back | category
+  ssmlField: '', // 読み／英語の対象。question | answer | ''
+  discardAction: '', // close | back | category | insertBelow
   pendingCategoryValue: '',
   committedCategoryValue: '',
   baseline: null, // 未保存判定の基準
@@ -351,16 +352,18 @@ var dom = {
   addStudyItemList: document.getElementById('addStudyItemList'),
   addStudyItemListCount: document.getElementById('addStudyItemListCount'),
   addStudyItemListWrap: document.getElementById('addStudyItemListWrap'),
+  addStudyItemInsertBelowButton: document.getElementById('addStudyItemInsertBelowButton'),
+  addStudyItemDeleteButton: document.getElementById('addStudyItemDeleteButton'),
+  addStudyItemMoveUpButton: document.getElementById('addStudyItemMoveUpButton'),
+  addStudyItemMoveDownButton: document.getElementById('addStudyItemMoveDownButton'),
   addStudyItemMenuButton: document.getElementById('addStudyItemMenuButton'),
   addStudyItemNewCategoryFields: document.getElementById('addStudyItemNewCategoryFields'),
   addStudyItemNote: document.getElementById('addStudyItemNote'),
   addStudyItemOverlay: document.getElementById('addStudyItemOverlay'),
   addStudyItemQTitle: document.getElementById('addStudyItemQTitle'),
   addStudyItemQuestion: document.getElementById('addStudyItemQuestion'),
-  addStudyItemQuestionYomiganaButton: document.getElementById('addStudyItemQuestionYomiganaButton'),
-  addStudyItemQuestionEnglishButton: document.getElementById('addStudyItemQuestionEnglishButton'),
-  addStudyItemAnswerYomiganaButton: document.getElementById('addStudyItemAnswerYomiganaButton'),
-  addStudyItemAnswerEnglishButton: document.getElementById('addStudyItemAnswerEnglishButton'),
+  addStudyItemYomiganaButton: document.getElementById('addStudyItemYomiganaButton'),
+  addStudyItemEnglishButton: document.getElementById('addStudyItemEnglishButton'),
   addStudyItemRenameButton: document.getElementById('addStudyItemRenameButton'),
   addStudyItemRenameFields: document.getElementById('addStudyItemRenameFields'),
   addStudyItemRenameName: document.getElementById('addStudyItemRenameName'),

@@ -595,10 +595,8 @@ function setupUpdateModeEventListeners() {
   });
 
   var addStudySsmlButtons = [
-    { id: 'addStudyItemQuestionYomiganaButton', field: 'question', kind: 'yomigana' },
-    { id: 'addStudyItemQuestionEnglishButton', field: 'question', kind: 'english' },
-    { id: 'addStudyItemAnswerYomiganaButton', field: 'answer', kind: 'yomigana' },
-    { id: 'addStudyItemAnswerEnglishButton', field: 'answer', kind: 'english' }
+    { id: 'addStudyItemYomiganaButton', kind: 'yomigana' },
+    { id: 'addStudyItemEnglishButton', kind: 'english' }
   ];
   addStudySsmlButtons.forEach(function(entry) {
     var btn = document.getElementById(entry.id);
@@ -607,16 +605,22 @@ function setupUpdateModeEventListeners() {
     }
     btn.onpointerdown = function(event) {
       event.preventDefault();
-      var editEl = document.getElementById(
-        entry.field === 'answer' ? 'addStudyItemAnswer' : 'addStudyItemQuestion'
-      );
-      rememberYomiganaSelection_(editEl);
+      var editEl = typeof addStudyItemSsmlFieldElement_ === 'function'
+        ? addStudyItemSsmlFieldElement_()
+        : null;
+      if (editEl) {
+        rememberYomiganaSelection_(editEl);
+      }
     };
     btn.onpointerup = function(event) {
       if (event.button != null && event.button !== 0) {
         return;
       }
-      insertAddStudyItemSsmlTag(entry.field, entry.kind);
+      var field = addStudy.ssmlField;
+      if (field !== 'question' && field !== 'answer') {
+        return;
+      }
+      insertAddStudyItemSsmlTag(field, entry.kind);
     };
   });
   bindYomiganaSelectionMemory_(document.getElementById('addStudyItemQuestion'));
