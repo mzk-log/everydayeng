@@ -63,7 +63,7 @@ function setQuestionMethod(method) {
   } else if (next === 'lastDate' || next === 'lastDateNormal') {
     loadLastDateModeData({ regenerate: true, forceFetch: true, pageLoading: true });
   } else {
-    // カテゴリ毎（ノーマル／シャッフル）：選択中カテゴリを再読込（シャッフル時は再シャッフル、ノーマルはシート順）
+    // カテゴリ毎（ノーマル／シャッフル）：選択中カテゴリを再読込（シャッフル時は再シャッフル、ノーマルは No 昇順）
     restoreCategoryModeListFromSelection();
   }
 }

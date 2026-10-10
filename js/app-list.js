@@ -76,7 +76,7 @@ function mergeCategoryItemsPreserveOrder(currentItems, freshItems) {
 
 /**
  * 取得済みカテゴリデータを画面へ反映
- * カテゴリ毎（シャッフル）時は表示用配列のみシャッフル（categoryCatalog.byNo の順は維持）
+ * カテゴリ毎（シャッフル）時は表示用配列のみシャッフル（categoryCatalog.byNo は No 昇順を維持）
  * @param {string|number} categoryNo
  * @param {Array} items
  */

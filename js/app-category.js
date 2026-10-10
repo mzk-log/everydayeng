@@ -104,11 +104,40 @@ function setMemoryAllStudyItems(items) {
   localStudy.items = items || [];
 }
 
+/**
+ * カテゴリ内の出題順。No 昇順、同値は ID 昇順。シートの行位置には依存しない
+ * @param {Object} a
+ * @param {Object} b
+ * @returns {number}
+ */
+function compareCategoryItemsByNo_(a, b) {
+  var na = Number(a && a.no);
+  var nb = Number(b && b.no);
+  if (isNaN(na)) na = 0;
+  if (isNaN(nb)) nb = 0;
+  if (na !== nb) {
+    return na - nb;
+  }
+  var ia = Number(a && a.id);
+  var ib = Number(b && b.id);
+  if (isNaN(ia)) ia = 0;
+  if (isNaN(ib)) ib = 0;
+  return ia - ib;
+}
+
+/**
+ * @param {Array} items
+ * @returns {Array}
+ */
+function sortCategoryItemsByNo_(items) {
+  return (items || []).slice().sort(compareCategoryItemsByNo_);
+}
+
 function getItemsForCategoryFromLocal(categoryNo) {
   var key = String(categoryNo);
-  return getMemoryAllStudyItems().filter(function(it) {
+  return sortCategoryItemsByNo_(getMemoryAllStudyItems().filter(function(it) {
     return it && String(it.category_no) === key;
-  });
+  }));
 }
 
 function rebuildCategoryDataByNoFromItems(items) {
@@ -120,6 +149,9 @@ function rebuildCategoryDataByNoFromItems(items) {
       categoryCatalog.byNo[key] = [];
     }
     categoryCatalog.byNo[key].push(it);
+  });
+  Object.keys(categoryCatalog.byNo).forEach(function(key) {
+    categoryCatalog.byNo[key] = sortCategoryItemsByNo_(categoryCatalog.byNo[key]);
   });
 }
 
