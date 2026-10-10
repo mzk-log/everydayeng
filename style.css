@@ -2923,16 +2923,18 @@ body:has(#screen2.active) .answer-text-edit {
 .add-study-status-row {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   margin: 6px 0 0;
   min-height: 1.2em;
 }
 
 .add-study-status {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   margin: 0;
   font-size: 13px;
+  text-align: center;
   color: #c0392b;
 }
 
@@ -2967,7 +2969,7 @@ body:has(#screen2.active) .answer-text-edit {
 
 .add-study-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 6px;
   margin-top: 6px;
   padding-bottom: 0;
