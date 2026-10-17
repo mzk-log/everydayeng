@@ -78,7 +78,14 @@ function setupEventListeners() {
   
   dom.homeButton.addEventListener('click', function() {
     if (this.disabled) return;
-    goToHome({ sfx: 'home' });
+    var options = { sfx: 'home' };
+    if (studyEnd.done && !isDurationQuestionMethod() && !isLastDateQuestionMethod()) {
+      var nextNo = nextVisibleCategoryNoAfter(studyEnd.categoryNo);
+      if (nextNo != null && nextNo !== '') {
+        options.advanceToCategoryNo = nextNo;
+      }
+    }
+    goToHome(options);
   });
   
   dom.plusButton.addEventListener('click', function() {

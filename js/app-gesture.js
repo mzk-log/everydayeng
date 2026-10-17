@@ -110,7 +110,7 @@ function bindLearningBodyGestures() {
         goToHome({ sfx: 'home' });
         return;
       }
-      goToHome({ sfx: 'charge', advanceToCategoryNo: nextNo });
+      goToHome({ sfx: 'home', advanceToCategoryNo: nextNo });
       return;
     }
     if (count >= 1) {
