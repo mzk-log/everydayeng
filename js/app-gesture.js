@@ -51,6 +51,8 @@ function bindLearningBodyGestures() {
   var homeStartY = 0;
   var homeMoved = false;
   var swallowAndroidMouseClick = false;
+  var swallowAndroidDblclick = false;
+  var androidDblclickTimer = null;
 
   function clearTapTimer_() {
     if (tapTimer) {
@@ -226,6 +228,25 @@ function bindLearningBodyGestures() {
     }
   }
 
+  function clearAndroidDblclickSwallow_() {
+    swallowAndroidDblclick = false;
+    if (androidDblclickTimer) {
+      clearTimeout(androidDblclickTimer);
+      androidDblclickTimer = null;
+    }
+  }
+
+  function armAndroidDblclickSwallow_() {
+    swallowAndroidDblclick = true;
+    if (androidDblclickTimer) {
+      clearTimeout(androidDblclickTimer);
+    }
+    androidDblclickTimer = setTimeout(function() {
+      androidDblclickTimer = null;
+      swallowAndroidDblclick = false;
+    }, 500);
+  }
+
   function fireHomeDoubleClickStart_() {
     var count = homeTapCount;
     homeTapCount = 0;
@@ -279,6 +300,7 @@ function bindLearningBodyGestures() {
     }
     if (isHomeScreenActive_()) {
       swallowAndroidMouseClick = true;
+      armAndroidDblclickSwallow_();
       homePressActive = true;
       homeMoved = false;
       homeStartX = e.clientX;
@@ -365,6 +387,15 @@ function bindLearningBodyGestures() {
       return;
     }
     swallowAndroidMouseClick = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+
+  document.addEventListener('dblclick', function(e) {
+    if (!swallowAndroidDblclick) {
+      return;
+    }
+    clearAndroidDblclickSwallow_();
     e.preventDefault();
     e.stopPropagation();
   }, true);
