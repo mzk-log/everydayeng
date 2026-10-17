@@ -193,8 +193,15 @@ function applyStudyItemsToApp(items, options) {
         resetListDisplay();
       }
     }
+    if (!skipLearningArrays && !isDurationQuestionMethod() && !isLastDateQuestionMethod() && !valueToRestore) {
+      valueToRestore = resolveStartupCategoryNo();
+    }
     select.disabled = false;
     populateCategorySelectOptions(select, valueToRestore);
+  }
+  if (!skipLearningArrays && !isDurationQuestionMethod() && !isLastDateQuestionMethod() &&
+      valueToRestore && (categoryCatalog.no == null || categoryCatalog.no === '')) {
+    categoryCatalog.no = valueToRestore;
   }
   var learningSelectContainer = dom.learningCategorySelectContainer;
   if (learningSelectContainer && learningSelectContainer.style.display !== 'none' && studyEnd.done) {
@@ -377,6 +384,67 @@ function isEndCategory(cat) {
  * 表示カテゴリ設定の localStorage キー（メール単位）
  * @returns {string}
  */
+/**
+ * HOMEで最後に選んだカテゴリ（メール単位。端末のみ）
+ * @returns {string}
+ */
+function getLastHomeCategoryStorageKey_() {
+  var email = googleAuth.email || '';
+  try {
+    if (!email) {
+      email = localStorage.getItem('userEmail') || '';
+    }
+  } catch (e) {
+    email = '';
+  }
+  return 'lastHomeCategoryNo:' + String(email);
+}
+
+/**
+ * カテゴリ毎の HOME 選択を覚える
+ * @param {string|number} no
+ */
+function saveLastHomeCategoryNo(no) {
+  if (no == null || no === '') {
+    return;
+  }
+  if (isDurationQuestionMethod() || isLastDateQuestionMethod()) {
+    return;
+  }
+  if (!isCategoryNoVisible(no)) {
+    return;
+  }
+  try {
+    localStorage.setItem(getLastHomeCategoryStorageKey_(), String(no));
+  } catch (e) {
+    // ignore
+  }
+}
+
+/**
+ * 起動時に選ぶカテゴリ。記録が使えるときはそれ、なければ表示中の先頭
+ * @returns {string}
+ */
+function resolveStartupCategoryNo() {
+  var saved = '';
+  try {
+    saved = localStorage.getItem(getLastHomeCategoryStorageKey_()) || '';
+  } catch (e) {
+    saved = '';
+  }
+  if (saved && isCategoryNoVisible(saved)) {
+    var savedCat = findCategoryByNo(saved);
+    if (savedCat && !isEndCategory(savedCat)) {
+      return String(saved);
+    }
+  }
+  var visible = getVisibleCategories();
+  if (!visible.length) {
+    return '';
+  }
+  return String(visible[0].no);
+}
+
 function getVisibleCategoriesStorageKey() {
   var email = googleAuth.email || '';
   try {
@@ -752,7 +820,14 @@ function refreshVisibleCategoriesRuntimeUi() {
       questionList.original = [];
       hideCategoryLoadingSpinner();
       if (!isDurationQuestionMethod() && !isLastDateQuestionMethod()) {
-        resetListDisplay();
+        var fallbackNo = resolveStartupCategoryNo();
+        if (fallbackNo && select) {
+          categoryCatalog.no = fallbackNo;
+          populateCategorySelectOptions(select, fallbackNo);
+          loadCategoryData(fallbackNo);
+        } else {
+          resetListDisplay();
+        }
       }
     }
 

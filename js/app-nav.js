@@ -1317,6 +1317,7 @@ function stopUiClickSfx() {
   stopSfxAudioElement_(uiSfx.start);
   stopSfxAudioElement_(uiSfx.retry);
   stopSfxAudioElement_(uiSfx.charge);
+  stopSfxAudioElement_(uiSfx.home);
   if (typeof stopStartPrepareWaitingSfx === 'function') {
     stopStartPrepareWaitingSfx({ immediate: true });
   }
@@ -1371,6 +1372,7 @@ function preloadUiClickSfx() {
     ensureStartSfxAudio().load();
     ensureRetrySfxAudio().load();
     ensureChargeSfxAudio().load();
+    ensureHomeSfxAudio().load();
     ensureWaitingSfxAudio().load();
   } catch (e) {}
 }
@@ -1426,6 +1428,9 @@ function playButtonSfxAudio_(audio) {
   }
   if (audio !== uiSfx.charge) {
     stopSfxAudioElement_(uiSfx.charge);
+  }
+  if (audio !== uiSfx.home) {
+    stopSfxAudioElement_(uiSfx.home);
   }
   if (audio !== uiSfx.waiting && typeof stopStartPrepareWaitingSfx === 'function') {
     stopStartPrepareWaitingSfx({ immediate: true });
@@ -1490,6 +1495,15 @@ function ensureChargeSfxAudio() {
 
 function playChargeSfx() {
   playButtonSfxAudio_(ensureChargeSfxAudio());
+}
+
+function ensureHomeSfxAudio() {
+  uiSfx.home = ensureStaticSfxAudio_(uiSfx.home, HOME_SFX_URL);
+  return uiSfx.home;
+}
+
+function playHomeSfx() {
+  playButtonSfxAudio_(ensureHomeSfxAudio());
 }
 
 function ensureWaitingSfxAudio() {
@@ -1882,8 +1896,39 @@ function hideCompletionMessage() {
   hideCompletionListSection();
 }
 
+/**
+ * 完了カテゴリの次（表示中の並び）。最後の次は先頭。1件ならそのカテゴリ。
+ * @param {string|number} completedNo
+ * @returns {string|number|null}
+ */
+function nextVisibleCategoryNoAfter(completedNo) {
+  var visible = getVisibleCategories();
+  if (!visible.length) {
+    return null;
+  }
+  var idx = -1;
+  for (var i = 0; i < visible.length; i++) {
+    if (String(visible[i].no) === String(completedNo)) {
+      idx = i;
+      break;
+    }
+  }
+  var next = visible[(idx + 1) % visible.length];
+  return next ? next.no : null;
+}
+
 // ホームに戻る
-function goToHome() {
+function clearHomeTextSelection() {
+  function clearOnce() {
+    var sel = window.getSelection ? window.getSelection() : null;
+    if (sel && sel.removeAllRanges) sel.removeAllRanges();
+  }
+  clearOnce();
+  requestAnimationFrame(clearOnce);
+}
+
+function goToHome(options) {
+  options = options || {};
   if (isCategoryTransitionInProgress) return;
   if (isFieldAudioBusy()) return;
   
@@ -1904,6 +1949,7 @@ function goToHome() {
   // 画面遷移
   var screen2 = dom.screen2;
   var screen1 = dom.screen1;
+  var leftLearningScreen = !!(screen2 && screen2.classList.contains('active'));
   if (screen2) screen2.classList.remove('active');
   if (screen1) screen1.classList.add('active');
   
@@ -1919,8 +1965,22 @@ function goToHome() {
   // 出題画面HOMEは今回学習分を維持。完了後HOMEはカテゴリ全問へ戻す
   var homeFromIncompleteLearning = !studyEnd.done;
   var incompleteSessionItems = homeFromIncompleteLearning ? categoryCatalog.items.slice() : [];
-  if (!homeFromIncompleteLearning && questionList.original.length > 0 && !isCrossCategoryQuestionMethod()) {
-    categoryCatalog.items = questionList.original.slice();
+  if (!homeFromIncompleteLearning && !isCrossCategoryQuestionMethod()) {
+    var shownNo = categoryCatalog.no;
+    if (options.advanceToCategoryNo != null && options.advanceToCategoryNo !== '') {
+      shownNo = options.advanceToCategoryNo;
+      categoryCatalog.no = shownNo;
+    }
+    var sameCompleted = studyEnd.categoryNo != null && String(shownNo) === String(studyEnd.categoryNo);
+    if (sameCompleted && questionList.original.length > 0) {
+      categoryCatalog.items = questionList.original.slice();
+    } else if (shownNo != null && shownNo !== '') {
+      var shownItems = getItemsForCategoryFromLocal(shownNo).slice();
+      if (isCategoryShuffleQuestionMethod()) {
+        shownItems = shuffleArray(shownItems);
+      }
+      categoryCatalog.items = shownItems;
+    }
   } else if (homeFromIncompleteLearning) {
     categoryCatalog.items = incompleteSessionItems;
   }
@@ -1981,6 +2041,18 @@ function goToHome() {
   
   updateLearningLockedSideMenuControls();
   ensureAudioPrefetchInventory();
+  if (!isDurationQuestionMethod() && !isLastDateQuestionMethod() &&
+      categoryCatalog.no != null && categoryCatalog.no !== '') {
+    saveLastHomeCategoryNo(categoryCatalog.no);
+  }
+
+  if (options.sfx === 'charge') {
+    playChargeSfx();
+  } else if (options.sfx === 'home') {
+    playHomeSfx();
+  }
+
+  if (leftLearningScreen) clearHomeTextSelection();
   
   // 学習時間はリセットしない（継続）
 }

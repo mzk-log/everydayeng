@@ -78,7 +78,7 @@ function setupEventListeners() {
   
   dom.homeButton.addEventListener('click', function() {
     if (this.disabled) return;
-    goToHome();
+    goToHome({ sfx: 'home' });
   });
   
   dom.plusButton.addEventListener('click', function() {

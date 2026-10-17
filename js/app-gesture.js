@@ -43,6 +43,14 @@ function bindLearningBodyGestures() {
   var moved = false;
   var tapCount = 0;
   var tapTimer = null;
+  var sequenceFromJ09 = true;
+  var homeTapCount = 0;
+  var homeTapTimer = null;
+  var homePressActive = false;
+  var homeStartX = 0;
+  var homeStartY = 0;
+  var homeMoved = false;
+  var swallowAndroidMouseClick = false;
 
   function clearTapTimer_() {
     if (tapTimer) {
@@ -65,14 +73,24 @@ function bindLearningBodyGestures() {
     return !!(s2 && s2.classList.contains('active'));
   }
 
+  function isPerCategoryQuestionMethod_() {
+    return !isDurationQuestionMethod() && !isLastDateQuestionMethod();
+  }
+
   function fireBodyTapSequence_() {
     var count = tapCount;
+    var fromJ09 = sequenceFromJ09;
     tapTimer = null;
     tapCount = 0;
+    sequenceFromJ09 = true;
     if (!isLearningScreenActive() || updateMode.active) {
       return;
     }
-    if (count >= 3) {
+    if (count >= 4) {
+      goToHome({ sfx: 'home' });
+      return;
+    }
+    if (count === 3) {
       var plus = dom.plusButton;
       if (!plus || plus.disabled) {
         return;
@@ -82,6 +100,15 @@ function bindLearningBodyGestures() {
     }
     if (count === 2 && !studyEnd.done) {
       replayFieldFromBodyDoubleTap_();
+      return;
+    }
+    if (count === 2 && studyEnd.done && fromJ09 && isPerCategoryQuestionMethod_()) {
+      var nextNo = nextVisibleCategoryNoAfter(studyEnd.categoryNo);
+      if (nextNo == null) {
+        goToHome({ sfx: 'home' });
+        return;
+      }
+      goToHome({ sfx: 'charge', advanceToCategoryNo: nextNo });
       return;
     }
     if (count >= 1) {
@@ -143,7 +170,8 @@ function bindLearningBodyGestures() {
       return;
     }
     tapCount += 1;
-    if (tapCount >= 3) {
+    sequenceFromJ09 = false;
+    if (tapCount >= 4) {
       fireBodyTapSequence_();
       return;
     }
@@ -158,6 +186,188 @@ function bindLearningBodyGestures() {
     pressActive = false;
     armBodyTapTimer_();
   });
+
+  function isAndroidMouseEvent_(e) {
+    if (!e || e.pointerType !== 'mouse') {
+      return false;
+    }
+    if (typeof e.button === 'number' && e.button !== 0) {
+      return false;
+    }
+    return /Android/i.test(navigator.userAgent || '');
+  }
+
+  function isShownOverlay_(el) {
+    if (!el) {
+      return false;
+    }
+    if (el.classList && el.classList.contains('active')) {
+      return true;
+    }
+    return !!(el.style && el.style.display && el.style.display !== 'none');
+  }
+
+  function isAndroidMouseBlockedByOverlay_() {
+    return isShownOverlay_(dom.modalOverlay) ||
+      isShownOverlay_(dom.addStudyItemOverlay) ||
+      isShownOverlay_(dom.visibleCategoriesOverlay) ||
+      isShownOverlay_(dom.googleLoginOverlay);
+  }
+
+  function isHomeScreenActive_() {
+    var s1 = dom.screen1;
+    return !!(s1 && s1.classList.contains('active'));
+  }
+
+  function clearHomeTapTimer_() {
+    if (homeTapTimer) {
+      clearTimeout(homeTapTimer);
+      homeTapTimer = null;
+    }
+  }
+
+  function fireHomeDoubleClickStart_() {
+    var count = homeTapCount;
+    homeTapCount = 0;
+    homeTapTimer = null;
+    if (count < 2 || !isHomeScreenActive_()) {
+      return;
+    }
+    var btn = dom.startButton;
+    if (!btn || btn.disabled) {
+      return;
+    }
+    startLearningAfterAudioPrepare({ playStartIfNoPrepare: true });
+  }
+
+  function armHomeTapTimer_() {
+    clearHomeTapTimer_();
+    if (homeTapCount <= 0) {
+      return;
+    }
+    homeTapTimer = setTimeout(function() {
+      homeTapCount = 0;
+      homeTapTimer = null;
+    }, LEARNING_BODY_DOUBLE_TAP_MS);
+  }
+
+  function noteAndroidLearningTap_() {
+    if (!pressActive) {
+      return;
+    }
+    var wasMoved = moved;
+    pressActive = false;
+    if (!isLearningScreenActive() || updateMode.active) {
+      armBodyTapTimer_();
+      return;
+    }
+    if (wasMoved) {
+      armBodyTapTimer_();
+      return;
+    }
+    tapCount += 1;
+    if (tapCount >= 4) {
+      fireBodyTapSequence_();
+      return;
+    }
+    armBodyTapTimer_();
+  }
+
+  document.addEventListener('pointerdown', function(e) {
+    if (!isAndroidMouseEvent_(e) || isAndroidMouseBlockedByOverlay_()) {
+      return;
+    }
+    if (isHomeScreenActive_()) {
+      swallowAndroidMouseClick = true;
+      homePressActive = true;
+      homeMoved = false;
+      homeStartX = e.clientX;
+      homeStartY = e.clientY;
+      clearHomeTapTimer_();
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (!isLearningScreenActive() || updateMode.active) {
+      return;
+    }
+    swallowAndroidMouseClick = true;
+    pressActive = true;
+    moved = false;
+    startX = e.clientX;
+    startY = e.clientY;
+    clearTapTimer_();
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+
+  document.addEventListener('pointermove', function(e) {
+    if (homePressActive) {
+      var hdx = e.clientX - homeStartX;
+      var hdy = e.clientY - homeStartY;
+      if ((hdx * hdx + hdy * hdy) > (LEARNING_GESTURE_MOVE_PX * LEARNING_GESTURE_MOVE_PX)) {
+        homeMoved = true;
+      }
+    }
+    if (!pressActive || !isAndroidMouseEvent_(e)) {
+      return;
+    }
+    var dx = e.clientX - startX;
+    var dy = e.clientY - startY;
+    if ((dx * dx + dy * dy) > (LEARNING_GESTURE_MOVE_PX * LEARNING_GESTURE_MOVE_PX)) {
+      moved = true;
+    }
+  }, true);
+
+  document.addEventListener('pointerup', function(e) {
+    if (!isAndroidMouseEvent_(e)) {
+      return;
+    }
+    if (homePressActive) {
+      var wasHomeMoved = homeMoved;
+      homePressActive = false;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!isHomeScreenActive_() || wasHomeMoved) {
+        armHomeTapTimer_();
+        return;
+      }
+      homeTapCount += 1;
+      if (homeTapCount >= 2) {
+        fireHomeDoubleClickStart_();
+        return;
+      }
+      armHomeTapTimer_();
+      return;
+    }
+    if (!swallowAndroidMouseClick && !pressActive) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    noteAndroidLearningTap_();
+  }, true);
+
+  document.addEventListener('pointercancel', function(e) {
+    if (homePressActive) {
+      homePressActive = false;
+      armHomeTapTimer_();
+    }
+    if (!pressActive || !isAndroidMouseEvent_(e)) {
+      return;
+    }
+    pressActive = false;
+    armBodyTapTimer_();
+  }, true);
+
+  document.addEventListener('click', function(e) {
+    if (!swallowAndroidMouseClick) {
+      return;
+    }
+    swallowAndroidMouseClick = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
 }
 
 function updateFieldEditPencils() {

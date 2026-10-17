@@ -94,6 +94,7 @@ function applyLoadedCategoryData(categoryNo, items) {
   updateListNavButtons();
   
   updateStartButtonEnabled();
+  saveLastHomeCategoryNo(categoryNo);
   
   var listContainer = dom.listContainer;
   if (listContainer) listContainer.style.pointerEvents = 'auto';

@@ -97,6 +97,7 @@ var UI_CLICK_SFX_URL = 'audio/buho.mp3';
 var START_SFX_URL = 'audio/start.mp3';
 var RETRY_SFX_URL = 'audio/retry.mp3';
 var CHARGE_SFX_URL = 'audio/charge.mp3';
+var HOME_SFX_URL = 'audio/home.mp3';
 var WAITING_SFX_URL = 'audio/waiting.mp3';
 var UI_CLICK_SFX_VOLUME = 1.0;
 var WAITING_SFX_VOLUME = 0.28; // Start前準備の待ち音（控え目）
@@ -111,6 +112,7 @@ var uiSfx = {
   start: null, // START効果音（使い回し。Pages静的ファイル）
   retry: null, // リトライ効果音（使い回し。Pages静的ファイル）
   charge: null, // START待ち効果音（使い回し。Pages静的ファイル）
+  home: null, // HOME復帰効果音（使い回し。Pages静的ファイル）
   waiting: null, // Start前準備の待ち音（audio/waiting.mp3）
   waitingLoopActive: false,
   waitingFadeTimer: null,
