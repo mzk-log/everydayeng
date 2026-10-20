@@ -2644,6 +2644,10 @@ body:has(#screen2.active) .answer-text-edit {
   gap: 4px;
 }
 
+.add-study-split {
+  margin: 0 0 8px;
+}
+
 .add-study-list-title {
   font-size: 13px;
   color: #333;
@@ -2798,6 +2802,27 @@ body:has(#screen2.active) .answer-text-edit {
   margin: 6px 0 3px;
 }
 
+.add-study-field-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tts-length-warning {
+  margin: 4px 0 0;
+  color: #c0392b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.tts-length-warning[hidden] {
+  display: none;
+}
+
+textarea.is-tts-too-long {
+  border-color: #c0392b;
+}
+
 .add-study-field-row .add-study-label {
   flex: 0 0 auto;
   margin: 8px 0 0;
@@ -2805,8 +2830,8 @@ body:has(#screen2.active) .answer-text-edit {
 }
 
 .add-study-form .add-study-field-row .add-study-textarea {
-  flex: 1 1 auto;
-  width: auto;
+  display: block;
+  width: 100%;
   min-width: 0;
 }
 

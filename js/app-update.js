@@ -37,6 +37,7 @@ function startUpdateMode(displayTarget) {
     updateMode.selectionEnd = null;
     bindYomiganaSelectionMemory_(editEl);
     editEl.focus();
+    refreshTtsLengthWarningFor(editEl);
   }
   
   var controlsEl = document.getElementById(ui.controlsId);
@@ -114,6 +115,7 @@ function endUpdateMode(restoreOriginal) {
     if (editEl) {
       clearYomiganaSelectionMemory_(editEl);
       editEl.style.display = 'none';
+      refreshTtsLengthWarningFor(editEl, true);
     }
     var controlsEl = document.getElementById(ui.controlsId);
     if (controlsEl) {
@@ -471,6 +473,7 @@ function insertSsmlTagIntoTextarea_(editEl, kind) {
   storeSsmlCursorAfterInsert_(editEl, cursor);
   editEl.focus();
   editEl.setSelectionRange(cursor, cursor);
+  refreshTtsLengthWarningFor(editEl);
 }
 
 /**
@@ -528,6 +531,15 @@ function insertAddStudyItemSsmlTag(field, kind) {
 
 // 更新モード用のイベントリスナーを設定
 function setupUpdateModeEventListeners() {
+  ['questionTextEdit', 'answerTextEdit'].forEach(function(id) {
+    var edit = document.getElementById(id);
+    if (edit && edit.getAttribute('data-tts-warn') !== '1') {
+      edit.setAttribute('data-tts-warn', '1');
+      edit.addEventListener('input', function() {
+        refreshTtsLengthWarningFor(edit);
+      });
+    }
+  });
   var updateButtonIds = ['questionUpdateButton', 'answerUpdateButton', 'noteUpdateButton'];
   updateButtonIds.forEach(function(id) {
     var button = document.getElementById(id);
@@ -838,6 +850,7 @@ function processRecordedAudio() {
           var newCursorPos = cursorPos + data.text.length;
           answerTextEdit.setSelectionRange(newCursorPos, newCursorPos);
           answerTextEdit.focus();
+          refreshTtsLengthWarningFor(answerTextEdit);
         }
       } else {
         showError('音声認識に失敗しました: ' + (data.error || 'Unknown error'));

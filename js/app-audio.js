@@ -1630,6 +1630,52 @@ function normalizeTextForTTS(text) {
   return normalized;
 }
 
+var TTS_TEXT_MAX_LENGTH = 1500;
+
+/**
+ * 出題／解答が読み上げ上限を超えたら、入力欄の下へ知らせる
+ * @param {HTMLTextAreaElement|null} textarea
+ * @param {HTMLElement|null} warningEl
+ * @param {boolean} [forceHide]
+ */
+function refreshTtsLengthWarning(textarea, warningEl, forceHide) {
+  if (!warningEl) {
+    return;
+  }
+  var n = normalizeTextForTTS(textarea ? textarea.value : '').length;
+  var over = !forceHide && n > TTS_TEXT_MAX_LENGTH;
+  warningEl.hidden = !over;
+  warningEl.textContent = over
+    ? (TTS_TEXT_MAX_LENGTH + '文字を超えています（' + n + '文字）。このままでは読み上げできません。')
+    : '';
+  if (textarea) {
+    textarea.classList.toggle('is-tts-too-long', over);
+  }
+}
+
+function ttsLengthWarningElFor_(textarea) {
+  if (!textarea) {
+    return null;
+  }
+  if (textarea.id === 'questionTextEdit') {
+    return dom.questionTtsLengthWarning;
+  }
+  if (textarea.id === 'answerTextEdit') {
+    return dom.answerTtsLengthWarning;
+  }
+  if (textarea.id === 'addStudyItemQuestion') {
+    return dom.addStudyItemQuestionTtsWarning;
+  }
+  if (textarea.id === 'addStudyItemAnswer') {
+    return dom.addStudyItemAnswerTtsWarning;
+  }
+  return null;
+}
+
+function refreshTtsLengthWarningFor(textarea, forceHide) {
+  refreshTtsLengthWarning(textarea, ttsLengthWarningElFor_(textarea), forceHide);
+}
+
 /**
  * テキストをハッシュ化（localStorageのキー用）
  */

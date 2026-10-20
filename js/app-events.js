@@ -432,6 +432,22 @@ function setupEventListeners() {
       requestAddStudyItemMoveSelected('down');
     });
   }
+  var addStudyItemSplitButton = dom.addStudyItemSplitButton;
+  if (addStudyItemSplitButton) {
+    addStudyItemSplitButton.addEventListener('click', function() {
+      requestAddStudyItemSplit();
+    });
+  }
+  var addStudyItemSplitName = dom.addStudyItemSplitName;
+  if (addStudyItemSplitName) {
+    addStudyItemSplitName.addEventListener('input', function() {
+      if (addStudy.confirmKind !== 'split') {
+        return;
+      }
+      refreshAddStudyItemSplitStatus_();
+      syncAddStudyItemInputLock();
+    });
+  }
   var addStudyItemSaveButton = dom.addStudyItemSaveButton;
   if (addStudyItemSaveButton) {
     addStudyItemSaveButton.addEventListener('click', function() {
@@ -493,7 +509,12 @@ function setupEventListeners() {
   for (var li = 0; li < addStudyItemLiveIds.length; li++) {
     var liveEl = document.getElementById(addStudyItemLiveIds[li]);
     if (liveEl) {
-      liveEl.addEventListener('input', syncAddStudyItemInputLock);
+      liveEl.addEventListener('input', function() {
+        syncAddStudyItemInputLock();
+        if (this.id === 'addStudyItemQuestion' || this.id === 'addStudyItemAnswer') {
+          refreshTtsLengthWarningFor(this);
+        }
+      });
     }
   }
   var addStudyItemCancelButton = dom.addStudyItemCancelButton;

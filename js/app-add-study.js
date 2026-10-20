@@ -171,6 +171,8 @@ function resetAddStudyItemEditor(options) {
     }
   }
   syncAddStudyItemEditorUi();
+  refreshTtsLengthWarningFor(dom.addStudyItemQuestion);
+  refreshTtsLengthWarningFor(dom.addStudyItemAnswer);
   if (options.clearFields) {
     markAddStudyItemClean_();
   }
@@ -332,6 +334,7 @@ function syncAddStudyItemEditorUi() {
   syncAddStudyItemInputLock();
   syncAddStudyItemRenameFields(false);
   syncAddStudyItemReorderFields(false);
+  syncAddStudyItemSplitFields_();
   syncAddStudyItemCategorySettingsUi_();
   syncAddStudyItemNoteUi_();
   syncAddStudyItemSsmlControls_();
@@ -626,6 +629,57 @@ function validateAddStudyItemRenameName(name, currentName) {
   return '';
 }
 
+function validateAddStudyItemSplitName(name) {
+  var next = String(name || '').trim();
+  if (!next) {
+    return 'カテゴリ名を入力してください。';
+  }
+  if (next === 'END') {
+    return 'このカテゴリ名は使えません。';
+  }
+  var cats = getConfigurableCategories();
+  for (var i = 0; i < cats.length; i++) {
+    if (String(cats[i].name || '').trim().toLowerCase() === next.toLowerCase()) {
+      return 'このカテゴリ名は既にあります。';
+    }
+  }
+  return '';
+}
+
+function syncAddStudyItemSplitFields_() {
+  var wrap = dom.addStudyItemSplitFields;
+  if (!wrap) {
+    return;
+  }
+  wrap.hidden = !(addStudy.formConfirming && addStudy.confirmKind === 'split');
+}
+
+function refreshAddStudyItemSplitStatus_() {
+  var name = dom.addStudyItemSplitName ? String(dom.addStudyItemSplitName.value || '').trim() : '';
+  setAddStudyItemAskStatus(
+    'No.' + addStudy.pendingSplitFromNo + '以降（' + addStudy.pendingSplitCount + '問）を『' +
+    (name || '…') + '』に分けますか？'
+  );
+}
+
+function canSplitAddStudySelection_() {
+  if (addStudy.mode !== 'update' || !addStudy.editingId) {
+    return false;
+  }
+  var item = findAddStudyItemById(addStudy.editingId);
+  if (!item || String(item.category || '').trim() === 'END') {
+    return false;
+  }
+  var selectedNo = Number(item.no) || 0;
+  var items = getAddStudyItemItemsSorted(item.category_no);
+  for (var i = 0; i < items.length; i++) {
+    if ((Number(items[i] && items[i].no) || 0) > selectedNo) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function syncAddStudyItemInputLock() {
   var enabled = isAddStudyItemCategoryChosen();
   var formLocked = isAddStudyItemFormLocked_();
@@ -644,6 +698,10 @@ function syncAddStudyItemInputLock() {
   var renameInput = dom.addStudyItemRenameName;
   if (renameInput) {
     renameInput.disabled = formLocked || audioLocked || !isAddStudyItemRenameVisible();
+  }
+  var splitNameInput = dom.addStudyItemSplitName;
+  if (splitNameInput) {
+    splitNameInput.disabled = !!addStudy.formBusy || addStudy.confirmKind !== 'split';
   }
   var newIds = ['addStudyItemCategoryName', 'addStudyItemQTitle', 'addStudyItemATitle'];
   for (var n = 0; n < newIds.length; n++) {
@@ -665,6 +723,9 @@ function syncAddStudyItemInputLock() {
     if (addStudy.formBusy || audioLocked ||
         (addStudy.formConfirming && (addStudy.confirmKind === 'rename' || addStudy.confirmKind === 'reorder'))) {
       saveBtn.disabled = true;
+    } else if (addStudy.formConfirming && addStudy.confirmKind === 'split') {
+      var splitName = dom.addStudyItemSplitName;
+      saveBtn.disabled = !!validateAddStudyItemSplitName(splitName ? splitName.value : '');
     } else if (addStudy.formConfirming) {
       saveBtn.disabled = false;
     } else {
@@ -985,6 +1046,7 @@ function syncAddStudyListHeadActions_() {
   var delBtn = dom.addStudyItemDeleteButton;
   var upBtn = dom.addStudyItemMoveUpButton;
   var downBtn = dom.addStudyItemMoveDownButton;
+  var splitBtn = dom.addStudyItemSplitButton;
   if (!insertBtn || !delBtn || !upBtn || !downBtn) {
     return;
   }
@@ -1009,6 +1071,9 @@ function syncAddStudyListHeadActions_() {
   delBtn.disabled = !canAct;
   upBtn.disabled = !canAct || index === 0;
   downBtn.disabled = !canAct || index < 0 || index === count - 1;
+  if (splitBtn) {
+    splitBtn.disabled = !canAct || !canSplitAddStudySelection_();
+  }
 }
 
 function requestAddStudyItemInsertBelow() {
@@ -1084,6 +1149,8 @@ function beginAddStudyItemUpdate(id) {
   if (q) q.value = item.question != null ? String(item.question) : '';
   if (a) a.value = item.answer != null ? String(item.answer) : '';
   if (n) n.value = item.note != null ? String(item.note) : '';
+  refreshTtsLengthWarningFor(q);
+  refreshTtsLengthWarningFor(a);
   addStudy.categorySettingsOpen = false;
   addStudy.noteOpen = !!(n && String(n.value || '').trim());
   syncAddStudyItemEditorUi();
@@ -1107,6 +1174,8 @@ function beginAddStudyItemInsert(id) {
   if (q) q.value = '';
   if (a) a.value = '';
   if (n) n.value = '';
+  refreshTtsLengthWarningFor(q);
+  refreshTtsLengthWarningFor(a);
   addStudy.categorySettingsOpen = false;
   addStudy.noteOpen = false;
   syncAddStudyItemEditorUi();
@@ -1128,6 +1197,8 @@ function beginAddStudyItemInsertStart() {
   if (q) q.value = '';
   if (a) a.value = '';
   if (n) n.value = '';
+  refreshTtsLengthWarningFor(q);
+  refreshTtsLengthWarningFor(a);
   addStudy.categorySettingsOpen = false;
   addStudy.noteOpen = false;
   syncAddStudyItemEditorUi();
@@ -1203,7 +1274,7 @@ function applyAddStudyItemCategorySelection_() {
 /**
  * 未保存なら確認してから破棄動作を行う
  * @param {'close'|'back'|'category'} action
- * @param {'close'|'back'|'category'|'insertBelow'} action
+ * @param {'close'|'back'|'category'|'insertBelow'|'split'} action
  */
 function requestAddStudyItemDiscard_(action, categoryValue) {
   if (addStudy.formBusy) {
@@ -1237,7 +1308,54 @@ function requestAddStudyItemDiscard_(action, categoryValue) {
  * @param {'close'|'back'|'category'|'insertBelow'} action
  * @param {string} [categoryValue]
  */
+function openAddStudyItemSplitConfirm_() {
+  var item = findAddStudyItemById(addStudy.editingId);
+  if (!item) {
+    return;
+  }
+  var selectedNo = Number(item.no) || 0;
+  var items = getAddStudyItemItemsSorted(item.category_no);
+  var moved = [];
+  for (var i = 0; i < items.length; i++) {
+    if ((Number(items[i] && items[i].no) || 0) > selectedNo) {
+      moved.push(items[i]);
+    }
+  }
+  if (!moved.length) {
+    return;
+  }
+  var first = Number(moved[0].no) || 0;
+  var last = Number(moved[moved.length - 1].no) || first;
+  var currentName = currentAddStudyItemCategoryName();
+  addStudy.pendingSplitAfterNo = selectedNo;
+  addStudy.pendingSplitFromNo = first;
+  addStudy.pendingSplitCount = moved.length;
+  var input = dom.addStudyItemSplitName;
+  if (input) {
+    input.value = (currentName ? currentName + ' ' : '') + first + '-' + last;
+  }
+  addStudy.formConfirming = true;
+  addStudy.confirmKind = 'split';
+  refreshAddStudyItemSplitStatus_();
+  syncAddStudyItemEditorUi();
+}
+
+function requestAddStudyItemSplit() {
+  if (isAddStudyItemOpsLocked_() || addStudy.awaitingAudioPrepare || !canSplitAddStudySelection_()) {
+    return;
+  }
+  requestAddStudyItemDiscard_('split');
+}
+
 function runAddStudyItemDiscardAction_(action, categoryValue) {
+  if (action === 'split') {
+    var splitId = addStudy.editingId;
+    if (splitId) {
+      beginAddStudyItemUpdate(splitId);
+      openAddStudyItemSplitConfirm_();
+    }
+    return;
+  }
   if (action === 'insertBelow') {
     if (addStudy.editingId) {
       beginAddStudyItemInsert(addStudy.editingId);
@@ -1754,7 +1872,144 @@ function submitAddStudyItemConfirm() {
     submitUpdateStudyItem();
     return;
   }
+  if (addStudy.confirmKind === 'split') {
+    submitSplitStudyCategory();
+    return;
+  }
   submitAddStudyItem();
+}
+
+function ensureSplitCategoryVisible_(categoryNo) {
+  if (typeof getSavedVisibleCategoryNos !== 'function' || typeof saveVisibleCategoryNos !== 'function') {
+    return;
+  }
+  var saved = getSavedVisibleCategoryNos();
+  if (saved === null) {
+    return;
+  }
+  var key = String(categoryNo);
+  if (saved.indexOf(key) >= 0) {
+    return;
+  }
+  saved.push(key);
+  saveVisibleCategoryNos(saved);
+}
+
+function submitSplitStudyCategory() {
+  var select = dom.addStudyItemCategorySelect;
+  var input = dom.addStudyItemSplitName;
+  var err = validateAddStudyItemSplitName(input ? input.value : '');
+  var categoryNo = select ? String(select.value || '') : '';
+  if (err || !categoryNo || !addStudy.editingId) {
+    finishAddStudyItemFormConfirm();
+    setAddStudyItemStatus(err || '分ける問題がありません。', false);
+    return;
+  }
+  var keepId = String(addStudy.editingId);
+  var categoryName = String(input.value || '').trim();
+  addStudy.formBusy = true;
+  if (typeof pauseBackgroundAudioForAddStudy_ === 'function') {
+    pauseBackgroundAudioForAddStudy_();
+  }
+  beginAddStudyItemSaveProgress_();
+  setAddStudyItemAskStatus('シートを更新しています...');
+  syncAddStudyItemEditorUi();
+  var params = new URLSearchParams();
+  params.append('action', 'splitStudyCategory');
+  params.append('categoryNo', categoryNo);
+  params.append('categoryName', categoryName);
+  params.append('splitAfterNo', String(addStudy.pendingSplitAfterNo));
+  appendAuthParams(params);
+  params.append('referer', window.location.origin || '');
+  postGasJson(params)
+    .then(function(data) {
+      if (!data || !data.success) {
+        throw new Error((data && data.error) || '分割に失敗しました');
+      }
+      ensureSplitCategoryVisible_(data.newCategoryNo);
+      if (isStudyItemList_(data.categoryItems)) {
+        applySheetCategoryItems(categoryNo, data.categoryItems, data.dataGeneration, categoryNo, data.categoryOrders);
+      }
+      if (isStudyItemList_(data.newCategoryItems)) {
+        applySheetCategoryItems(
+          String(data.newCategoryNo),
+          data.newCategoryItems,
+          data.dataGeneration,
+          categoryNo,
+          data.categoryOrders
+        );
+      }
+      var audioIds = [];
+      if (isStudyItemList_(data.audioIds)) {
+        for (var a = 0; a < data.audioIds.length; a++) {
+          if (data.audioIds[a] != null && String(data.audioIds[a]) !== '') {
+            audioIds.push(String(data.audioIds[a]));
+          }
+        }
+      }
+      return alignSplitAudioInBatches_(audioIds, 0).then(function() {
+        finishSplitCategoryUi_(keepId);
+        setAddStudyItemStatus(
+          'No.' + addStudy.pendingSplitFromNo + '以降を『' + categoryName + '』に分けました。',
+          true
+        );
+      }, function(error) {
+        var msg = String(error && (error.message || error) || '音声の付け替えに失敗しました');
+        finishSplitCategoryUi_(keepId);
+        if (!handleAddStudyItemAuthFailure_(msg)) {
+          var done = error && error.alignedCount != null ? error.alignedCount : 0;
+          setAddStudyItemStatus(
+            'シートは分けました。音声の付け替えは ' + done + '/' + audioIds.length +
+            ' で止まりました。エディタの alignDriveAudioFileNames で続けられます。',
+            false
+          );
+        }
+      });
+    })
+    .catch(function(error) {
+      var msg = String(error && (error.message || error) || '分割に失敗しました');
+      if (!handleAddStudyItemAuthFailure_(msg)) {
+        setAddStudyItemStatus(msg, false);
+      }
+      finishAddStudyItemFormConfirm();
+    });
+}
+
+var SPLIT_AUDIO_ALIGN_BATCH = 4;
+
+function finishSplitCategoryUi_(keepId) {
+  finishAddStudyItemFormConfirm();
+  if (findAddStudyItemById(keepId)) {
+    beginAddStudyItemUpdate(keepId);
+  }
+}
+
+function alignSplitAudioInBatches_(ids, done) {
+  var total = ids.length;
+  if (done >= total) {
+    return Promise.resolve();
+  }
+  var batch = ids.slice(done, done + SPLIT_AUDIO_ALIGN_BATCH);
+  setAddStudyItemAskStatus('音声の付け替え ' + done + '/' + total);
+  updateAddStudyItemStatusProgress(total ? done / total : 1);
+  var params = new URLSearchParams();
+  params.append('action', 'alignDriveAudioIds');
+  params.append('ids', batch.join(','));
+  appendAuthParams(params);
+  params.append('referer', window.location.origin || '');
+  return postGasJson(params).then(function(data) {
+    if (!data || data.success === false) {
+      var failed = new Error((data && data.error) || '音声の付け替えに失敗しました');
+      failed.alignedCount = done;
+      throw failed;
+    }
+    return alignSplitAudioInBatches_(ids, done + batch.length);
+  }, function(error) {
+    if (error && error.alignedCount == null) {
+      error.alignedCount = done;
+    }
+    throw error;
+  });
 }
 
 function submitUpdateStudyItem() {
