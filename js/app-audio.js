@@ -410,7 +410,9 @@ function playAudioElementWhenReady(audio) {
     audio.addEventListener('error', onError);
     timer = setTimeout(finishReady, AUDIO_PLAY_CANPLAY_TIMEOUT_MS);
   }).then(function() {
-    if (fieldPlay.audio !== audio) {
+    var owned = fieldPlay.audio === audio ||
+      (categoryAnnounce && categoryAnnounce.audio === audio);
+    if (!owned) {
       var abortErr = new Error('interrupted by a call to pause');
       abortErr.name = 'AbortError';
       throw abortErr;
@@ -671,6 +673,9 @@ function isAbortError(error) {
  */
 function stopCurrentAudioPlayback(options) {
   options = options || {};
+  if (!options.keepCategoryAnnounce) {
+    stopCategoryAnnounce({ cancelPending: true });
+  }
   var prevField = fieldPlay.field;
   clearAudioBusyWatchdogs_();
   releaseCurrentAudioElement();
@@ -2922,4 +2927,553 @@ function fetchDriveAudioCoverage() {
       .catch(function() {
       // 診断用。失敗しても学習は続ける
     });
+}
+
+/**
+ * カテゴリ案内（カテゴリ毎だけ）。IdB の揃い件数には入れない。
+ */
+var categoryAnnounce = {
+  generation: 0,
+  audio: null,
+  pendingStart: null,
+  heard: null,
+  editPlaying: false,
+  finish: null
+};
+
+/**
+ * @param {*} categoryNo
+ * @returns {Object|null}
+ */
+function findCatalogCategory_(categoryNo) {
+  if (categoryNo == null || String(categoryNo) === '') {
+    return null;
+  }
+  var want = String(categoryNo);
+  var list = (categoryCatalog && categoryCatalog.list) ? categoryCatalog.list : [];
+  var i;
+  for (i = 0; i < list.length; i++) {
+    if (list[i] && String(list[i].no) === want) {
+      return list[i];
+    }
+  }
+  if (typeof getConfigurableCategories === 'function') {
+    var cats = getConfigurableCategories();
+    for (i = 0; i < cats.length; i++) {
+      if (cats[i] && String(cats[i].no) === want) {
+        return cats[i];
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * @param {Object|null} cat
+ * @returns {string}
+ */
+function buildCategoryGuideText_(cat) {
+  if (!cat) {
+    return '';
+  }
+  var raw = String(cat.name || cat.category || '').trim();
+  var visible = (typeof categoryVisibleName_ === 'function')
+    ? categoryVisibleName_(raw)
+    : raw;
+  if (!visible || visible === 'END') {
+    return '';
+  }
+  var order = (typeof getCategoryOrderSortValue === 'function')
+    ? getCategoryOrderSortValue(cat)
+    : (cat.no != null ? cat.no : '');
+  return 'カテゴリ。' + order + '。' + raw;
+}
+
+/**
+ * @param {Object|null} cat
+ * @returns {string}
+ */
+function buildCategoryEndText_(cat) {
+  if (!cat) {
+    return '';
+  }
+  var raw = String(cat.name || cat.category || '').trim();
+  var visible = (typeof categoryVisibleName_ === 'function')
+    ? categoryVisibleName_(raw)
+    : raw;
+  if (!visible || visible === 'END') {
+    return '';
+  }
+  return raw + '、終わり';
+}
+
+/**
+ * @param {Object|null} cat
+ * @returns {boolean}
+ */
+function categoryGuideHeardMatches_(cat) {
+  var heard = categoryAnnounce.heard;
+  if (!heard || !cat) {
+    return false;
+  }
+  return String(heard.no) === String(cat.no) &&
+    heard.text === normalizeTextForTTS(buildCategoryGuideText_(cat));
+}
+
+function releaseCategoryAnnounceAudio_() {
+  var audio = categoryAnnounce.audio;
+  categoryAnnounce.audio = null;
+  if (!audio) {
+    return;
+  }
+  audio.onended = null;
+  audio.onerror = null;
+  try {
+    audio.pause();
+  } catch (e) {
+    // ignore
+  }
+  revokeAudioObjectUrl(audio);
+  try {
+    audio.removeAttribute('src');
+    audio.load();
+  } catch (e2) {
+    // ignore
+  }
+}
+
+/**
+ * 案内の再生を止める。
+ * keepPending: 最初の出題はまだ出さない。
+ * continueStart: 止めたあと最初の出題へ進む。
+ * cancelPending: 最初の出題は出さない。
+ * @param {{keepPending?: boolean, continueStart?: boolean, cancelPending?: boolean}} [options]
+ * @returns {boolean} 案内待ちの最初の出題を出したとき true
+ */
+function stopCategoryAnnounce(options) {
+  options = options || {};
+  categoryAnnounce.generation += 1;
+  releaseCategoryAnnounceAudio_();
+  if (typeof audioPrefetch !== 'undefined' && audioPrefetch) {
+    audioPrefetch.playBlocked = false;
+  }
+  var fin = categoryAnnounce.finish;
+  categoryAnnounce.finish = null;
+  if (typeof fin === 'function') {
+    fin('abort');
+  }
+  var next = null;
+  if (!options.keepPending) {
+    next = categoryAnnounce.pendingStart;
+    categoryAnnounce.pendingStart = null;
+  }
+  if (options.continueStart && typeof next === 'function') {
+    next();
+    return true;
+  }
+  return false;
+}
+
+/**
+ * メモリと端末だけに置く。揃い件数は増やさない。
+ * @returns {Object}
+ */
+function rememberCategoryGuideAudio_(text, audioContent, voiceGender, speed) {
+  var normalizedText = normalizeTextForTTS(text);
+  var cacheKey = normalizedText + '_' + (voiceGender || AUDIO_VOICE_DEFAULT) + '_' + (speed || AUDIO_SPEED_FIXED);
+  var audioData = {
+    audioContent: audioContent,
+    timestamp: Date.now(),
+    textHash: hashText(cacheKey)
+  };
+  ensureMp3BlobOnAudioData(audioData);
+  audioCache[cacheKey] = audioData;
+  putAudioIdbRecord({
+    id: audioIdbRecordId(cacheKey),
+    audioContent: audioContent,
+    timestamp: audioData.timestamp,
+    textHash: audioData.textHash,
+    byteLength: String(audioContent || '').length
+  });
+  return audioData;
+}
+
+function saveCategoryGuideDriveAudio_(categoryNo, audioContent, voiceGender, speed, text) {
+  if (!audioContent || !googleAuth.email || categoryNo == null || String(categoryNo) === '') {
+    return;
+  }
+  try {
+    var params = new URLSearchParams();
+    params.append('action', 'saveDriveAudio');
+    params.append('field', 'category');
+    params.append('categoryNo', String(categoryNo));
+    params.append('voiceGender', voiceGender || AUDIO_VOICE_DEFAULT);
+    params.append('speed', speed || AUDIO_SPEED_FIXED);
+    params.append('text', text || '');
+    params.append('audioContent', audioContent);
+    appendAuthParams(params);
+    params.append('referer', window.location.origin || '');
+    postGasJson(params).catch(function() {});
+  } catch (e) {
+    // 保存に失敗しても再生は続ける
+  }
+}
+
+function deleteCategoryGuideAudio_(categoryNo) {
+  if (categoryNo == null || String(categoryNo) === '' || !googleAuth.email) {
+    return;
+  }
+  try {
+    var params = new URLSearchParams();
+    params.append('action', 'deleteDriveAudio');
+    params.append('field', 'category');
+    params.append('categoryNo', String(categoryNo));
+    appendAuthParams(params);
+    params.append('referer', window.location.origin || '');
+    postGasJson(params).catch(function() {});
+  } catch (e) {
+    // 削除に失敗しても学習は続ける
+  }
+}
+
+function startCategoryAnnouncePlayback_(audioData, gen, finish) {
+  if (gen !== categoryAnnounce.generation) {
+    return;
+  }
+  var audio;
+  try {
+    audio = createMp3AudioFromAudioData(audioData);
+  } catch (e) {
+    finish('fail');
+    return;
+  }
+  categoryAnnounce.audio = audio;
+  if (categoryAnnounce.editPlaying && typeof syncAddStudyItemEditorUi === 'function') {
+    syncAddStudyItemEditorUi();
+  }
+  audio.onended = function() {
+    if (categoryAnnounce.audio !== audio) {
+      return;
+    }
+    releaseCategoryAnnounceAudio_();
+    finish('ended');
+  };
+  audio.onerror = function() {
+    if (categoryAnnounce.audio !== audio) {
+      return;
+    }
+    releaseCategoryAnnounceAudio_();
+    finish('fail');
+  };
+  playAudioElementWhenReady(audio).then(function() {
+    if (gen !== categoryAnnounce.generation || categoryAnnounce.audio !== audio) {
+      return;
+    }
+    var playPromise = audio.play();
+    if (playPromise && typeof playPromise.catch === 'function') {
+      playPromise.catch(function() {
+        finish('fail');
+      });
+    }
+  }).catch(function() {
+    finish('fail');
+  });
+}
+
+function fetchCategoryGuideFromNet_(phrase, categoryNo, voice, speed, gen, options, finish) {
+  if (typeof audioPrefetch !== 'undefined' && audioPrefetch) {
+    audioPrefetch.playBlocked = true;
+  }
+  function useContent(audioContent, fromDrive) {
+    if (gen !== categoryAnnounce.generation) {
+      return;
+    }
+    if (!audioContent) {
+      finish('fail');
+      return;
+    }
+    var audioData = rememberCategoryGuideAudio_(phrase, audioContent, voice, speed);
+    if (options.saveDrive && !fromDrive) {
+      saveCategoryGuideDriveAudio_(categoryNo, audioContent, voice, speed, phrase);
+    }
+    if (options.silent) {
+      finish('ended');
+      return;
+    }
+    startCategoryAnnouncePlayback_(audioData, gen, finish);
+  }
+  function tts() {
+    var params = new URLSearchParams();
+    params.append('text', phrase);
+    params.append('voiceGender', voice);
+    params.append('speed', speed);
+    appendAuthParams(params);
+    params.append('referer', window.location.origin || '');
+    postGasJson(params).then(function(data) {
+      if (gen !== categoryAnnounce.generation) {
+        return;
+      }
+      if (data && data.success && data.audioContent) {
+        useContent(data.audioContent);
+        return;
+      }
+      finish('fail', data && data.error ? String(data.error) : '');
+    }).catch(function(error) {
+      if (gen === categoryAnnounce.generation) {
+        finish('fail', error && error.message ? String(error.message) : '');
+      }
+    });
+  }
+  if (options.forceRefresh || !options.saveDrive) {
+    tts();
+    return;
+  }
+  var params = new URLSearchParams();
+  params.append('action', 'getDriveAudio');
+  params.append('field', 'category');
+  params.append('categoryNo', String(categoryNo));
+  params.append('voiceGender', voice);
+  params.append('speed', speed);
+  appendAuthParams(params);
+  params.append('referer', window.location.origin || '');
+  postGasJson(params).then(function(data) {
+    if (gen !== categoryAnnounce.generation) {
+      return;
+    }
+    if (data && data.success && data.found && data.audioContent) {
+      useContent(data.audioContent, true);
+      return;
+    }
+    tts();
+  }).catch(function() {
+    if (gen === categoryAnnounce.generation) {
+      tts();
+    }
+  });
+}
+
+/**
+ * 案内全文を1本で再生する。順番は全文に含める。
+ * @param {string} text
+ * @param {string|number} categoryNo
+ * @param {{saveDrive?: boolean, silent?: boolean, forceRefresh?: boolean, markHeard?: boolean, forEdit?: boolean, onDone?: function(string): void}} [options]
+ */
+function playCategoryPhrase_(text, categoryNo, options) {
+  options = options || {};
+  var phrase = normalizeTextForTTS(text || '');
+  var done = typeof options.onDone === 'function' ? options.onDone : function() {};
+  if (!phrase || categoryNo == null || String(categoryNo) === '' || phrase.length > TTS_TEXT_MAX_LENGTH) {
+    done('skip');
+    return;
+  }
+  if (categoryAnnounce.finish || categoryAnnounce.audio) {
+    stopCategoryAnnounce({ cancelPending: true });
+  }
+  stopCurrentAudioPlayback({
+    keepCategoryAnnounce: true,
+    skipButtonUpdate: true,
+    keepAddStudyAudioBusy: true
+  });
+  releaseCategoryAnnounceAudio_();
+  var gen = ++categoryAnnounce.generation;
+  var voice = (typeof getAudioVoice === 'function') ? getAudioVoice('question') : AUDIO_VOICE_DEFAULT;
+  var speed = AUDIO_SPEED_FIXED;
+  var settled = false;
+  if (options.forEdit) {
+    addStudy.audioBusy = true;
+    addStudy.audioPlayId = String(categoryNo);
+    addStudy.audioPlayField = 'category';
+    categoryAnnounce.editPlaying = true;
+    if (typeof syncAddStudyItemEditorUi === 'function') {
+      syncAddStudyItemEditorUi();
+    }
+    if (typeof refreshAddStudyListPlayButtons === 'function') {
+      refreshAddStudyListPlayButtons();
+    }
+  }
+  if (typeof options.pendingStart === 'function') {
+    categoryAnnounce.pendingStart = options.pendingStart;
+  }
+  function finish(reason, detail) {
+    if (settled) {
+      return;
+    }
+    if (reason !== 'abort' && gen !== categoryAnnounce.generation) {
+      return;
+    }
+    settled = true;
+    if (categoryAnnounce.finish === finish) {
+      categoryAnnounce.finish = null;
+    }
+    if (typeof audioPrefetch !== 'undefined' && audioPrefetch) {
+      audioPrefetch.playBlocked = false;
+    }
+    if (options.forEdit) {
+      categoryAnnounce.editPlaying = false;
+      if (typeof clearAddStudyAudioBusy_ === 'function') {
+        clearAddStudyAudioBusy_();
+      }
+    }
+    if (reason === 'fail' && options.forEdit && typeof setAddStudyItemStatus === 'function') {
+      var failMsg = 'カテゴリ名の音声を用意できませんでした。';
+      if (detail) {
+        failMsg += ' ' + String(detail);
+      }
+      setAddStudyItemStatus(failMsg, false);
+    }
+    if (reason === 'ended' && options.markHeard) {
+      categoryAnnounce.heard = { no: String(categoryNo), text: phrase };
+    }
+    var next = null;
+    if (reason !== 'abort') {
+      next = categoryAnnounce.pendingStart;
+      categoryAnnounce.pendingStart = null;
+    }
+    done(reason);
+    if (typeof next === 'function') {
+      next();
+    }
+  }
+  categoryAnnounce.finish = finish;
+  function begin() {
+    if (gen !== categoryAnnounce.generation) {
+      return;
+    }
+    if (typeof uiSfx !== 'undefined' && uiSfx.clickPlaying && typeof runAfterUiClickSfx === 'function') {
+      runAfterUiClickSfx(begin);
+      return;
+    }
+    if (!options.forceRefresh) {
+      var mem = getCachedAudio(phrase, voice, speed);
+      if (mem && mem.audioData) {
+        if (options.silent) {
+          finish('ended');
+          return;
+        }
+        startCategoryAnnouncePlayback_(mem.audioData, gen, finish);
+        return;
+      }
+    }
+    function afterIdb(idbResult) {
+      if (gen !== categoryAnnounce.generation) {
+        return;
+      }
+      if (!options.forceRefresh && idbResult && idbResult.audioData) {
+        if (options.silent) {
+          finish('ended');
+          return;
+        }
+        startCategoryAnnouncePlayback_(idbResult.audioData, gen, finish);
+        return;
+      }
+      fetchCategoryGuideFromNet_(phrase, categoryNo, voice, speed, gen, options, finish);
+    }
+    if (options.forceRefresh) {
+      afterIdb(null);
+      return;
+    }
+    getCachedAudioFromIdb(phrase, voice, speed, afterIdb);
+  }
+  begin();
+}
+
+/**
+ * 効果音のあと、最初の出題の前に案内を読む。
+ * @param {Object|null} cat
+ * @param {function(): void} showFirst
+ */
+function playCategoryGuideThen_(cat, showFirst) {
+  var show = typeof showFirst === 'function' ? showFirst : function() {};
+  if (typeof isCrossCategoryQuestionMethod === 'function' && isCrossCategoryQuestionMethod()) {
+    show();
+    return;
+  }
+  var text = buildCategoryGuideText_(cat);
+  if (!cat || !text) {
+    show();
+    return;
+  }
+  if (categoryGuideHeardMatches_(cat)) {
+    categoryAnnounce.heard = null;
+    show();
+    return;
+  }
+  playCategoryPhrase_(text, cat.no, {
+    saveDrive: true,
+    markHeard: false,
+    pendingStart: show
+  });
+}
+
+function announceLandedCategoryGuide_() {
+  if (typeof isCrossCategoryQuestionMethod === 'function' && isCrossCategoryQuestionMethod()) {
+    return;
+  }
+  var cat = findCatalogCategory_(categoryCatalog.no);
+  var text = buildCategoryGuideText_(cat);
+  if (!cat || !text) {
+    return;
+  }
+  playCategoryPhrase_(text, cat.no, { saveDrive: true, markHeard: true });
+}
+
+function playTopCategoryGuideFromSingleClick_() {
+  var screen1 = dom.screen1;
+  if (!screen1 || !screen1.classList.contains('active')) {
+    return;
+  }
+  announceLandedCategoryGuide_();
+}
+
+function playCategoryEndAnnouncement_(cat) {
+  if (typeof isCrossCategoryQuestionMethod === 'function' && isCrossCategoryQuestionMethod()) {
+    return;
+  }
+  var text = buildCategoryEndText_(cat);
+  if (!cat || !text) {
+    return;
+  }
+  playCategoryPhrase_(text, cat.no, { saveDrive: false, markHeard: false });
+}
+
+function prepareCategoryGuideAudio_(cat, onDone) {
+  var text = buildCategoryGuideText_(cat);
+  if (!cat || !text) {
+    if (typeof onDone === 'function') {
+      onDone();
+    }
+    return;
+  }
+  playCategoryPhrase_(text, cat.no, {
+    saveDrive: true,
+    silent: true,
+    onDone: function() {
+      if (typeof onDone === 'function') {
+        onDone();
+      }
+    }
+  });
+}
+
+function playSavedCategoryGuide_(forceRefresh) {
+  if (typeof isAddStudyItemRenameVisible === 'function' && !isAddStudyItemRenameVisible()) {
+    return;
+  }
+  var select = dom.addStudyItemCategorySelect;
+  var categoryNo = select ? String(select.value || '') : '';
+  var cat = findCatalogCategory_(categoryNo);
+  var text = buildCategoryGuideText_(cat);
+  if (!cat || !text) {
+    return;
+  }
+  if (!forceRefresh && addStudy.audioBusy && addStudy.audioPlayField === 'category') {
+    stopCategoryAnnounce({ cancelPending: true });
+    return;
+  }
+  playCategoryPhrase_(text, cat.no, {
+    saveDrive: true,
+    markHeard: true,
+    forEdit: true,
+    forceRefresh: !!forceRefresh
+  });
 }

@@ -382,6 +382,24 @@ function setupEventListeners() {
       syncAddStudyItemCategorySettingsUi_();
     });
   }
+  var addStudyItemCategoryPrevButton = dom.addStudyItemCategoryPrevButton;
+  if (addStudyItemCategoryPrevButton) {
+    addStudyItemCategoryPrevButton.addEventListener('click', function() {
+      if (addStudyItemCategoryPrevButton.disabled) {
+        return;
+      }
+      requestAddStudyItemStepCategory_(-1);
+    });
+  }
+  var addStudyItemCategoryNextButton = dom.addStudyItemCategoryNextButton;
+  if (addStudyItemCategoryNextButton) {
+    addStudyItemCategoryNextButton.addEventListener('click', function() {
+      if (addStudyItemCategoryNextButton.disabled) {
+        return;
+      }
+      requestAddStudyItemStepCategory_(1);
+    });
+  }
   var addStudyItemNoteToggle = dom.addStudyItemNoteToggle;
   if (addStudyItemNoteToggle) {
     addStudyItemNoteToggle.addEventListener('click', function() {
@@ -463,6 +481,9 @@ function setupEventListeners() {
         showAddStudyItemConfirm();
       }
     });
+  }
+  if (typeof bindAddStudyCategoryPlayButton_ === 'function') {
+    bindAddStudyCategoryPlayButton_();
   }
   var addStudyItemRenameButton = dom.addStudyItemRenameButton;
   if (addStudyItemRenameButton) {

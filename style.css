@@ -2532,6 +2532,43 @@ body:has(#screen2.active) .answer-text-edit {
   cursor: not-allowed;
 }
 
+.add-study-category-settings-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.add-study-category-settings-row[hidden] {
+  display: none;
+}
+
+.add-study-category-step {
+  display: inline-flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.add-study-category-step-btn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: #1565c0;
+  font-size: 16px;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.add-study-category-step-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 #addStudyItemCategorySettings {
   flex-shrink: 0;
 }
@@ -2573,6 +2610,10 @@ body:has(#screen2.active) .answer-text-edit {
   flex-shrink: 0;
   min-width: 0;
   white-space: nowrap;
+}
+
+.add-study-category-play {
+  flex-shrink: 0;
 }
 
 .add-study-label {
@@ -3030,6 +3071,13 @@ textarea.is-tts-too-long {
 .add-study-button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+/* 確定・キャンセルへ変わっても、長い方の幅を保つ */
+#addStudyItemRenameButton,
+#addStudyItemCancelButton {
+  min-width: calc(5em + 22px);
+  white-space: nowrap;
 }
 
 @media (max-height: 740px) {

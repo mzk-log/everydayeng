@@ -89,10 +89,14 @@ function bindLearningBodyGestures() {
       return;
     }
     if (count >= 4) {
+      stopCategoryAnnounce({ cancelPending: true });
       goToHome({ sfx: 'home' });
       return;
     }
     if (count === 3) {
+      if (stopCategoryAnnounce({ continueStart: true })) {
+        return;
+      }
       var plus = dom.plusButton;
       if (!plus || plus.disabled) {
         return;
@@ -101,10 +105,14 @@ function bindLearningBodyGestures() {
       return;
     }
     if (count === 2 && !studyEnd.done) {
+      if (stopCategoryAnnounce({ continueStart: true })) {
+        return;
+      }
       replayFieldFromBodyDoubleTap_();
       return;
     }
     if (count === 2 && studyEnd.done && fromJ09 && isPerCategoryQuestionMethod_()) {
+      stopCategoryAnnounce({ cancelPending: true });
       var nextNo = nextVisibleCategoryNoAfter(studyEnd.categoryNo);
       if (nextNo == null) {
         goToHome({ sfx: 'home' });
@@ -114,6 +122,9 @@ function bindLearningBodyGestures() {
       return;
     }
     if (count >= 1) {
+      if (stopCategoryAnnounce({ continueStart: true })) {
+        return;
+      }
       handleNavAnswerButtonClick();
     }
   }
@@ -142,6 +153,7 @@ function bindLearningBodyGestures() {
     startX = e.clientX;
     startY = e.clientY;
     clearTapTimer_();
+    stopCategoryAnnounce({ keepPending: true });
   });
 
   root.addEventListener('pointermove', function(e) {
@@ -168,6 +180,9 @@ function bindLearningBodyGestures() {
     }
     var el = getEventElement_(e && e.target);
     if (wasMoved || isLearningBodyGestureIgnoreTarget_(el)) {
+      if (wasMoved) {
+        stopCategoryAnnounce({ continueStart: true });
+      }
       armBodyTapTimer_();
       return;
     }
@@ -186,6 +201,7 @@ function bindLearningBodyGestures() {
       return;
     }
     pressActive = false;
+    stopCategoryAnnounce({ continueStart: true });
     armBodyTapTimer_();
   });
 
@@ -267,8 +283,12 @@ function bindLearningBodyGestures() {
       return;
     }
     homeTapTimer = setTimeout(function() {
+      var count = homeTapCount;
       homeTapCount = 0;
       homeTapTimer = null;
+      if (count === 1) {
+        playTopCategoryGuideFromSingleClick_();
+      }
     }, LEARNING_BODY_DOUBLE_TAP_MS);
   }
 
@@ -283,6 +303,7 @@ function bindLearningBodyGestures() {
       return;
     }
     if (wasMoved) {
+      stopCategoryAnnounce({ continueStart: true });
       armBodyTapTimer_();
       return;
     }
@@ -299,6 +320,7 @@ function bindLearningBodyGestures() {
       return;
     }
     if (isHomeScreenActive_()) {
+      stopCategoryAnnounce({ cancelPending: true });
       swallowAndroidMouseClick = true;
       armAndroidDblclickSwallow_();
       homePressActive = true;
@@ -319,6 +341,7 @@ function bindLearningBodyGestures() {
     startX = e.clientX;
     startY = e.clientY;
     clearTapTimer_();
+    stopCategoryAnnounce({ keepPending: true });
     e.preventDefault();
     e.stopPropagation();
   }, true);
@@ -379,6 +402,7 @@ function bindLearningBodyGestures() {
       return;
     }
     pressActive = false;
+    stopCategoryAnnounce({ continueStart: true });
     armBodyTapTimer_();
   }, true);
 

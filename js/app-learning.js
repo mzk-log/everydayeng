@@ -295,25 +295,35 @@ function startLearning() {
   
   // 出題数表示を更新
   updateQuestionInfoDisplay();
-  
-  displayQuestion();
-  
-  // 最初の問題と次の問題をプリロード
-  preloadAudioForCurrentAndNext();
-  
-  // トグルボタンの状態を同期（リスニングON時は出題読みON固定・解答読みON）
-  syncQuestionToggleForListeningMode();
-  
-  // トグルボタンの位置を更新（screen2のタイトル位置に合わせる）
-  requestAnimationFrame(function() {
-    requestAnimationFrame(syncAppHeaderHeight);
-  });
-  
-  isCategoryTransitionInProgress = false;
-  setLearningCategorySelectDisabled(false);
-  refreshAdvanceNavControls();
-  updateLearningLockedSideMenuControls();
-  updateListNavButtons();
+
+  beginStudyAfterCategoryGuide_();
+}
+
+/**
+ * カテゴリ毎は案内のあと、それ以外はそのまま最初の問題を出す。
+ */
+function beginStudyAfterCategoryGuide_() {
+  function showFirst() {
+    displayQuestion();
+    preloadAudioForCurrentAndNext();
+    syncQuestionToggleForListeningMode();
+    requestAnimationFrame(function() {
+      requestAnimationFrame(syncAppHeaderHeight);
+    });
+    isCategoryTransitionInProgress = false;
+    setLearningCategorySelectDisabled(false);
+    refreshAdvanceNavControls();
+    updateLearningLockedSideMenuControls();
+    updateListNavButtons();
+  }
+  var cat = (typeof findCatalogCategory_ === 'function')
+    ? findCatalogCategory_(categoryCatalog.no)
+    : null;
+  if (typeof playCategoryGuideThen_ === 'function') {
+    playCategoryGuideThen_(cat, showFirst);
+    return;
+  }
+  showFirst();
 }
 
 // 学習時間カウンターを開始（初回の START 相当の学習開始時のみ）

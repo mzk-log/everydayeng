@@ -151,6 +151,7 @@ var addStudy = {
   audioPlayId: '', // 再生中の問題 ID
   audioPlayField: '', // 'question' | 'answer'
   categorySettingsOpen: false, // 既存カテゴリの名前・並び
+  keepCategorySettingsOpen: false, // ＜＞移動のあと、開いていれば開いたままにする
   noteOpen: false, // note 入力欄
   ssmlField: '', // 読み／英語の対象。question | answer | ''
   discardAction: '', // close | back | category | insertBelow
@@ -352,6 +353,9 @@ var dom = {
   addStudyItemCategoryName: document.getElementById('addStudyItemCategoryName'),
   addStudyItemCategorySelect: document.getElementById('addStudyItemCategorySelect'),
   addStudyItemCategorySettingsToggle: document.getElementById('addStudyItemCategorySettingsToggle'),
+  addStudyItemCategorySettingsRow: document.getElementById('addStudyItemCategorySettingsRow'),
+  addStudyItemCategoryPrevButton: document.getElementById('addStudyItemCategoryPrevButton'),
+  addStudyItemCategoryNextButton: document.getElementById('addStudyItemCategoryNextButton'),
   addStudyItemCategorySettings: document.getElementById('addStudyItemCategorySettings'),
   addStudyItemNoteToggle: document.getElementById('addStudyItemNoteToggle'),
   addStudyItemCloseButton: document.getElementById('addStudyItemCloseButton'),
@@ -375,6 +379,7 @@ var dom = {
   addStudyItemYomiganaButton: document.getElementById('addStudyItemYomiganaButton'),
   addStudyItemEnglishButton: document.getElementById('addStudyItemEnglishButton'),
   addStudyItemRenameButton: document.getElementById('addStudyItemRenameButton'),
+  addStudyItemCategoryPlayButton: document.getElementById('addStudyItemCategoryPlayButton'),
   addStudyItemRenameFields: document.getElementById('addStudyItemRenameFields'),
   addStudyItemRenameName: document.getElementById('addStudyItemRenameName'),
   addStudyItemReorderButton: document.getElementById('addStudyItemReorderButton'),

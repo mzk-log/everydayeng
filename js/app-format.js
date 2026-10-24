@@ -307,3 +307,13 @@ function studyFieldDisplayText(text) {
   source = source.replace(/<lang\s+xml:lang="en-US">([\s\S]*?)<\/lang>/gi, '$1');
   return source;
 }
+
+/**
+ * カテゴリ名の表示・END・同名判定用。読み／英語タグを外して前後の空白を除く。
+ * 保存値と案内音声はタグ付きのまま。
+ * @param {*} name
+ * @returns {string}
+ */
+function categoryVisibleName_(name) {
+  return String(studyFieldDisplayText(name)).replace(/^\s+|\s+$/g, '');
+}

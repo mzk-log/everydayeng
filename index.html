@@ -7,7 +7,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202610202203';
+    var FRONT_VERSION = '202610241411';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -46,7 +46,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202610202203">
+  <link rel="stylesheet" href="style.css?v=202610241411">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -575,12 +575,19 @@
       </div>
       <label class="add-study-label" for="addStudyItemCategorySelect">カテゴリ</label>
       <select id="addStudyItemCategorySelect" class="add-study-select"></select>
-      <button type="button" id="addStudyItemCategorySettingsToggle" class="add-study-disclosure" hidden aria-expanded="false" aria-controls="addStudyItemCategorySettings">カテゴリ設定</button>
+      <div id="addStudyItemCategorySettingsRow" class="add-study-category-settings-row" hidden>
+        <button type="button" id="addStudyItemCategorySettingsToggle" class="add-study-disclosure" hidden aria-expanded="false" aria-controls="addStudyItemCategorySettings">カテゴリ設定</button>
+        <span class="add-study-category-step">
+          <button type="button" id="addStudyItemCategoryPrevButton" class="add-study-category-step-btn" aria-label="前のカテゴリ" hidden>&lt;</button>
+          <button type="button" id="addStudyItemCategoryNextButton" class="add-study-category-step-btn" aria-label="次のカテゴリ" hidden>&gt;</button>
+        </span>
+      </div>
       <div id="addStudyItemCategorySettings" hidden>
         <div id="addStudyItemRenameFields" class="add-study-rename" style="display: none;">
           <label class="add-study-label" for="addStudyItemRenameName">カテゴリ名</label>
           <div class="add-study-rename-row">
             <input id="addStudyItemRenameName" class="add-study-input" type="text" autocomplete="off">
+            <button type="button" id="addStudyItemCategoryPlayButton" class="add-study-list-play add-study-category-play" aria-label="カテゴリ名を再生" title="短押しで再生、長押しで作り直す">▶</button>
             <button type="button" id="addStudyItemRenameButton" class="add-study-button add-study-button-save">名前を更新</button>
           </div>
         </div>
@@ -691,35 +698,35 @@
     </div>
   </div>
 
-  <script src="js/app-state.js?v=202610202203"></script>
-  <script src="js/app-gas.js?v=202610202203"></script>
-  <script src="js/app-auth.js?v=202610202203"></script>
-  <script src="js/app-settings.js?v=202610202203"></script>
-  <script src="js/app-question.js?v=202610202203"></script>
-  <script src="js/app-practice.js?v=202610202203"></script>
-  <script src="js/app-learning.js?v=202610202203"></script>
-  <script src="js/app-audio.js?v=202610202203"></script>
-  <script src="js/app-nav.js?v=202610202203"></script>
-  <script src="js/app-modal.js?v=202610202203"></script>
-  <script src="js/app-update.js?v=202610202203"></script>
-  <script src="js/app-boot.js?v=202610202203"></script>
-  <script src="js/app-category.js?v=202610202203"></script>
-  <script src="js/app-events.js?v=202610202203"></script>
-  <script src="js/app-menu.js?v=202610202203"></script>
-  <script src="js/app-session.js?v=202610202203"></script>
-  <script src="js/app-add-study.js?v=202610202203"></script>
-  <script src="js/app-sort.js?v=202610202203"></script>
-  <script src="js/app-study-load.js?v=202610202203"></script>
-  <script src="js/app-mode-page.js?v=202610202203"></script>
-  <script src="js/app-background.js?v=202610202203"></script>
-  <script src="js/app-error.js?v=202610202203"></script>
-  <script src="js/app-list.js?v=202610202203"></script>
-  <script src="js/app-list-nav.js?v=202610202203"></script>
-  <script src="js/app-field-edit.js?v=202610202203"></script>
-  <script src="js/app-format.js?v=202610202203"></script>
-  <script src="js/app-image.js?v=202610202203"></script>
-  <script src="js/app-sheet.js?v=202610202203"></script>
-  <script src="js/app-gesture.js?v=202610202203"></script>
+  <script src="js/app-state.js?v=202610241411"></script>
+  <script src="js/app-gas.js?v=202610241411"></script>
+  <script src="js/app-auth.js?v=202610241411"></script>
+  <script src="js/app-settings.js?v=202610241411"></script>
+  <script src="js/app-question.js?v=202610241411"></script>
+  <script src="js/app-practice.js?v=202610241411"></script>
+  <script src="js/app-learning.js?v=202610241411"></script>
+  <script src="js/app-audio.js?v=202610241411"></script>
+  <script src="js/app-nav.js?v=202610241411"></script>
+  <script src="js/app-modal.js?v=202610241411"></script>
+  <script src="js/app-update.js?v=202610241411"></script>
+  <script src="js/app-boot.js?v=202610241411"></script>
+  <script src="js/app-category.js?v=202610241411"></script>
+  <script src="js/app-events.js?v=202610241411"></script>
+  <script src="js/app-menu.js?v=202610241411"></script>
+  <script src="js/app-session.js?v=202610241411"></script>
+  <script src="js/app-add-study.js?v=202610241411"></script>
+  <script src="js/app-sort.js?v=202610241411"></script>
+  <script src="js/app-study-load.js?v=202610241411"></script>
+  <script src="js/app-mode-page.js?v=202610241411"></script>
+  <script src="js/app-background.js?v=202610241411"></script>
+  <script src="js/app-error.js?v=202610241411"></script>
+  <script src="js/app-list.js?v=202610241411"></script>
+  <script src="js/app-list-nav.js?v=202610241411"></script>
+  <script src="js/app-field-edit.js?v=202610241411"></script>
+  <script src="js/app-format.js?v=202610241411"></script>
+  <script src="js/app-image.js?v=202610241411"></script>
+  <script src="js/app-sheet.js?v=202610241411"></script>
+  <script src="js/app-gesture.js?v=202610241411"></script>
 </body>
 </html>
 

@@ -252,7 +252,9 @@ function getSsmlSelectionStore_(editEl) {
   if (updateMode.active && (editEl.id === 'questionTextEdit' || editEl.id === 'answerTextEdit')) {
     return updateMode;
   }
-  if (editEl.id === 'addStudyItemQuestion' || editEl.id === 'addStudyItemAnswer') {
+  if (editEl.id === 'addStudyItemQuestion' || editEl.id === 'addStudyItemAnswer' ||
+      editEl.id === 'addStudyItemRenameName' || editEl.id === 'addStudyItemCategoryName' ||
+      editEl.id === 'addStudyItemSplitName') {
     return addStudySsmlSelection;
   }
   return null;
@@ -520,9 +522,14 @@ function insertEnglishLangTag(displayTarget) {
  * @param {'yomigana'|'english'} kind
  */
 function insertAddStudyItemSsmlTag(field, kind) {
-  var editEl = document.getElementById(
-    field === 'answer' ? 'addStudyItemAnswer' : 'addStudyItemQuestion'
-  );
+  var editEl = (typeof addStudyItemSsmlFieldElement_ === 'function')
+    ? addStudyItemSsmlFieldElement_()
+    : null;
+  if (!editEl && (field === 'question' || field === 'answer')) {
+    editEl = document.getElementById(
+      field === 'answer' ? 'addStudyItemAnswer' : 'addStudyItemQuestion'
+    );
+  }
   insertSsmlTagIntoTextarea_(editEl, kind);
   if (typeof syncAddStudyItemEditorUi === 'function') {
     syncAddStudyItemEditorUi();
@@ -629,7 +636,8 @@ function setupUpdateModeEventListeners() {
         return;
       }
       var field = addStudy.ssmlField;
-      if (field !== 'question' && field !== 'answer') {
+      if (field !== 'question' && field !== 'answer' && field !== 'rename' &&
+          field !== 'newCategory' && field !== 'split') {
         return;
       }
       insertAddStudyItemSsmlTag(field, entry.kind);
@@ -637,6 +645,9 @@ function setupUpdateModeEventListeners() {
   });
   bindYomiganaSelectionMemory_(document.getElementById('addStudyItemQuestion'));
   bindYomiganaSelectionMemory_(document.getElementById('addStudyItemAnswer'));
+  bindYomiganaSelectionMemory_(document.getElementById('addStudyItemRenameName'));
+  bindYomiganaSelectionMemory_(document.getElementById('addStudyItemCategoryName'));
+  bindYomiganaSelectionMemory_(document.getElementById('addStudyItemSplitName'));
   
   var micButton = dom.answerMicButton;
   if (micButton) {
@@ -664,6 +675,7 @@ function closeUpdateConfirmModal() {
   addStudy.confirmKind = '';
   addStudy.discardAction = '';
   addStudy.pendingCategoryValue = '';
+  addStudy.keepCategorySettingsOpen = false;
   setConfirmModalBusy(false);
   var okButton = dom.answerUpdateConfirmOkButton;
   if (okButton) {

@@ -1225,6 +1225,38 @@ function playCompletionSfx() {
 }
 
 /**
+ * pirorin のあと、カテゴリ毎だけ「名前、終わり」を読む。
+ */
+function playCompletionSfxThenCategoryEnd_() {
+  var catNo = studyEnd.categoryNo != null ? studyEnd.categoryNo : categoryCatalog.no;
+  runAfterUiClickSfx(function() {
+    playStaticSfx(COMPLETION_SFX_URL, uiSfx.completion, 1);
+    if (typeof isCrossCategoryQuestionMethod === 'function' && isCrossCategoryQuestionMethod()) {
+      return;
+    }
+    var cat = (typeof findCatalogCategory_ === 'function') ? findCatalogCategory_(catNo) : null;
+    if (!cat || typeof playCategoryEndAnnouncement_ !== 'function') {
+      return;
+    }
+    var audio = uiSfx.completion && uiSfx.completion.length ? uiSfx.completion[0] : null;
+    var spoken = false;
+    function speak() {
+      if (spoken || !studyEnd.done) {
+        return;
+      }
+      spoken = true;
+      playCategoryEndAnnouncement_(cat);
+    }
+    if (!audio) {
+      speak();
+      return;
+    }
+    audio.addEventListener('ended', speak);
+    audio.addEventListener('error', speak);
+  });
+}
+
+/**
  * 静的効果音の再生を止める
  * @param {HTMLAudioElement[]} list
  */
@@ -1732,6 +1764,9 @@ function tryPlayStartWaitCharge() {
     return;
   }
   playChargeSfx();
+  if (typeof announceLandedCategoryGuide_ === 'function') {
+    announceLandedCategoryGuide_();
+  }
 }
 
 /**
@@ -1793,7 +1828,7 @@ function presentCompletionCongratsMessage() {
 }
 
 function showCompletionMessage() {
-  playCompletionSfx();
+  playCompletionSfxThenCategoryEnd_();
   updateFieldEditPencils();
   scheduleAudioPrefetch();
   studyEnd.categoryNo = categoryCatalog.no;
@@ -2050,6 +2085,10 @@ function goToHome(options) {
     playChargeSfx();
   } else if (options.sfx === 'home') {
     playHomeSfx();
+  }
+  if ((options.sfx === 'charge' || options.sfx === 'home') &&
+      typeof announceLandedCategoryGuide_ === 'function') {
+    announceLandedCategoryGuide_();
   }
 
   if (leftLearningScreen) clearHomeTextSelection();

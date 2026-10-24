@@ -377,7 +377,10 @@ function isEndCategory(cat) {
   if (!cat || cat.name == null) {
     return false;
   }
-  return String(cat.name).trim() === 'END';
+  var visible = (typeof categoryVisibleName_ === 'function')
+    ? categoryVisibleName_(cat.name)
+    : String(cat.name).trim();
+  return visible === 'END';
 }
 
 /**
@@ -1310,7 +1313,10 @@ function formatCategoryOptionText(cat) {
     return 'END';
   }
   var orderLabel = getCategoryOrderSortValue(cat);
-  var displayText = '[' + orderLabel + '] ' + cat.name;
+  var visibleName = (typeof categoryVisibleName_ === 'function')
+    ? categoryVisibleName_(cat.name)
+    : String(cat.name || '').trim();
+  var displayText = '[' + orderLabel + '] ' + visibleName;
   if (cat.count !== undefined && cat.count !== null) {
     displayText += '（' + cat.count + '問）';
     var lastDateValue = normalizeLastDate(cat.last_date || '');
