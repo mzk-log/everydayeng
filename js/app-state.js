@@ -122,7 +122,7 @@ var uiSfx = {
   clickWaiters: []
 };
 var fieldPlay = {
-  audio: null, // 現在再生中のAudioオブジェクト
+  audio: null, // 現在再生中の PCM ハンドル
   field: null, // 再生／取得中の欄 'question' | 'answer' | null
   ansGate: false, // リスニング時：出題音声終了まで Ans 無効・計測待機
   resetTimer: false // 出題読み自動再生終了後に計測をゼロリセットするか
@@ -278,8 +278,7 @@ var ALL_STUDY_ITEMS_FETCH_MAX_ATTEMPTS = 3; // 全問取得の最大試行（初
 var ALL_STUDY_ITEMS_FETCH_TIMEOUT_MS = 60000; // 全問取得1試行あたりの打ち切り
 var ALL_STUDY_ITEMS_RETRY_BASE_DELAY_MS = 800; // 全問取得リトライ間隔
 var ANS_SHEET_PERSIST_MAX_DEFER_MS = 8000; // 解答音声優先時、シート更新開始の上限待ち
-var AUDIO_PLAY_CANPLAY_TIMEOUT_MS = 300; // Blob再生: canplay待ちの上限（超えたら再生開始）
-var AUDIO_PLAY_START_TIMEOUT_MS = 3000; // play() が成功しないときの打ち切り
+var AUDIO_PLAY_START_TIMEOUT_MS = 3000; // PCM を鳴らし始めるまでの打ち切り
 var AUDIO_PLAY_END_GRACE_MS = 2000; // 長さ既知の再生：残り＋この余裕で操作復帰
 var AUDIO_PLAY_UNKNOWN_DURATION_MS = 15000; // 長さ不明／再生開始不能時の操作復帰
 var AUDIO_PAUSE_STUCK_MS = 1000; // pause のまま終わらないときの操作復帰

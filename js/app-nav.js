@@ -1247,7 +1247,7 @@ function playCompletionSfxThenCategoryEnd_() {
       spoken = true;
       playCategoryEndAnnouncement_(cat);
     }
-    if (!audio) {
+    if (!audio || typeof audio.addEventListener !== 'function') {
       speak();
       return;
     }
@@ -1258,38 +1258,114 @@ function playCompletionSfxThenCategoryEnd_() {
 
 /**
  * 静的効果音の再生を止める
- * @param {HTMLAudioElement[]} list
+ * @param {Array} list
  */
 function stopStaticSfxList(list) {
   if (!list || !list.length) return;
   for (var i = 0; i < list.length; i++) {
-    var audio = list[i];
-    audio.onended = null;
-    audio.onerror = null;
-    try {
-      audio.pause();
-      audio.currentTime = 0;
-    } catch (e) {}
+    var token = list[i];
+    if (!token) {
+      continue;
+    }
+    token.gen = (token.gen || 0) + 1;
+    token._onended = null;
+    token._onerror = null;
+    if (token.endTimer) {
+      clearTimeout(token.endTimer);
+      token.endTimer = null;
+    }
+    if (typeof stopPcmPlayback_ === 'function') {
+      stopPcmPlayback_(token.handle);
+    }
+    token.handle = null;
   }
 }
 
 /**
- * 静的mp3を1回再生する（TTSとは別）
+ * 完了効果音など、終わった通知を後から付けられる再生トークン
  * @param {string} url
- * @param {HTMLAudioElement[]} bucket
+ * @param {Array} bucket
  * @param {number} volume
  */
 function playStaticSfx(url, bucket, volume) {
   stopStaticSfxList(bucket);
   bucket.length = 0;
-  var audio = new Audio(buildStaticSfxUrl(url));
-  audio.volume = (typeof volume === 'number') ? volume : 1;
-  bucket.push(audio);
-  audio.onerror = function() {};
-  var playPromise = audio.play();
-  if (playPromise && typeof playPromise.catch === 'function') {
-    playPromise.catch(function() {});
+  var token = {
+    gen: 1,
+    handle: null,
+    ended: false,
+    failed: false,
+    _onended: null,
+    _onerror: null,
+    addEventListener: function(type, fn) {
+      if (type === 'ended') {
+        if (token.ended) {
+          fn();
+          return;
+        }
+        token._onended = fn;
+      } else if (type === 'error') {
+        if (token.failed) {
+          fn();
+          return;
+        }
+        token._onerror = fn;
+      }
+    }
+  };
+  bucket.push(token);
+  if (typeof kickPcmAudioContext_ === 'function') {
+    kickPcmAudioContext_();
   }
+  if (typeof decodeSfxUrl_ !== 'function' || typeof playPcmBuffer_ !== 'function') {
+    token.failed = true;
+    return;
+  }
+  decodeSfxUrl_(buildStaticSfxUrl(url)).then(function(buffer) {
+    if (token.gen !== 1) {
+      return;
+    }
+    var endMs = Math.ceil((Number(buffer.duration) || 0) * 1000) + AUDIO_PLAY_END_GRACE_MS;
+    token.endTimer = setTimeout(function() {
+      token.endTimer = null;
+      if (token.gen !== 1 || token.ended) {
+        return;
+      }
+      token.ended = true;
+      if (typeof stopPcmPlayback_ === 'function') {
+        stopPcmPlayback_(token.handle);
+      }
+      token.handle = null;
+      if (typeof token._onended === 'function') {
+        token._onended();
+      }
+    }, endMs);
+    token.handle = playPcmBuffer_(buffer, {
+      volume: (typeof volume === 'number') ? volume : 1,
+      onEnded: function() {
+        if (token.gen !== 1 || token.ended) {
+          return;
+        }
+        token.ended = true;
+        if (token.endTimer) {
+          clearTimeout(token.endTimer);
+          token.endTimer = null;
+        }
+        token.handle = null;
+        if (typeof token._onended === 'function') {
+          token._onended();
+        }
+      }
+    });
+  }).catch(function() {
+    if (token.gen !== 1) {
+      return;
+    }
+    token.failed = true;
+    if (typeof token._onerror === 'function') {
+      token._onerror();
+    }
+  });
 }
 
 /**
@@ -1324,19 +1400,22 @@ function runAfterUiClickSfx(fn) {
 }
 
 /**
- * 効果音 Audio を止める
- * @param {HTMLAudioElement|null} audio
+ * 効果音スロットを止める。終了コールバックは呼ばない。
+ * @param {{gen?: number, handle?: object}|null} slot
  */
-function stopSfxAudioElement_(audio) {
-  if (!audio) {
+function stopSfxSlot_(slot) {
+  if (!slot) {
     return;
   }
-  audio.onended = null;
-  audio.onerror = null;
-  try {
-    audio.pause();
-    audio.currentTime = 0;
-  } catch (e) {}
+  slot.gen = (slot.gen || 0) + 1;
+  if (slot.unlockTimer) {
+    clearTimeout(slot.unlockTimer);
+    slot.unlockTimer = null;
+  }
+  if (typeof stopPcmPlayback_ === 'function') {
+    stopPcmPlayback_(slot.handle);
+  }
+  slot.handle = null;
 }
 
 /**
@@ -1344,12 +1423,13 @@ function stopSfxAudioElement_(audio) {
  */
 function stopUiClickSfx() {
   uiSfx.clickPlaying = false;
+  uiSfx.clickSlot = null;
   uiSfx.clickWaiters = [];
-  stopSfxAudioElement_(uiSfx.click);
-  stopSfxAudioElement_(uiSfx.start);
-  stopSfxAudioElement_(uiSfx.retry);
-  stopSfxAudioElement_(uiSfx.charge);
-  stopSfxAudioElement_(uiSfx.home);
+  stopSfxSlot_(uiSfx.click);
+  stopSfxSlot_(uiSfx.start);
+  stopSfxSlot_(uiSfx.retry);
+  stopSfxSlot_(uiSfx.charge);
+  stopSfxSlot_(uiSfx.home);
   if (typeof stopStartPrepareWaitingSfx === 'function') {
     stopStartPrepareWaitingSfx({ immediate: true });
   }
@@ -1357,19 +1437,16 @@ function stopUiClickSfx() {
 }
 
 /**
- * 静的効果音用 Audio を用意する
- * @param {HTMLAudioElement|null} existing
+ * @param {string} slotName
  * @param {string} url
- * @returns {HTMLAudioElement}
+ * @returns {{url: string, gen: number, handle: object|null}}
  */
-function ensureStaticSfxAudio_(existing, url) {
-  if (existing) {
-    return existing;
+function ensureSfxSlot_(slotName, url) {
+  var slot = uiSfx[slotName];
+  if (!slot || slot.url !== url) {
+    uiSfx[slotName] = { url: url, gen: 0, handle: null };
   }
-  var audio = new Audio(buildStaticSfxUrl(url));
-  audio.preload = 'auto';
-  audio.volume = UI_CLICK_SFX_VOLUME;
-  return audio;
+  return uiSfx[slotName];
 }
 
 /**
@@ -1377,35 +1454,39 @@ function ensureStaticSfxAudio_(existing, url) {
  * @returns {HTMLAudioElement}
  */
 function ensureUiClickSfxAudio() {
-  uiSfx.click = ensureStaticSfxAudio_(uiSfx.click, UI_CLICK_SFX_URL);
-    return uiSfx.click;
-  }
+  return ensureSfxSlot_('click', UI_CLICK_SFX_URL);
+}
 
 /**
- * START効果音用 Audio を用意する（未作成なら生成）
- * @returns {HTMLAudioElement}
+ * START効果音用スロット
  */
 function ensureStartSfxAudio() {
-  uiSfx.start = ensureStaticSfxAudio_(uiSfx.start, START_SFX_URL);
-  return uiSfx.start;
+  return ensureSfxSlot_('start', START_SFX_URL);
 }
 
 function ensureRetrySfxAudio() {
-  uiSfx.retry = ensureStaticSfxAudio_(uiSfx.retry, RETRY_SFX_URL);
-  return uiSfx.retry;
+  return ensureSfxSlot_('retry', RETRY_SFX_URL);
 }
 
 /**
- * 起動時にボタン効果音を先読みする
+ * 起動時にボタン効果音を先にほどく
  */
 function preloadUiClickSfx() {
   try {
-    ensureUiClickSfxAudio().load();
-    ensureStartSfxAudio().load();
-    ensureRetrySfxAudio().load();
-    ensureChargeSfxAudio().load();
-    ensureHomeSfxAudio().load();
-    ensureWaitingSfxAudio().load();
+    var slots = [
+      ensureUiClickSfxAudio(),
+      ensureStartSfxAudio(),
+      ensureRetrySfxAudio(),
+      ensureChargeSfxAudio(),
+      ensureHomeSfxAudio(),
+      ensureWaitingSfxAudio()
+    ];
+    var i;
+    for (i = 0; i < slots.length; i++) {
+      if (slots[i] && typeof preloadPcmUrl_ === 'function') {
+        preloadPcmUrl_(buildStaticSfxUrl(slots[i].url));
+      }
+    }
   } catch (e) {}
 }
 
@@ -1442,55 +1523,84 @@ function playRetrySfxThen(fn) {
 }
 
 /**
- * 指定 Audio をボタン効果音として再生する
- * @param {HTMLAudioElement} audio
+ * 指定スロットをボタン効果音として再生する
+ * @param {{url: string, gen: number, handle: object|null}} slot
  */
-function playButtonSfxAudio_(audio) {
+function playButtonSfxAudio_(slot) {
   stopCompletionSfx();
   stopCurrentAudioPlayback({ skipButtonUpdate: true, keepAudioQueue: false });
   uiSfx.clickWaiters = [];
-  if (audio !== uiSfx.click) {
-    stopSfxAudioElement_(uiSfx.click);
+  if (slot !== uiSfx.click) {
+    stopSfxSlot_(uiSfx.click);
   }
-  if (audio !== uiSfx.start) {
-    stopSfxAudioElement_(uiSfx.start);
+  if (slot !== uiSfx.start) {
+    stopSfxSlot_(uiSfx.start);
   }
-  if (audio !== uiSfx.retry) {
-    stopSfxAudioElement_(uiSfx.retry);
+  if (slot !== uiSfx.retry) {
+    stopSfxSlot_(uiSfx.retry);
   }
-  if (audio !== uiSfx.charge) {
-    stopSfxAudioElement_(uiSfx.charge);
+  if (slot !== uiSfx.charge) {
+    stopSfxSlot_(uiSfx.charge);
   }
-  if (audio !== uiSfx.home) {
-    stopSfxAudioElement_(uiSfx.home);
+  if (slot !== uiSfx.home) {
+    stopSfxSlot_(uiSfx.home);
   }
-  if (audio !== uiSfx.waiting && typeof stopStartPrepareWaitingSfx === 'function') {
+  if (typeof stopStartPrepareWaitingSfx === 'function') {
     stopStartPrepareWaitingSfx({ immediate: true });
   }
-  try {
-    audio.pause();
-    audio.currentTime = 0;
-  } catch (e) {}
-  uiSfx.clickPlaying = true;
-  refreshAudioLockControls_();
-  audio.onended = function() {
-    uiSfx.clickPlaying = false;
-    flushUiClickSfxWaiters();
-    refreshAudioLockControls_();
-  };
-  audio.onerror = function() {
-    uiSfx.clickPlaying = false;
-    flushUiClickSfxWaiters();
-    refreshAudioLockControls_();
-  };
-  var playPromise = audio.play();
-  if (playPromise && typeof playPromise.catch === 'function') {
-    playPromise.catch(function() {
-      uiSfx.clickPlaying = false;
-      flushUiClickSfxWaiters();
-      refreshAudioLockControls_();
-    });
+  if (!slot) {
+    return;
   }
+  kickPcmAudioContext_();
+  stopSfxSlot_(slot);
+  slot.gen += 1;
+  var gen = slot.gen;
+  uiSfx.clickPlaying = true;
+  uiSfx.clickSlot = slot;
+  refreshAudioLockControls_();
+  function finishSlot_(failed) {
+    if (slot.gen !== gen || uiSfx.clickSlot !== slot) {
+      return;
+    }
+    uiSfx.clickPlaying = false;
+    uiSfx.clickSlot = null;
+    flushUiClickSfxWaiters();
+    refreshAudioLockControls_();
+    if (failed) {
+      return;
+    }
+  }
+  if (typeof decodeSfxUrl_ !== 'function' || typeof playPcmBuffer_ !== 'function') {
+    finishSlot_(true);
+    return;
+  }
+  decodeSfxUrl_(buildStaticSfxUrl(slot.url)).then(function(buffer) {
+    if (slot.gen !== gen) {
+      return;
+    }
+    var unlockMs = Math.ceil((Number(buffer.duration) || 0) * 1000) + AUDIO_PLAY_END_GRACE_MS;
+    slot.unlockTimer = setTimeout(function() {
+      slot.unlockTimer = null;
+      if (slot.handle && typeof stopPcmPlayback_ === 'function') {
+        stopPcmPlayback_(slot.handle);
+        slot.handle = null;
+      }
+      finishSlot_(false);
+    }, unlockMs);
+    slot.handle = playPcmBuffer_(buffer, {
+      volume: UI_CLICK_SFX_VOLUME,
+      onEnded: function() {
+        if (slot.unlockTimer) {
+          clearTimeout(slot.unlockTimer);
+          slot.unlockTimer = null;
+        }
+        slot.handle = null;
+        finishSlot_(false);
+      }
+    });
+  }).catch(function() {
+    finishSlot_(true);
+  });
 }
 
 /**
@@ -1521,8 +1631,7 @@ function playRetrySfx() {
 }
 
 function ensureChargeSfxAudio() {
-  uiSfx.charge = ensureStaticSfxAudio_(uiSfx.charge, CHARGE_SFX_URL);
-  return uiSfx.charge;
+  return ensureSfxSlot_('charge', CHARGE_SFX_URL);
 }
 
 function playChargeSfx() {
@@ -1530,8 +1639,7 @@ function playChargeSfx() {
 }
 
 function ensureHomeSfxAudio() {
-  uiSfx.home = ensureStaticSfxAudio_(uiSfx.home, HOME_SFX_URL);
-  return uiSfx.home;
+  return ensureSfxSlot_('home', HOME_SFX_URL);
 }
 
 function playHomeSfx() {
@@ -1539,8 +1647,7 @@ function playHomeSfx() {
 }
 
 function ensureWaitingSfxAudio() {
-  uiSfx.waiting = ensureStaticSfxAudio_(uiSfx.waiting, WAITING_SFX_URL);
-  return uiSfx.waiting;
+  return ensureSfxSlot_('waiting', WAITING_SFX_URL);
 }
 
 /**
@@ -1565,27 +1672,27 @@ function clearWaitingSfxArmTimer_() {
 }
 
 /**
- * volume を目標まで段階的に変える
- * @param {HTMLAudioElement} audio
+ * PCM の音量を目標まで段階的に変える
+ * @param {{gain?: GainNode}|null} handle
  * @param {number} targetVol
  * @param {number} fadeMs
  * @param {function(): void} [onDone]
  */
-function fadeSfxVolume_(audio, targetVol, fadeMs, onDone) {
+function fadeSfxVolume_(handle, targetVol, fadeMs, onDone) {
   clearWaitingSfxFadeTimer_();
-  if (!audio) {
+  if (!handle || !handle.gain) {
     if (typeof onDone === 'function') {
       onDone();
     }
     return;
   }
   var steps = Math.max(4, Math.round((fadeMs || 300) / 50));
-  var from = Number(audio.volume) || 0;
+  var from = Number(handle.gain.gain.value) || 0;
   var to = Math.max(0, Math.min(1, targetVol));
   var i = 0;
   if (fadeMs <= 0 || Math.abs(from - to) < 0.01) {
     try {
-      audio.volume = to;
+      handle.gain.gain.value = to;
     } catch (eVol) {}
     if (typeof onDone === 'function') {
       onDone();
@@ -1596,7 +1703,7 @@ function fadeSfxVolume_(audio, targetVol, fadeMs, onDone) {
     i += 1;
     var t = Math.min(1, i / steps);
     try {
-      audio.volume = from + (to - from) * t;
+      handle.gain.gain.value = from + (to - from) * t;
     } catch (eStep) {}
     if (t >= 1) {
       clearWaitingSfxFadeTimer_();
@@ -1628,66 +1735,66 @@ function playWaitingSfxCycle_() {
   if (!uiSfx.waitingLoopActive || !startAudioPrepare.busy) {
     return;
   }
-  var audio = ensureWaitingSfxAudio();
+  kickPcmAudioContext_();
+  var slot = ensureWaitingSfxAudio();
   clearWaitingSfxFadeTimer_();
-  audio.onended = null;
-  audio.onerror = null;
-  try {
-    audio.pause();
-    audio.currentTime = 0;
-    audio.playbackRate = WAITING_SFX_PLAYBACK_RATE;
-    audio.volume = WAITING_SFX_VOLUME;
-  } catch (eReset) {}
-
-  function armFadeOutLoop_() {
-    if (!uiSfx.waitingLoopActive || !startAudioPrepare.busy) {
+  stopPcmPlayback_(slot.handle);
+  slot.handle = null;
+  uiSfx.waitingGen = (uiSfx.waitingGen || 0) + 1;
+  var gen = uiSfx.waitingGen;
+  if (typeof decodeSfxUrl_ !== 'function' || typeof playPcmBuffer_ !== 'function') {
+    uiSfx.waitingLoopActive = false;
+    return;
+  }
+  decodeSfxUrl_(buildStaticSfxUrl(slot.url)).then(function(buffer) {
+    if (gen !== uiSfx.waitingGen || !uiSfx.waitingLoopActive || !startAudioPrepare.busy) {
       return;
     }
-    var durSec = Number(audio.duration);
-    var rate = Number(audio.playbackRate) || WAITING_SFX_PLAYBACK_RATE;
+    var rate = WAITING_SFX_PLAYBACK_RATE;
+    var advanced = false;
+    function advanceCycle_() {
+      if (advanced || gen !== uiSfx.waitingGen) {
+        return;
+      }
+      advanced = true;
+      clearWaitingSfxFadeTimer_();
+      if (uiSfx.waitingLoopActive && startAudioPrepare.busy) {
+        scheduleNextWaitingSfxCycle_();
+      }
+    }
+    var handle = playPcmBuffer_(buffer, {
+      volume: WAITING_SFX_VOLUME,
+      playbackRate: rate,
+      onEnded: advanceCycle_
+    });
+    slot.handle = handle;
+    var durSec = Number(buffer.duration);
     if (!isFinite(durSec) || durSec <= 0.2) {
-      audio.onended = function() {
-        if (uiSfx.waitingLoopActive && startAudioPrepare.busy) {
-          scheduleNextWaitingSfxCycle_();
-        }
-      };
       return;
     }
-    // playbackRate を反映した実時間でフェード位置を決める
     var wallDurMs = Math.floor((durSec / rate) * 1000);
     var fadeMs = Math.min(WAITING_SFX_FADE_OUT_MS, Math.floor(wallDurMs * 0.45));
     var startFadeMs = Math.max(0, wallDurMs - fadeMs);
     uiSfx.waitingFadeTimer = setTimeout(function() {
       uiSfx.waitingFadeTimer = null;
-      fadeSfxVolume_(audio, 0, fadeMs, function() {
-        if (!uiSfx.waitingLoopActive || !startAudioPrepare.busy) {
-          stopSfxAudioElement_(audio);
-          return;
+      if (gen !== uiSfx.waitingGen) {
+        return;
+      }
+      fadeSfxVolume_(handle, 0, fadeMs, function() {
+        stopPcmPlayback_(handle);
+        if (slot.handle === handle) {
+          slot.handle = null;
         }
-        scheduleNextWaitingSfxCycle_();
+        advanceCycle_();
       });
     }, startFadeMs);
-  }
-
-  audio.onerror = function() {
+  }).catch(function() {
+    if (gen !== uiSfx.waitingGen) {
+      return;
+    }
     clearWaitingSfxFadeTimer_();
     uiSfx.waitingLoopActive = false;
-  };
-  var playPromise = audio.play();
-  if (audio.readyState >= 1 && isFinite(audio.duration) && audio.duration > 0) {
-    armFadeOutLoop_();
-  } else {
-    audio.onloadedmetadata = function() {
-      audio.onloadedmetadata = null;
-      armFadeOutLoop_();
-    };
-  }
-  if (playPromise && typeof playPromise.catch === 'function') {
-    playPromise.catch(function() {
-      clearWaitingSfxFadeTimer_();
-      uiSfx.waitingLoopActive = false;
-    });
-  }
+  });
 }
 
 /**
@@ -1713,19 +1820,25 @@ function startStartPrepareWaitingSfx() {
 function stopStartPrepareWaitingSfx(options) {
   options = options || {};
   uiSfx.waitingLoopActive = false;
+  uiSfx.waitingGen = (uiSfx.waitingGen || 0) + 1;
   clearWaitingSfxArmTimer_();
-  var audio = uiSfx.waiting;
-  if (!audio) {
+  var slot = uiSfx.waiting;
+  var handle = slot && slot.handle;
+  if (!handle) {
     clearWaitingSfxFadeTimer_();
     return;
   }
   if (options.immediate) {
     clearWaitingSfxFadeTimer_();
-    stopSfxAudioElement_(audio);
+    stopPcmPlayback_(handle);
+    slot.handle = null;
     return;
   }
-  fadeSfxVolume_(audio, 0, WAITING_SFX_STOP_FADE_MS, function() {
-    stopSfxAudioElement_(audio);
+  fadeSfxVolume_(handle, 0, WAITING_SFX_STOP_FADE_MS, function() {
+    stopPcmPlayback_(handle);
+    if (slot.handle === handle) {
+      slot.handle = null;
+    }
   });
 }
 
