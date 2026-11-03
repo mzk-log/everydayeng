@@ -894,6 +894,9 @@ function clearLocalAudioCachesForText(text) {
  * @returns {Promise<*>}
  */
 function saveDriveAudioAsync(item, sheetField, voiceGender, speed, audioContent) {
+  if (!isAudioDownloadEnabled()) {
+    return Promise.resolve(null);
+  }
   if (!canUseDriveAudioMeta(item) || !audioContent || !googleAuth.email) {
     return Promise.resolve(null);
   }
@@ -1058,13 +1061,29 @@ function playFieldAudio(fieldType, forceRefresh, options) {
           playAudioFromCache(idbResult.audioData, fieldType, 'indexedDB');
         }, 0);
         settleAudioNetwork();
-      return;
-    }
+        return;
+      }
+      if (!isAudioDownloadEnabled()) {
+        hidePlayButtonLoading(fieldType);
+        fieldPlay.field = null;
+        updateFieldPlayButtons();
+        if (fieldType === 'question') onQuestionAudioSettled('fail');
+        settleAudioNetwork();
+        return;
+      }
       enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork, forceRefresh);
     });
     return;
   }
 
+  if (!isAudioDownloadEnabled()) {
+    hidePlayButtonLoading(fieldType);
+    fieldPlay.field = null;
+    updateFieldPlayButtons();
+    if (fieldType === 'question') onQuestionAudioSettled('fail');
+    settleAudioNetwork();
+    return;
+  }
   enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork, forceRefresh);
 }
 
@@ -1173,12 +1192,38 @@ function playAddStudyItemFieldAudio(item, fieldType, forceRefresh) {
         settleAudioNetwork();
         return;
       }
+      if (!isAudioDownloadEnabled()) {
+        if (typeof clearAddStudyAudioBusy_ === 'function') {
+          clearAddStudyAudioBusy_();
+        }
+        fieldPlay.field = null;
+        if (typeof syncAddStudyItemEditorUi === 'function') {
+          syncAddStudyItemEditorUi();
+        } else {
+          updateFieldPlayButtons();
+        }
+        settleAudioNetwork();
+        return;
+      }
       enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork, forceRefresh);
     });
     return;
   }
 
   // 長押し再TTS：ローカルキャッシュ削除のうえ Drive スキップ
+  if (!isAudioDownloadEnabled()) {
+    if (typeof clearAddStudyAudioBusy_ === 'function') {
+      clearAddStudyAudioBusy_();
+    }
+    fieldPlay.field = null;
+    if (typeof syncAddStudyItemEditorUi === 'function') {
+      syncAddStudyItemEditorUi();
+    } else {
+      updateFieldPlayButtons();
+    }
+    settleAudioNetwork();
+    return;
+  }
   removeCachedAudio(text, voiceGender, speed);
   enqueuePlayAudioFetch(text, voiceGender, speed, fieldType, sheetField, item, settleAudioNetwork, true);
 }
@@ -1975,6 +2020,14 @@ function hidePlayButtonLoading(fieldType) {
  * @param {function(): void} done
  */
 function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetField, item, signal, generation, done) {
+  if (!isAudioDownloadEnabled()) {
+    hidePlayButtonLoading(fieldType);
+    fieldPlay.field = null;
+    updateFieldPlayButtons();
+    if (fieldType === 'question') onQuestionAudioSettled('fail');
+    done();
+    return;
+  }
   fieldPlay.field = fieldType || null;
   showPlayButtonLoading(fieldType);
   refreshAdvanceNavControls();
@@ -2096,6 +2149,14 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
  * @param {function(): void} [done]
  */
 function fetchAudioFromAPI(text, voiceGender, speed, fieldType, item, sheetField, signal, generation, done) {
+  if (!isAudioDownloadEnabled()) {
+    hidePlayButtonLoading(fieldType);
+    fieldPlay.field = null;
+    updateFieldPlayButtons();
+    if (fieldType === 'question') onQuestionAudioSettled('fail');
+    done();
+    return;
+  }
   fieldPlay.field = fieldType || null;
   showPlayButtonLoading(fieldType);
   refreshAdvanceNavControls();
@@ -2468,6 +2529,9 @@ function noteCategoryGuideCached_(idbId) {
  */
 function scheduleAudioPrefetch() {
   if (!ENABLE_AUDIO_PREFETCH || audioPrefetch.stopped) {
+    return;
+  }
+  if (!isAudioDownloadEnabled()) {
     return;
   }
   if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
@@ -2995,6 +3059,66 @@ function prepareStudyItemsAudio(items, onDone, options) {
 }
 
 /**
+ * 音声の Drive／TTS 取得が許可されているか（セッション・既定 OFF）
+ * @returns {boolean}
+ */
+function isAudioDownloadEnabled() {
+  return audioDownloadEnabled === true;
+}
+
+/**
+ * 出題・解答の必要音声が Mem／IdB に揃っているか
+ * @param {Object} item
+ * @returns {boolean}
+ */
+function isStudyItemLocalAudioReady(item) {
+  if (!item) {
+    return false;
+  }
+  return getStudyItemMissingAudioFields(item).length === 0;
+}
+
+/**
+ * カテゴリ内のローカル音声揃い問題数
+ * @param {string|number} categoryNo
+ * @returns {number}
+ */
+function countLocalReadyItemsInCategory(categoryNo) {
+  if (categoryNo == null || categoryNo === '') {
+    return 0;
+  }
+  var key = String(categoryNo);
+  var items = (typeof getMemoryAllStudyItems === 'function')
+    ? getMemoryAllStudyItems()
+    : [];
+  var n = 0;
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    if (!it || String(it.category_no) !== key) {
+      continue;
+    }
+    if (isStudyItemLocalAudioReady(it)) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+/**
+ * 音声ダウンロード OFF 時はローカル揃い問題だけ残す
+ * @param {Array} items
+ * @returns {Array}
+ */
+function filterItemsForAudioDownloadMode(items) {
+  if (isAudioDownloadEnabled()) {
+    return items || [];
+  }
+  return (items || []).filter(function(it) {
+    return isStudyItemLocalAudioReady(it);
+  });
+}
+
+/**
  * 当該問題で IdB／Mem に無い欄（sheet 基準。Start前準備・追加保存後準備で使用）
  * @param {Object} item
  * @returns {string[]} 'question'|'answer'
@@ -3090,8 +3214,16 @@ function ensureStudyItemFieldAudio_(job, signal, generation, done) {
       finish();
       return;
     }
+    if (!isAudioDownloadEnabled()) {
+      finish();
+      return;
+    }
     ensureFreshGoogleAuthToken(function() {
       if (generation !== audioFetch.generation) {
+        finish();
+        return;
+      }
+      if (!isAudioDownloadEnabled()) {
         finish();
         return;
       }
@@ -3178,6 +3310,9 @@ function ensureStudyItemFieldAudio_(job, signal, generation, done) {
 }
 
 function fetchDriveAudioCoverage() {
+  if (!isAudioDownloadEnabled()) {
+    return;
+  }
   if (!googleAuth.email || !hasUsableAuth()) {
     return;
   }
@@ -3619,6 +3754,10 @@ function playCategoryPhrase_(text, categoryNo, options) {
           return;
         }
         startCategoryAnnouncePlayback_(idbResult.audioData, gen, finish);
+        return;
+      }
+      if (!isAudioDownloadEnabled()) {
+        finish(options.forEdit ? 'fail' : 'skip');
         return;
       }
       fetchCategoryGuideFromNet_(phrase, categoryNo, voice, speed, gen, options, finish);

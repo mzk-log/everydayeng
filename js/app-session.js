@@ -47,6 +47,7 @@ function updateLearningLockedSideMenuControls() {
     }
   });
   updateVisibleCategoriesMenuLock();
+  updateAudioDownloadMenuLock();
 }
 
 /**
@@ -77,6 +78,87 @@ function updateVisibleCategoriesMenuLock() {
     }
   }
   updateAddStudyItemMenuLock();
+  updateAudioDownloadMenuLock();
+}
+
+/**
+ * 音声ダウンロード切替は HOME 時のみ
+ */
+function updateAudioDownloadMenuLock() {
+  var locked = !isHomeScreenActive();
+  var container = dom.audioDownloadMenuItemContainer;
+  var button = dom.audioDownloadMenuButton;
+  var label = dom.audioDownloadMenuButtonText;
+  var lockTitle = '音声ダウンロードはHOME画面でのみ変更できます。';
+  var hintTitle = '音声のDrive／TTS取得のみ。表やAnsの通信は対象外';
+  if (container) {
+    if (locked) {
+      container.classList.add('is-locked');
+    } else {
+      container.classList.remove('is-locked');
+    }
+  }
+  if (label) {
+    label.textContent = isAudioDownloadEnabled() ? '音声ダウンロード ON' : '音声ダウンロード OFF';
+  }
+  if (button) {
+    button.disabled = locked;
+    button.title = locked ? lockTitle : hintTitle;
+  }
+}
+
+/**
+ * 音声ダウンロード ON/OFF（HOME のみ・セッション限定）
+ */
+function toggleAudioDownloadEnabled() {
+  if (!isHomeScreenActive()) {
+    return;
+  }
+  audioDownloadEnabled = !audioDownloadEnabled;
+  updateAudioDownloadMenuLock();
+  if (!isAudioDownloadEnabled()) {
+    if (typeof abortRunningAudioPrefetch === 'function') {
+      abortRunningAudioPrefetch();
+    }
+    if (typeof invalidateGasAudioFetches === 'function') {
+      // 先読み・準備中の Drive／TTS を止める（本問再生中は稀。HOME なので本問無し想定）
+      invalidateGasAudioFetches();
+    }
+  }
+  function afterIdb() {
+    if (typeof clearSelection === 'function') {
+      clearSelection();
+    } else {
+      questionList.selected = [];
+    }
+    if (typeof refreshVisibleCategoriesRuntimeUi === 'function') {
+      refreshVisibleCategoriesRuntimeUi();
+    } else if (typeof syncDailyStudyStatsDisplay === 'function') {
+      syncDailyStudyStatsDisplay();
+    }
+    if (isAudioDownloadEnabled()) {
+      if (typeof scheduleAudioPrefetch === 'function') {
+        scheduleAudioPrefetch();
+      }
+      if (typeof fetchDriveAudioCoverage === 'function') {
+        fetchDriveAudioCoverage();
+      }
+    } else {
+      if (typeof showError === 'function') {
+        var visible = (typeof getVisibleCategories === 'function') ? getVisibleCategories() : [];
+        if (!visible.length) {
+          showError('端末に音声がある問題がありません。Wi‑Fi等で音声ダウンロードをONにして取得してください。');
+        } else {
+          showError('端末に音声がある問題だけ表示します。');
+        }
+      }
+    }
+  }
+  if (typeof refreshAudioIdbStats === 'function') {
+    refreshAudioIdbStats(afterIdb);
+    return;
+  }
+  afterIdb();
 }
 
 /**

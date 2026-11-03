@@ -7,7 +7,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202610282124';
+    var FRONT_VERSION = '202611032140';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -46,7 +46,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202610282124">
+  <link rel="stylesheet" href="style.css?v=202611032140">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -186,6 +186,11 @@
           </div>
         </div>
       </div>
+      <div class="side-menu-item-container" id="audioDownloadMenuItemContainer">
+        <button class="side-menu-item" type="button" id="audioDownloadMenuButton" title="音声のDrive／TTS取得のみ。表やAnsの通信は対象外">
+          <span class="side-menu-item-text" id="audioDownloadMenuButtonText">音声ダウンロード OFF</span>
+        </button>
+      </div>
       <div class="side-menu-item-container" id="loadDiagMenuItemContainer" style="display: none;">
         <button class="side-menu-item" type="button" id="loadDiagMenuButton">
           <span class="side-menu-item-text" id="loadDiagMenuButtonText">通信ログ OFF</span>
@@ -193,7 +198,7 @@
       </div>
       <div class="side-menu-item-container" id="addStudyItemItemContainer">
         <button class="side-menu-item" type="button" id="addStudyItemMenuButton">
-          <span class="side-menu-item-text">問題を追加</span>
+          <span class="side-menu-item-text">問題の追加・編集</span>
         </button>
       </div>
     </div>
@@ -698,35 +703,35 @@
     </div>
   </div>
 
-  <script src="js/app-state.js?v=202610282124"></script>
-  <script src="js/app-gas.js?v=202610282124"></script>
-  <script src="js/app-auth.js?v=202610282124"></script>
-  <script src="js/app-settings.js?v=202610282124"></script>
-  <script src="js/app-question.js?v=202610282124"></script>
-  <script src="js/app-practice.js?v=202610282124"></script>
-  <script src="js/app-learning.js?v=202610282124"></script>
-  <script src="js/app-audio.js?v=202610282124"></script>
-  <script src="js/app-nav.js?v=202610282124"></script>
-  <script src="js/app-modal.js?v=202610282124"></script>
-  <script src="js/app-update.js?v=202610282124"></script>
-  <script src="js/app-boot.js?v=202610282124"></script>
-  <script src="js/app-category.js?v=202610282124"></script>
-  <script src="js/app-events.js?v=202610282124"></script>
-  <script src="js/app-menu.js?v=202610282124"></script>
-  <script src="js/app-session.js?v=202610282124"></script>
-  <script src="js/app-add-study.js?v=202610282124"></script>
-  <script src="js/app-sort.js?v=202610282124"></script>
-  <script src="js/app-study-load.js?v=202610282124"></script>
-  <script src="js/app-mode-page.js?v=202610282124"></script>
-  <script src="js/app-background.js?v=202610282124"></script>
-  <script src="js/app-error.js?v=202610282124"></script>
-  <script src="js/app-list.js?v=202610282124"></script>
-  <script src="js/app-list-nav.js?v=202610282124"></script>
-  <script src="js/app-field-edit.js?v=202610282124"></script>
-  <script src="js/app-format.js?v=202610282124"></script>
-  <script src="js/app-image.js?v=202610282124"></script>
-  <script src="js/app-sheet.js?v=202610282124"></script>
-  <script src="js/app-gesture.js?v=202610282124"></script>
+  <script src="js/app-state.js?v=202611032140"></script>
+  <script src="js/app-gas.js?v=202611032140"></script>
+  <script src="js/app-auth.js?v=202611032140"></script>
+  <script src="js/app-settings.js?v=202611032140"></script>
+  <script src="js/app-question.js?v=202611032140"></script>
+  <script src="js/app-practice.js?v=202611032140"></script>
+  <script src="js/app-learning.js?v=202611032140"></script>
+  <script src="js/app-audio.js?v=202611032140"></script>
+  <script src="js/app-nav.js?v=202611032140"></script>
+  <script src="js/app-modal.js?v=202611032140"></script>
+  <script src="js/app-update.js?v=202611032140"></script>
+  <script src="js/app-boot.js?v=202611032140"></script>
+  <script src="js/app-category.js?v=202611032140"></script>
+  <script src="js/app-events.js?v=202611032140"></script>
+  <script src="js/app-menu.js?v=202611032140"></script>
+  <script src="js/app-session.js?v=202611032140"></script>
+  <script src="js/app-add-study.js?v=202611032140"></script>
+  <script src="js/app-sort.js?v=202611032140"></script>
+  <script src="js/app-study-load.js?v=202611032140"></script>
+  <script src="js/app-mode-page.js?v=202611032140"></script>
+  <script src="js/app-background.js?v=202611032140"></script>
+  <script src="js/app-error.js?v=202611032140"></script>
+  <script src="js/app-list.js?v=202611032140"></script>
+  <script src="js/app-list-nav.js?v=202611032140"></script>
+  <script src="js/app-field-edit.js?v=202611032140"></script>
+  <script src="js/app-format.js?v=202611032140"></script>
+  <script src="js/app-image.js?v=202611032140"></script>
+  <script src="js/app-sheet.js?v=202611032140"></script>
+  <script src="js/app-gesture.js?v=202611032140"></script>
 </body>
 </html>
 

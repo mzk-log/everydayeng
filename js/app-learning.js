@@ -6,18 +6,23 @@ function getItemsForStartLearning() {
   if (!categoryCatalog.items || categoryCatalog.items.length === 0) {
     return [];
   }
+  var filtered;
   if (questionList.selected.length === 0) {
-    return categoryCatalog.items.slice();
-  }
-  var filtered = [];
-  var selected = questionList.selected.slice().sort(function(a, b) { return a - b; });
-  selected.forEach(function(index) {
-    if (index >= 0 && index < categoryCatalog.items.length) {
-      filtered.push(categoryCatalog.items[index]);
+    filtered = categoryCatalog.items.slice();
+  } else {
+    filtered = [];
+    var selected = questionList.selected.slice().sort(function(a, b) { return a - b; });
+    selected.forEach(function(index) {
+      if (index >= 0 && index < categoryCatalog.items.length) {
+        filtered.push(categoryCatalog.items[index]);
+      }
+    });
+    if (filtered.length === 0) {
+      filtered = categoryCatalog.items.slice();
     }
-  });
-  if (filtered.length === 0) {
-    return categoryCatalog.items.slice();
+  }
+  if (typeof filterItemsForAudioDownloadMode === 'function') {
+    return filterItemsForAudioDownloadMode(filtered);
   }
   return filtered;
 }
@@ -147,6 +152,23 @@ function startLearningAfterAudioPrepare(options) {
     return;
   }
   function beginAfterIdbSync() {
+    // 音声ダウンロード OFF：ネット準備せずローカル揃いのみ（List 側で既に絞られている想定）
+    if (typeof isAudioDownloadEnabled === 'function' && !isAudioDownloadEnabled()) {
+      var localReady = items;
+      if (typeof filterItemsForAudioDownloadMode === 'function') {
+        localReady = filterItemsForAudioDownloadMode(items);
+      }
+      if (!localReady.length) {
+        showError('端末に音声がある問題がありません。Wi‑Fi等で音声ダウンロードをONにして取得してください。');
+        return;
+      }
+      if (playStartIfNoPrepare) {
+        playStartSfxThenStartLearning_(startLearning);
+      } else {
+        startLearning();
+      }
+      return;
+    }
     var needsPrepare = false;
     if (typeof getStudyItemMissingAudioFields === 'function') {
       for (var i = 0; i < items.length; i++) {
@@ -206,25 +228,12 @@ function startLearning() {
     lastDateMode.sessionItems = questionList.original.slice();
   }
   
-  // 選択された問題のみを抽出（未選択時は全問）
-  var filteredData = [];
-  if (questionList.selected.length === 0) {
-    // 未選択時は全問
-    filteredData = categoryCatalog.items.slice();
-  } else {
-    // 選択された問題のみ（元の順序で）
-    questionList.selected.sort(function(a, b) { return a - b; }); // インデックスをソート
-    questionList.selected.forEach(function(index) {
-      if (index >= 0 && index < categoryCatalog.items.length) {
-        filteredData.push(categoryCatalog.items[index]);
-      }
-    });
-    // 範囲外の選択だけだと 0 件になり、学習画面が空になる。表示中の全問で開始する
-    if (filteredData.length === 0) {
-      filteredData = categoryCatalog.items.slice();
-      questionList.selected = [];
-    }
+  // 選択された問題のみを抽出（未選択時は表示中の全問）。OFF時はローカル揃いのみ
+  var filteredData = getItemsForStartLearning();
+  if (filteredData.length === 0) {
+    return;
   }
+  questionList.selected = [];
   
   // フィルタリングされたデータをcategoryCatalog.itemsに設定
   categoryCatalog.items = filteredData;
@@ -445,8 +454,12 @@ function getVisibleCategoriesStats() {
   var visible = getVisibleCategories();
   var categoryCount = visible.length;
   var questionCount = 0;
+  var useLocalReady = typeof isAudioDownloadEnabled === 'function' && !isAudioDownloadEnabled() &&
+    typeof countLocalReadyItemsInCategory === 'function';
   for (var i = 0; i < visible.length; i++) {
-    var n = Number(visible[i].count);
+    var n = useLocalReady
+      ? countLocalReadyItemsInCategory(visible[i].no)
+      : Number(visible[i].count);
     if (!isNaN(n) && n > 0) {
       questionCount += Math.floor(n);
     }

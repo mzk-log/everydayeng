@@ -342,6 +342,12 @@ function setupEventListeners() {
       closeVisibleCategoriesOverlay();
     });
   }
+  var audioDownloadMenuButton = dom.audioDownloadMenuButton;
+  if (audioDownloadMenuButton) {
+    audioDownloadMenuButton.addEventListener('click', function() {
+      toggleAudioDownloadEnabled();
+    });
+  }
   var loadDiagMenuButton = dom.loadDiagMenuButton;
   if (loadDiagMenuButton) {
     loadDiagMenuButton.addEventListener('click', function() {
@@ -582,6 +588,20 @@ function setupEventListeners() {
       var voiceGender = this.dataset.voiceGender; // 'male' または 'female'
       updateAudioVoiceButtons(voiceType, voiceGender);
       setAudioVoice(voiceType, voiceGender);
+      // OFF時は声変更で揃い集合が変わるため HOME の実効Listを更新
+      if (typeof isAudioDownloadEnabled === 'function' && !isAudioDownloadEnabled() &&
+          typeof isHomeScreenActive === 'function' && isHomeScreenActive()) {
+        function afterVoiceIdb() {
+          if (typeof refreshVisibleCategoriesRuntimeUi === 'function') {
+            refreshVisibleCategoriesRuntimeUi();
+          }
+        }
+        if (typeof refreshAudioIdbStats === 'function') {
+          refreshAudioIdbStats(afterVoiceIdb);
+        } else {
+          afterVoiceIdb();
+        }
+      }
     });
   });
   

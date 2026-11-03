@@ -382,7 +382,8 @@
 }
 
 #visibleCategoriesItemContainer.is-locked .side-menu-item,
-#addStudyItemItemContainer.is-locked .side-menu-item {
+#addStudyItemItemContainer.is-locked .side-menu-item,
+#audioDownloadMenuItemContainer.is-locked .side-menu-item {
   opacity: 0.55;
   cursor: not-allowed;
 }

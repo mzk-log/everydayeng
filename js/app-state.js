@@ -227,6 +227,8 @@ var MAX_AUDIO_IDB_BYTES = 300 * 1024 * 1024; // IndexedDB 目安上限 300MB
 var AUDIO_VOICE_DEFAULT = 'male';
 var AUDIO_SPEED_FIXED = 'medium';
 var ENABLE_AUDIO_PREFETCH = true; // アプリ起動中の Drive 先読み
+/** 音声の Drive／TTS 取得を許可するか（セッションのみ。既定 OFF。再起動で OFF） */
+var audioDownloadEnabled = false;
 var AUDIO_PREFETCH_TIMEOUT_MS = 20000; // 先読み1本の打ち切り
 var AUDIO_PREFETCH_RECHECK_MS = 30000; // 未取得が残るときの再確認
 var AUDIO_PREFETCH_FAIL_BACKOFF_MS = 10000; // 失敗後の再開（倍増の起点）
@@ -523,5 +525,8 @@ var dom = {
   netLoadDiag: document.getElementById('netLoadDiag'),
   loadDiagMenuItemContainer: document.getElementById('loadDiagMenuItemContainer'),
   loadDiagMenuButton: document.getElementById('loadDiagMenuButton'),
-  loadDiagMenuButtonText: document.getElementById('loadDiagMenuButtonText')
+  loadDiagMenuButtonText: document.getElementById('loadDiagMenuButtonText'),
+  audioDownloadMenuItemContainer: document.getElementById('audioDownloadMenuItemContainer'),
+  audioDownloadMenuButton: document.getElementById('audioDownloadMenuButton'),
+  audioDownloadMenuButtonText: document.getElementById('audioDownloadMenuButtonText')
 };

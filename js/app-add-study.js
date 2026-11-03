@@ -1750,6 +1750,27 @@ function finishAddStudyItemAfterAudioPrepare_(item, successMessage, options) {
     finishUi();
     return;
   }
+  if (typeof isAudioDownloadEnabled === 'function' && !isAudioDownloadEnabled()) {
+    // OFF時はネット準備しない。成功メッセージに省略を付ける
+    var skippedMsg = successMessage
+      ? (successMessage + '（音声ダウンロードがOFFのため準備を省略）')
+      : '音声ダウンロードがOFFのため準備を省略しました。';
+    setAddStudyItemStatus(skippedMsg, true);
+    addStudy.awaitingAudioPrepare = false;
+    endAddStudyItemSaveProgress_();
+    if (options.scrollToId) {
+      addStudy.lastUpdatedId = String(options.scrollToId);
+    }
+    resetAddStudyItemEditor({ keepCategory: true, clearFields: true });
+    renderAddStudyItemList();
+    if (options.scrollToId) {
+      scrollAddStudyItemListToId_(options.scrollToId);
+    } else if (options.scrollEnd) {
+      scrollAddStudyItemListToEnd();
+    }
+    finishAddStudyItemFormConfirm();
+    return;
+  }
   addStudy.awaitingAudioPrepare = true;
   setAddStudyItemAskStatus('音声準備中...');
   // バーは「追加中...」から出している。ここでは消さず、準備進捗の更新に引き継ぐ

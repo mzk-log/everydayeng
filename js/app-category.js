@@ -135,9 +135,13 @@ function sortCategoryItemsByNo_(items) {
 
 function getItemsForCategoryFromLocal(categoryNo) {
   var key = String(categoryNo);
-  return sortCategoryItemsByNo_(getMemoryAllStudyItems().filter(function(it) {
+  var items = sortCategoryItemsByNo_(getMemoryAllStudyItems().filter(function(it) {
     return it && String(it.category_no) === key;
   }));
+  if (typeof filterItemsForAudioDownloadMode === 'function') {
+    return filterItemsForAudioDownloadMode(items);
+  }
+  return items;
 }
 
 function rebuildCategoryDataByNoFromItems(items) {
@@ -598,16 +602,25 @@ function isCategoryIdbReadyForVisible(no) {
 
 /**
  * カテゴリ番号が表示対象か（希望ON。END は常に false）。
- * IdB 未完了でも一覧には出す（Start 前準備で埋める）
+ * 音声ダウンロード ON：IdB 未完了でも一覧に出す（Start 前準備で埋める）
+ * 音声ダウンロード OFF：希望ONかつローカル揃い問題が1問以上
  * @param {string|number} no
  * @returns {boolean}
  */
 function isCategoryNoVisible(no) {
-  return isCategoryNoInVisiblePreference(no);
+  if (!isCategoryNoInVisiblePreference(no)) {
+    return false;
+  }
+  if (typeof isAudioDownloadEnabled === 'function' && !isAudioDownloadEnabled()) {
+    if (typeof countLocalReadyItemsInCategory === 'function') {
+      return countLocalReadyItemsInCategory(no) > 0;
+    }
+  }
+  return true;
 }
 
 /**
- * ドロップダウン／ナビ用の表示カテゴリ一覧（希望ON）
+ * ドロップダウン／ナビ用の表示カテゴリ一覧（希望ON。OFF時は揃いありのみ）
  * @returns {Object[]}
  */
 function getVisibleCategories() {
@@ -658,14 +671,18 @@ function reconcileVisibleCategorySetting() {
 }
 
 /**
- * 横断モード用：表示カテゴリに属する問題だけ残す
+ * 横断モード用：表示カテゴリに属する問題だけ残す（OFF時はローカル揃いのみ）
  * @param {Array} items
  * @returns {Array}
  */
 function filterItemsByVisibleCategories(items) {
-  return (items || []).filter(function(it) {
-    return it && isCategoryNoVisible(it.category_no);
+  var filtered = (items || []).filter(function(it) {
+    return it && isCategoryNoInVisiblePreference(it.category_no);
   });
+  if (typeof filterItemsForAudioDownloadMode === 'function') {
+    return filterItemsForAudioDownloadMode(filtered);
+  }
+  return filtered;
 }
 
 /**
@@ -1317,11 +1334,17 @@ function formatCategoryOptionText(cat) {
     ? categoryVisibleName_(cat.name)
     : String(cat.name || '').trim();
   var displayText = '[' + orderLabel + '] ' + visibleName;
-  if (cat.count !== undefined && cat.count !== null) {
-    displayText += '（' + cat.count + '問）';
+  var countForDisplay = cat.count;
+  if (typeof isAudioDownloadEnabled === 'function' && !isAudioDownloadEnabled() &&
+      typeof countLocalReadyItemsInCategory === 'function') {
+    countForDisplay = countLocalReadyItemsInCategory(cat.no);
+  }
+  if (countForDisplay !== undefined && countForDisplay !== null) {
+    displayText += '（' + countForDisplay + '問）';
     var lastDateValue = normalizeLastDate(cat.last_date || '');
     if (lastDateValue) {
       // 全行に学習日あり → 日時 + MAX(Retry)/MIN(Total)
+      // OFF時もシート集計の日時／回数はそのまま（揃い問題だけの再集計はしない）
       var n = getRetryCountNumber(cat.max_retry_count);
       var m = getRetryCountNumber(cat.min_total_study_count);
       displayText += '：' + formatYmdForDisplay(lastDateValue) + ' （' + n + '/' + m + '回）';
