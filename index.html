@@ -190,6 +190,11 @@
         <button class="side-menu-item" type="button" id="audioDownloadMenuButton" title="音声のDrive／TTS取得のみ。表やAnsの通信は対象外">
           <span class="side-menu-item-text" id="audioDownloadMenuButtonText">音声ダウンロード OFF</span>
         </button>
+        <div class="audio-stock-status" id="audioStockStatus" aria-live="polite">
+          <div class="audio-stock-status-row">タイトル <strong id="audioStockTitleValue" class="audio-stock-value is-wait">確認中</strong></div>
+          <div class="audio-stock-status-row">出題・解答 <strong id="audioStockQaValue" class="audio-stock-value is-wait">確認中</strong></div>
+          <div class="audio-stock-status-row">効果音 <strong id="audioStockSfxValue" class="audio-stock-value is-wait">確認中</strong></div>
+        </div>
       </div>
       <div class="side-menu-item-container" id="loadDiagMenuItemContainer" style="display: none;">
         <button class="side-menu-item" type="button" id="loadDiagMenuButton">
@@ -580,6 +585,7 @@
       </div>
       <label class="add-study-label" for="addStudyItemCategorySelect">カテゴリ</label>
       <select id="addStudyItemCategorySelect" class="add-study-select"></select>
+      <p id="addStudyItemAudioStatus" class="add-study-audio-status" aria-live="polite"></p>
       <div id="addStudyItemCategorySettingsRow" class="add-study-category-settings-row" hidden>
         <button type="button" id="addStudyItemCategorySettingsToggle" class="add-study-disclosure" hidden aria-expanded="false" aria-controls="addStudyItemCategorySettings">カテゴリ設定</button>
         <span class="add-study-category-step">

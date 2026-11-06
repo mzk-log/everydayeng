@@ -746,15 +746,31 @@ function showVisibleCategoriesError(message) {
 }
 
 /**
- * 未完了のときだけ付ける IdB 表示文言
- * @param {{ready: number, target: number}|null|undefined} progress
+ * 表示カテゴリ1行の音声状況 HTML
+ * @param {{ready: number, target: number, titleReady: boolean|null, checking: boolean}|null|undefined} progress
  * @returns {string}
  */
-function formatVisibleCategoryIdbSuffix(progress) {
-  if (!isCategoryIdbProgressIncomplete(progress)) {
-    return '';
+function formatVisibleCategoryAudioStatusHtml(progress) {
+  if (!progress || !audioStock.idbInventoryReady) {
+    return '<span class="is-wait">タイトル 確認中</span>　<span class="is-wait">出題・解答 確認中</span>';
   }
-  return ' IdB ' + progress.ready + '/' + progress.target;
+  var titleHtml = '';
+  if (progress.titleReady === true) {
+    titleHtml = '<span class="is-ok">タイトル 済</span>';
+  } else if (progress.titleReady === false) {
+    titleHtml = '<span class="is-lack">タイトル 未</span>';
+  } else if (progress.checking) {
+    titleHtml = '<span class="is-wait">タイトル 確認中</span>';
+  }
+  var qaKind = (progress.target > 0 && progress.ready >= progress.target) ? 'is-ok' : 'is-lack';
+  if (progress.checking && progress.target === 0) {
+    qaKind = 'is-wait';
+  }
+  var qaHtml = '<span class="' + qaKind + '">出題・解答 ' +
+    (progress.checking && !audioStock.idbInventoryReady
+      ? '確認中'
+      : ((progress.ready || 0) + '/' + (progress.target || 0))) + '</span>';
+  return titleHtml ? (titleHtml + '　' + qaHtml) : qaHtml;
 }
 
 /**
@@ -762,14 +778,15 @@ function formatVisibleCategoryIdbSuffix(progress) {
  * @param {HTMLInputElement} input
  * @param {HTMLElement} idbEl
  * @param {string} catNo
- * @param {{ready: number, target: number}|null|undefined} progress
+ * @param {{ready: number, target: number, titleReady: boolean|null, checking: boolean}|null|undefined} progress
  */
 function syncVisibleCategoryRowIdbState(input, idbEl, catNo, progress) {
   if (!idbEl) {
     return;
   }
-  var incomplete = isCategoryIdbProgressIncomplete(progress);
-  idbEl.textContent = formatVisibleCategoryIdbSuffix(progress);
+  var incomplete = isCategoryIdbProgressIncomplete(progress) ||
+    (progress && progress.titleReady === false);
+  idbEl.innerHTML = formatVisibleCategoryAudioStatusHtml(progress);
   var label = input && (input.closest ? input.closest('label') : input.parentNode);
   if (label && label.classList) {
     label.classList.toggle('is-idb-incomplete', incomplete);
@@ -875,6 +892,9 @@ function refreshVisibleCategoriesRuntimeUi() {
  */
 function syncVisibleCategoriesAfterIdbChange() {
   updateVisibleCategoriesIdbLabels();
+  if (typeof syncAudioStockStatusUi === 'function') {
+    syncAudioStockStatusUi();
+  }
   if (!isHomeScreenActive() || !categoryCatalog.ready) {
     return;
   }
@@ -927,7 +947,7 @@ function renderVisibleCategoriesChecklist() {
     var idb = document.createElement('span');
     idb.className = 'visible-categories-check-idb';
     idb.setAttribute('data-category-no', catNo);
-    idb.textContent = formatVisibleCategoryIdbSuffix(progress);
+    idb.innerHTML = formatVisibleCategoryAudioStatusHtml(progress);
     text.appendChild(main);
     text.appendChild(idb);
     label.appendChild(input);

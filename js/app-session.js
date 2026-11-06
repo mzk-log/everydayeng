@@ -105,6 +105,9 @@ function updateAudioDownloadMenuLock() {
     button.disabled = locked;
     button.title = locked ? lockTitle : hintTitle;
   }
+  if (typeof syncAudioStockStatusUi === 'function') {
+    syncAudioStockStatusUi();
+  }
 }
 
 /**

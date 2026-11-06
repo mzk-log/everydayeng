@@ -263,12 +263,22 @@ var audioPrefetch = {
 };
 var audioStock = {
   idbIds: {}, // 端末にある音声ID
-  idbReady: 0,
+  idbReady: 0, // 出題・解答フィールド単位（先読み内部）
   idbTarget: 0,
   idbBytes: 0,
   idbInventoryReady: false, // IdB 一覧を一度でも取得済みか（未取得時は表示カテゴリを IdB で絞らない）
+  itemReady: 0, // 出題・解答が揃った問題数（表示用）
+  itemTarget: 0,
+  titleReady: 0, // カテゴリ案内（タイトル）揃い
+  titleTarget: 0,
   driveReady: null,
   driveTarget: null
+};
+var sfxStock = {
+  ready: 0,
+  target: 7,
+  inventoryReady: false,
+  byUrl: {}
 };
 var audioDb = {
   conn: null, // IndexedDB の接続
@@ -528,5 +538,11 @@ var dom = {
   loadDiagMenuButtonText: document.getElementById('loadDiagMenuButtonText'),
   audioDownloadMenuItemContainer: document.getElementById('audioDownloadMenuItemContainer'),
   audioDownloadMenuButton: document.getElementById('audioDownloadMenuButton'),
-  audioDownloadMenuButtonText: document.getElementById('audioDownloadMenuButtonText')
+  audioDownloadMenuButtonText: document.getElementById('audioDownloadMenuButtonText'),
+  audioStockStatus: document.getElementById('audioStockStatus'),
+  audioStockTitleValue: document.getElementById('audioStockTitleValue'),
+  audioStockQaValue: document.getElementById('audioStockQaValue'),
+  audioStockSfxValue: document.getElementById('audioStockSfxValue'),
+  navAnswerPlayLabel: document.querySelector('#navAnswerPlaySlot .nav-answer-play-label'),
+  addStudyItemAudioStatus: document.getElementById('addStudyItemAudioStatus')
 };

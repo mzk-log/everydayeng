@@ -73,7 +73,12 @@ function bindFieldPlayButton(button, fieldType) {
       if (navigator.vibrate) {
         try { navigator.vibrate(30); } catch (err) { /* ignore */ }
       }
-      recreateFieldAudio(fieldType);
+      if (fieldType === 'answer' && typeof isCategoryGuideAwaitingAdvance === 'function' &&
+          isCategoryGuideAwaitingAdvance()) {
+        replayCategoryGuideFromWait_(true);
+      } else {
+        recreateFieldAudio(fieldType);
+      }
       button.classList.remove('is-long-pressing');
     }, FIELD_PLAY_LONG_PRESS_MS);
   });
@@ -97,6 +102,11 @@ function bindFieldPlayButton(button, fieldType) {
     }
     
     if (!wasActive || wasLong || button.disabled) return;
+    if (fieldType === 'answer' && typeof isCategoryGuideAwaitingAdvance === 'function' &&
+        isCategoryGuideAwaitingAdvance()) {
+      replayCategoryGuideFromWait_(false);
+      return;
+    }
     playFieldAudio(fieldType, false);
   }
   
@@ -133,9 +143,29 @@ function updateFieldPlayButtons() {
   var aBtn = getFieldPlayButton('answer');
   var questionPlaySlot = dom.navQuestionPlaySlot;
   var answerPlaySlot = dom.navAnswerPlaySlot;
+  var answerPlayLabel = dom.navAnswerPlayLabel;
+  var guideWait = typeof isCategoryGuideAwaitingAdvance === 'function' &&
+    isCategoryGuideAwaitingAdvance();
   
   function isLoading(btn) {
     return !!(btn && btn.querySelector('.play-button-spinner'));
+  }
+
+  if (answerPlayLabel) {
+    answerPlayLabel.textContent = guideWait ? 'Title' : 'Ans';
+  }
+  
+  if (guideWait) {
+    if (qBtn && !isLoading(qBtn)) qBtn.disabled = true;
+    if (aBtn && !isLoading(aBtn)) aBtn.disabled = false;
+    if (questionPlaySlot) {
+      questionPlaySlot.classList.add('is-inactive');
+    }
+    if (answerPlaySlot) {
+      answerPlaySlot.classList.remove('is-inactive');
+    }
+    refreshAdvanceNavControls();
+    return;
   }
   
   if (!item || studyEnd.done) {
@@ -444,9 +474,15 @@ function decodeSfxUrl_(url) {
   }).then(decodeArrayBuffer_).then(function(buffer) {
     pcmAudio.urlBuffers[url] = buffer;
     delete pcmAudio.urlPromises[url];
+    if (typeof noteSfxLoadResult_ === 'function') {
+      noteSfxLoadResult_(url, true);
+    }
     return buffer;
   }, function(err) {
     delete pcmAudio.urlPromises[url];
+    if (typeof noteSfxLoadResult_ === 'function') {
+      noteSfxLoadResult_(url, false);
+    }
     throw err;
   });
   return pcmAudio.urlPromises[url];
@@ -1554,6 +1590,235 @@ function invalidateCategoryIdbProgressCache() {
   categoryIdbProgressCache.map = null;
 }
 
+/**
+ * テキストが Mem／IdB にあるか（IdB 未集計時は Mem のみ）
+ * @param {string} text
+ * @param {string} voice
+ * @param {string} speed
+ * @returns {boolean|null} null=確認中
+ */
+function isTextAudioLocalReady_(text, voice, speed) {
+  var phrase = normalizeTextForTTS(text || '');
+  if (!phrase) {
+    return true;
+  }
+  if (getCachedAudio(phrase, voice, speed)) {
+    return true;
+  }
+  if (!audioStock.idbInventoryReady) {
+    return null;
+  }
+  var idbId = audioIdbRecordId(phrase + '_' + voice + '_' + speed);
+  return !!(audioStock.idbIds && audioStock.idbIds[idbId]);
+}
+
+/**
+ * カテゴリ案内（タイトル）が端末にあるか
+ * @param {Object|null} cat
+ * @returns {boolean|null} null=対象外または確認中
+ */
+function isCategoryTitleAudioReady(cat) {
+  var text = buildCategoryGuideText_(cat);
+  if (!cat || !text) {
+    return null;
+  }
+  var voice = (typeof getAudioVoice === 'function') ? getAudioVoice('question') : AUDIO_VOICE_DEFAULT;
+  return isTextAudioLocalReady_(text, voice, AUDIO_SPEED_FIXED);
+}
+
+/**
+ * 問題の出題・解答が両方揃っているか（画像・空欄は不要欄としてスキップ）
+ * @param {Object} item
+ * @returns {boolean}
+ */
+function isStudyItemQaLocalReady(item) {
+  return typeof isStudyItemLocalAudioReady === 'function'
+    ? isStudyItemLocalAudioReady(item)
+    : getStudyItemMissingAudioFields(item).length === 0;
+}
+
+/**
+ * カテゴリ別：タイトル＋問題単位の出題・解答
+ * @returns {Object.<string, {titleReady: boolean|null, itemReady: number, itemTarget: number, checking: boolean}>}
+ */
+function buildCategoryAudioStatusMap() {
+  var qVoice = getAudioVoice('question');
+  var qSpeed = getAudioSpeed('question');
+  var aVoice = getAudioVoice('answer');
+  var aSpeed = getAudioSpeed('answer');
+  var items = getMemoryAllStudyItems();
+  var cacheKey = [
+    'status',
+    qVoice,
+    qSpeed,
+    aVoice,
+    aSpeed,
+    audioStock.idbReady,
+    audioStock.idbTarget,
+    audioStock.idbInventoryReady ? '1' : '0',
+    items.length,
+    Object.keys(audioStock.idbIds || {}).length
+  ].join('|');
+  if (categoryIdbProgressCache.map && categoryIdbProgressCache.key === cacheKey) {
+    return categoryIdbProgressCache.map;
+  }
+
+  var map = {};
+  var cats = (typeof getConfigurableCategories === 'function')
+    ? getConfigurableCategories()
+    : [];
+  var i;
+  for (i = 0; i < cats.length; i++) {
+    var cat = cats[i];
+    if (!cat || cat.no == null) {
+      continue;
+    }
+    var catKey = String(cat.no);
+    var titleReady = isCategoryTitleAudioReady(cat);
+    map[catKey] = {
+      titleReady: titleReady,
+      itemReady: 0,
+      itemTarget: 0,
+      checking: titleReady === null && !!buildCategoryGuideText_(cat)
+    };
+  }
+
+  items.forEach(function(item) {
+    if (!item || item.category_no == null || item.category_no === '') {
+      return;
+    }
+    var catKey = String(item.category_no);
+    if (!map[catKey]) {
+      map[catKey] = {
+        titleReady: null,
+        itemReady: 0,
+        itemTarget: 0,
+        checking: !audioStock.idbInventoryReady
+      };
+    }
+    map[catKey].itemTarget += 1;
+    if (isStudyItemQaLocalReady(item)) {
+      map[catKey].itemReady += 1;
+    } else if (!audioStock.idbInventoryReady) {
+      map[catKey].checking = true;
+    }
+  });
+
+  categoryIdbProgressCache.key = cacheKey;
+  categoryIdbProgressCache.map = map;
+  return map;
+}
+
+/**
+ * 全体のタイトル／出題・解答／効果音サマリ（メニュー用）
+ * @returns {{titleReady: number, titleTarget: number, itemReady: number, itemTarget: number, sfxReady: number, sfxTarget: number, idbChecking: boolean, sfxChecking: boolean}}
+ */
+function getAudioStockStatusSummary() {
+  var map = buildCategoryAudioStatusMap();
+  var titleReady = 0;
+  var titleTarget = 0;
+  var itemReady = 0;
+  var itemTarget = 0;
+  var keys = Object.keys(map);
+  var i;
+  for (i = 0; i < keys.length; i++) {
+    var row = map[keys[i]];
+    var cat = findCatalogCategory_(keys[i]);
+    if (buildCategoryGuideText_(cat)) {
+      titleTarget += 1;
+      if (row.titleReady === true) {
+        titleReady += 1;
+      }
+    }
+    itemReady += row.itemReady || 0;
+    itemTarget += row.itemTarget || 0;
+  }
+  audioStock.titleReady = titleReady;
+  audioStock.titleTarget = titleTarget;
+  audioStock.itemReady = itemReady;
+  audioStock.itemTarget = itemTarget;
+  return {
+    titleReady: titleReady,
+    titleTarget: titleTarget,
+    itemReady: itemReady,
+    itemTarget: itemTarget,
+    sfxReady: sfxStock.ready || 0,
+    sfxTarget: sfxStock.target || 7,
+    idbChecking: !audioStock.idbInventoryReady,
+    sfxChecking: !sfxStock.inventoryReady
+  };
+}
+
+/**
+ * メニュー／表示カテゴリ／追加編集の音声状況表示を同期
+ */
+function syncAudioStockStatusUi() {
+  var summary = getAudioStockStatusSummary();
+  function setVal(el, text, kind) {
+    if (!el) {
+      return;
+    }
+    el.textContent = text;
+    el.classList.remove('is-ok', 'is-lack', 'is-wait');
+    el.classList.add(kind === 'ok' ? 'is-ok' : (kind === 'wait' ? 'is-wait' : 'is-lack'));
+  }
+  if (summary.idbChecking) {
+    setVal(dom.audioStockTitleValue, '確認中', 'wait');
+    setVal(dom.audioStockQaValue, '確認中', 'wait');
+  } else {
+    setVal(
+      dom.audioStockTitleValue,
+      summary.titleReady + '/' + summary.titleTarget,
+      summary.titleReady >= summary.titleTarget && summary.titleTarget > 0 ? 'ok' : 'lack'
+    );
+    setVal(
+      dom.audioStockQaValue,
+      summary.itemReady + '/' + summary.itemTarget,
+      summary.itemReady >= summary.itemTarget && summary.itemTarget > 0 ? 'ok' : 'lack'
+    );
+  }
+  if (summary.sfxChecking) {
+    setVal(dom.audioStockSfxValue, '確認中', 'wait');
+  } else {
+    setVal(
+      dom.audioStockSfxValue,
+      summary.sfxReady + '/' + summary.sfxTarget,
+      summary.sfxReady >= summary.sfxTarget ? 'ok' : 'lack'
+    );
+  }
+  if (typeof updateVisibleCategoriesIdbLabels === 'function') {
+    updateVisibleCategoriesIdbLabels();
+  }
+  if (typeof syncAddStudyItemAudioStatusUi === 'function') {
+    syncAddStudyItemAudioStatusUi();
+  }
+}
+
+/**
+ * 効果音の読み込み結果を記録
+ * @param {string} url
+ * @param {boolean} ok
+ */
+function noteSfxLoadResult_(url, ok) {
+  if (!url) {
+    return;
+  }
+  var prev = sfxStock.byUrl[url];
+  sfxStock.byUrl[url] = !!ok;
+  if (prev === true && !ok && sfxStock.ready > 0) {
+    sfxStock.ready -= 1;
+  } else if (prev !== true && ok) {
+    sfxStock.ready += 1;
+  }
+  var keys = Object.keys(sfxStock.byUrl);
+  if (keys.length >= sfxStock.target) {
+    sfxStock.inventoryReady = true;
+  }
+  if (typeof syncAudioStockStatusUi === 'function') {
+    syncAudioStockStatusUi();
+  }
+}
+
 function refreshAudioIdbStats(onDone) {
   var done = typeof onDone === 'function' ? onDone : function() {};
   // 学習中は IdB 全件 getAll を抑止（タップ応答性優先。Mem キャッシュは別途更新される）
@@ -1572,6 +1837,9 @@ function refreshAudioIdbStats(onDone) {
       invalidateCategoryIdbProgressCache();
       refreshLoadDiagUi();
       notifyVisibleCategoriesAfterIdbStats();
+      if (typeof syncAudioStockStatusUi === 'function') {
+        syncAudioStockStatusUi();
+      }
       done();
       return;
     }
@@ -1601,77 +1869,51 @@ function refreshAudioIdbStats(onDone) {
         invalidateCategoryIdbProgressCache();
         refreshLoadDiagUi();
         notifyVisibleCategoriesAfterIdbStats();
+        if (typeof syncAudioStockStatusUi === 'function') {
+          syncAudioStockStatusUi();
+        }
         done();
       };
       req.onerror = function() {
         audioStock.idbInventoryReady = true;
         refreshLoadDiagUi();
         notifyVisibleCategoriesAfterIdbStats();
+        if (typeof syncAudioStockStatusUi === 'function') {
+          syncAudioStockStatusUi();
+        }
         done();
       };
     } catch (e) {
       audioStock.idbInventoryReady = true;
       refreshLoadDiagUi();
       notifyVisibleCategoriesAfterIdbStats();
+      if (typeof syncAudioStockStatusUi === 'function') {
+        syncAudioStockStatusUi();
+      }
       done();
     }
   });
 }
 
 /**
- * カテゴリ別の IdB 揃い（出題＋解答、いまの声・速さ。空・画像除く）
- * 表示カテゴリの ON/OFF には依存しない
- * @returns {Object.<string, {ready: number, target: number}>}
+ * カテゴリ別の揃い（問題単位）。互換のため ready/target を返す
+ * @returns {Object.<string, {ready: number, target: number, titleReady: boolean|null, checking: boolean}>}
  */
 function buildCategoryIdbProgressMap() {
-  var qVoice = getAudioVoice('question');
-  var qSpeed = getAudioSpeed('question');
-  var aVoice = getAudioVoice('answer');
-  var aSpeed = getAudioSpeed('answer');
-  var have = audioStock.idbIds || {};
-  var items = getMemoryAllStudyItems();
-  var cacheKey = [
-    qVoice,
-    qSpeed,
-    aVoice,
-    aSpeed,
-    audioStock.idbReady,
-    audioStock.idbTarget,
-    items.length,
-    Object.keys(have).length
-  ].join('|');
-  if (categoryIdbProgressCache.map && categoryIdbProgressCache.key === cacheKey) {
-    return categoryIdbProgressCache.map;
+  var status = buildCategoryAudioStatusMap();
+  var out = {};
+  var keys = Object.keys(status);
+  var i;
+  for (i = 0; i < keys.length; i++) {
+    var row = status[keys[i]];
+    out[keys[i]] = {
+      ready: row.itemReady || 0,
+      target: row.itemTarget || 0,
+      titleReady: row.titleReady,
+      checking: !!row.checking
+    };
   }
-
-  var map = {};
-
-  function addField(catKey, text, voice, speed) {
-    if (!text || isImageUrl(text)) {
-      return;
-    }
-    var key = normalizeTextForTTS(text) + '_' + voice + '_' + speed;
-    var idbId = audioIdbRecordId(key);
-    if (!map[catKey]) {
-      map[catKey] = { ready: 0, target: 0 };
-    }
-    map[catKey].target += 1;
-    if (have[idbId]) {
-      map[catKey].ready += 1;
-    }
-  }
-
-  items.forEach(function(item) {
-    if (!item || item.category_no == null || item.category_no === '') {
-      return;
-    }
-    var catKey = String(item.category_no);
-    addField(catKey, getEffectiveQuestion(item), qVoice, qSpeed);
-    addField(catKey, getEffectiveAnswer(item), aVoice, aSpeed);
-  });
-  categoryIdbProgressCache.key = cacheKey;
-  categoryIdbProgressCache.map = map;
-  return map;
+  return out;
 }
 
 /**
@@ -2522,6 +2764,10 @@ function noteCategoryGuideCached_(idbId) {
     audioStock.idbIds = {};
   }
   audioStock.idbIds[idbId] = true;
+  invalidateCategoryIdbProgressCache();
+  if (typeof syncAudioStockStatusUi === 'function') {
+    syncAudioStockStatusUi();
+  }
 }
 
 /**
@@ -3159,14 +3405,14 @@ function getStudyItemMissingAudioFields(item) {
  */
 function notifyAddStudyAudioPrepareProgress_() {
   if (typeof refreshAudioIdbStats !== 'function') {
-    if (typeof updateVisibleCategoriesIdbLabels === 'function') {
-      updateVisibleCategoriesIdbLabels();
+    if (typeof syncAudioStockStatusUi === 'function') {
+      syncAudioStockStatusUi();
     }
     return;
   }
   refreshAudioIdbStats(function() {
-    if (typeof updateVisibleCategoriesIdbLabels === 'function') {
-      updateVisibleCategoriesIdbLabels();
+    if (typeof syncAudioStockStatusUi === 'function') {
+      syncAudioStockStatusUi();
     }
   });
 }
@@ -3347,7 +3593,7 @@ function fetchDriveAudioCoverage() {
 }
 
 /**
- * カテゴリ案内（カテゴリ毎だけ）。IdB の揃い件数には入れない。
+ * カテゴリ案内（カテゴリ毎だけ）。揃い件数はタイトルとしてメニュー等で表示する。
  */
 var categoryAnnounce = {
   generation: 0,
@@ -3355,7 +3601,10 @@ var categoryAnnounce = {
   pendingStart: null,
   heard: null,
   editPlaying: false,
-  finish: null
+  finish: null,
+  awaitingAdvance: false,
+  waitShowFirst: null,
+  waitCategoryNo: null
 };
 
 /**
@@ -3489,13 +3738,15 @@ function rememberCategoryGuideAudio_(text, audioContent, voiceGender, speed) {
   };
   ensureMp3BlobOnAudioData(audioData);
   audioCache[cacheKey] = audioData;
+  var idbId = audioIdbRecordId(cacheKey);
   putAudioIdbRecord({
-    id: audioIdbRecordId(cacheKey),
+    id: idbId,
     audioContent: audioContent,
     timestamp: audioData.timestamp,
     textHash: audioData.textHash,
     byteLength: String(audioContent || '').length
   });
+  noteCategoryGuideCached_(idbId);
   return audioData;
 }
 
@@ -3772,7 +4023,99 @@ function playCategoryPhrase_(text, categoryNo, options) {
 }
 
 /**
- * 効果音のあと、最初の出題の前に案内を読む。
+ * カテゴリ案内の操作待ち中か
+ * @returns {boolean}
+ */
+function isCategoryGuideAwaitingAdvance() {
+  return !!categoryAnnounce.awaitingAdvance;
+}
+
+/**
+ * 案内待ち UI（Title／Next）を反映
+ */
+function syncCategoryGuideWaitUi_() {
+  if (typeof updateNavAnswerButton === 'function') {
+    updateNavAnswerButton();
+  }
+  if (typeof updateFieldPlayButtons === 'function') {
+    updateFieldPlayButtons();
+  }
+  if (typeof updatePlusButton === 'function') {
+    updatePlusButton();
+  }
+  if (typeof updateHomeButton === 'function') {
+    updateHomeButton();
+  }
+}
+
+/**
+ * 案内待ちに入る（聞き直し機会のため、直前に聞いた案内でも待つ）
+ * @param {Object|null} cat
+ * @param {function(): void} showFirst
+ */
+function enterCategoryGuideWait_(cat, showFirst) {
+  categoryAnnounce.awaitingAdvance = true;
+  categoryAnnounce.waitShowFirst = typeof showFirst === 'function' ? showFirst : null;
+  categoryAnnounce.waitCategoryNo = cat && cat.no != null ? cat.no : null;
+  categoryAnnounce.pendingStart = null;
+  syncCategoryGuideWaitUi_();
+}
+
+/**
+ * 案内待ちを解除して1問目へ
+ */
+function advanceFromCategoryGuideWait_() {
+  if (!categoryAnnounce.awaitingAdvance) {
+    return;
+  }
+  stopCategoryAnnounce({ cancelPending: true });
+  var show = categoryAnnounce.waitShowFirst;
+  categoryAnnounce.awaitingAdvance = false;
+  categoryAnnounce.waitShowFirst = null;
+  categoryAnnounce.waitCategoryNo = null;
+  categoryAnnounce.heard = null;
+  syncCategoryGuideWaitUi_();
+  if (typeof show === 'function') {
+    show();
+  }
+}
+
+/**
+ * 案内待ち中の Title 聞き直し
+ * @param {boolean} [forceRefresh]
+ */
+function replayCategoryGuideFromWait_(forceRefresh) {
+  if (!categoryAnnounce.awaitingAdvance) {
+    return;
+  }
+  var cat = findCatalogCategory_(categoryAnnounce.waitCategoryNo);
+  var text = buildCategoryGuideText_(cat);
+  if (!cat || !text) {
+    return;
+  }
+  playCategoryPhrase_(text, cat.no, {
+    saveDrive: true,
+    markHeard: true,
+    forceRefresh: !!forceRefresh
+  });
+}
+
+/**
+ * HOME 等で案内待ちを破棄
+ */
+function clearCategoryGuideWait_() {
+  if (!categoryAnnounce.awaitingAdvance) {
+    return;
+  }
+  stopCategoryAnnounce({ cancelPending: true });
+  categoryAnnounce.awaitingAdvance = false;
+  categoryAnnounce.waitShowFirst = null;
+  categoryAnnounce.waitCategoryNo = null;
+  syncCategoryGuideWaitUi_();
+}
+
+/**
+ * 効果音のあと、最初の出題の前に案内を読む（カテゴリ毎は操作待ち）。
  * @param {Object|null} cat
  * @param {function(): void} showFirst
  */
@@ -3787,15 +4130,13 @@ function playCategoryGuideThen_(cat, showFirst) {
     show();
     return;
   }
+  enterCategoryGuideWait_(cat, show);
   if (categoryGuideHeardMatches_(cat)) {
-    categoryAnnounce.heard = null;
-    show();
     return;
   }
   playCategoryPhrase_(text, cat.no, {
     saveDrive: true,
-    markHeard: false,
-    pendingStart: show
+    markHeard: true
   });
 }
 

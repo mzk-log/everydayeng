@@ -88,6 +88,30 @@ function bindLearningBodyGestures() {
     if (!isLearningScreenActive() || updateMode.active) {
       return;
     }
+    if (typeof isCategoryGuideAwaitingAdvance === 'function' && isCategoryGuideAwaitingAdvance()) {
+      if (count >= 4) {
+        if (typeof clearCategoryGuideWait_ === 'function') {
+          clearCategoryGuideWait_();
+        }
+        goToHome({ sfx: 'home' });
+        return;
+      }
+      if (count === 3) {
+        return;
+      }
+      if (count === 2) {
+        if (typeof replayCategoryGuideFromWait_ === 'function') {
+          replayCategoryGuideFromWait_(false);
+        }
+        return;
+      }
+      if (count >= 1) {
+        if (typeof advanceFromCategoryGuideWait_ === 'function') {
+          advanceFromCategoryGuideWait_();
+        }
+      }
+      return;
+    }
     if (count >= 4) {
       stopCategoryAnnounce({ cancelPending: true });
       goToHome({ sfx: 'home' });

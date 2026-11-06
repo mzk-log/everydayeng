@@ -342,6 +342,10 @@ function syncLearningCompletedScreenClass() {
 function handleNavAnswerButtonClick() {
   var navAnswerButton = dom.navAnswerButton;
   if (navAnswerButton && navAnswerButton.disabled) return;
+  if (typeof isCategoryGuideAwaitingAdvance === 'function' && isCategoryGuideAwaitingAdvance()) {
+    advanceFromCategoryGuideWait_();
+    return;
+  }
   if (isNavActionLockedByAudio()) return;
   
   if (studyEnd.done) {
@@ -396,6 +400,18 @@ function updateNavAnswerButton() {
     navAnswerText.classList.remove('blinking');
     navAnswerButton.disabled = true;
     navAnswerButton.title = '音声を準備しています';
+    return;
+  }
+
+  if (typeof isCategoryGuideAwaitingAdvance === 'function' && isCategoryGuideAwaitingAdvance()) {
+    navAnswerText.textContent = 'Next';
+    navAnswerText.classList.remove('blinking');
+    navAnswerButton.disabled = !!uiSfx.clickPlaying;
+    if (uiSfx.clickPlaying) {
+      navAnswerButton.title = '音声の再生が終わるまでお待ちください';
+    } else {
+      navAnswerButton.removeAttribute('title');
+    }
     return;
   }
   
@@ -882,6 +898,15 @@ function updatePlusButton() {
       return;
     }
     retrySlot.classList.toggle('is-inactive', !!inactive);
+  }
+
+  if (typeof isCategoryGuideAwaitingAdvance === 'function' && isCategoryGuideAwaitingAdvance()) {
+    plusButton.disabled = true;
+    plusButton.removeAttribute('title');
+    plusButton.setAttribute('aria-label', 'もう一度');
+    setRetrySlotInactive(true);
+    if (badge) badge.style.display = '';
+    return;
   }
   
   if (studyEnd.done) {
@@ -1481,10 +1506,23 @@ function preloadUiClickSfx() {
       ensureHomeSfxAudio(),
       ensureWaitingSfxAudio()
     ];
+    var urls = [];
     var i;
     for (i = 0; i < slots.length; i++) {
-      if (slots[i] && typeof preloadPcmUrl_ === 'function') {
-        preloadPcmUrl_(buildStaticSfxUrl(slots[i].url));
+      if (slots[i] && slots[i].url) {
+        urls.push(buildStaticSfxUrl(slots[i].url));
+      }
+    }
+    urls.push(buildStaticSfxUrl(COMPLETION_SFX_URL));
+    if (typeof sfxStock !== 'undefined' && sfxStock) {
+      sfxStock.target = urls.length;
+      sfxStock.ready = 0;
+      sfxStock.byUrl = {};
+      sfxStock.inventoryReady = false;
+    }
+    for (i = 0; i < urls.length; i++) {
+      if (typeof preloadPcmUrl_ === 'function') {
+        preloadPcmUrl_(urls[i]);
       }
     }
   } catch (e) {}
@@ -2078,9 +2116,14 @@ function clearHomeTextSelection() {
 function goToHome(options) {
   options = options || {};
   if (isCategoryTransitionInProgress) return;
-  if (isFieldAudioBusy()) return;
+  var guideWait = typeof isCategoryGuideAwaitingAdvance === 'function' &&
+    isCategoryGuideAwaitingAdvance();
+  if (isFieldAudioBusy() && !guideWait) return;
   
   // 万一の抜け対策：再生中音声を停止してから遷移する
+  if (typeof clearCategoryGuideWait_ === 'function') {
+    clearCategoryGuideWait_();
+  }
   flushPendingAnsSheetPersist();
   stopCurrentAudioPlayback();
   cancelStartWaitCharge();

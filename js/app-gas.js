@@ -250,9 +250,18 @@ function formatLoadDiagLine(slot, options) {
     parts.push('q:' + slot.queueWait);
   }
   parts.push('書込OK:' + gasSheetUpdate.okCount + ' 失敗:' + gasSheetUpdate.failCount);
-  parts.push('IdB ' + audioStock.idbReady + '/' + audioStock.idbTarget + ' ' +
-    Math.max(0, Math.round(audioStock.idbBytes / (1024 * 1024))) + '/' +
-    Math.round(MAX_AUDIO_IDB_BYTES / (1024 * 1024)) + 'MB');
+  if (typeof getAudioStockStatusSummary === 'function') {
+    var stock = getAudioStockStatusSummary();
+    parts.push('Title ' + stock.titleReady + '/' + stock.titleTarget);
+    parts.push('QA ' + stock.itemReady + '/' + stock.itemTarget + ' ' +
+      Math.max(0, Math.round(audioStock.idbBytes / (1024 * 1024))) + '/' +
+      Math.round(MAX_AUDIO_IDB_BYTES / (1024 * 1024)) + 'MB');
+    parts.push('Sfx ' + stock.sfxReady + '/' + stock.sfxTarget);
+  } else {
+    parts.push('IdB ' + audioStock.idbReady + '/' + audioStock.idbTarget + ' ' +
+      Math.max(0, Math.round(audioStock.idbBytes / (1024 * 1024))) + '/' +
+      Math.round(MAX_AUDIO_IDB_BYTES / (1024 * 1024)) + 'MB');
+  }
   if (audioStock.driveTarget != null) {
     parts.push('Drv ' + (audioStock.driveReady != null ? audioStock.driveReady : '-') + '/' + audioStock.driveTarget);
   }
