@@ -1130,13 +1130,16 @@ function findSelectableCategoryIndex(fromIndex, direction) {
  */
 function populateCategorySelectOptions(select, selectedValue) {
   if (!select) return;
-  var withAudioDlLack = !!(dom.categorySelect && select === dom.categorySelect);
+  var isHomeSelect = !!(dom.categorySelect && select === dom.categorySelect);
   
   select.innerHTML = '<option value="">Categoryを選択してください</option>';
   getVisibleCategories().forEach(function(cat) {
     var option = document.createElement('option');
     option.value = cat.no;
-    option.textContent = formatCategoryOptionText(cat, { withAudioDlLack: withAudioDlLack });
+    option.textContent = formatCategoryOptionText(cat, {
+      withAudioDlLack: isHomeSelect,
+      breakAfterColon: isHomeSelect
+    });
     select.appendChild(option);
   });
   
@@ -1425,7 +1428,8 @@ function isCategoryHomeTitleAudioLack_(cat) {
  * 例）[1] 名前（5問）：2026/8/1 （3/1回） ／ 空欄ありは（5問）：-（回数なし）
  * 括弧内は Category_Order（無ければ Category_No）
  * @param {Object} cat
- * @param {{withAudioDlLack?: boolean}} [options] - HOME用。不足時末尾に「音声DL未」
+ * @param {{withAudioDlLack?: boolean, breakAfterColon?: boolean}} [options]
+ *   HOME用。不足時末尾に「音声DL未」／「：」直後で改行
  * @returns {string}
  */
 function formatCategoryOptionText(cat, options) {
@@ -1433,6 +1437,8 @@ function formatCategoryOptionText(cat, options) {
   if (isEndCategory(cat)) {
     return 'END';
   }
+  var breakAfterColon = !!(options && options.breakAfterColon);
+  var colonSep = breakAfterColon ? '：\n' : '：';
   var orderLabel = getCategoryOrderSortValue(cat);
   var visibleName = (typeof categoryVisibleName_ === 'function')
     ? categoryVisibleName_(cat.name)
@@ -1451,10 +1457,10 @@ function formatCategoryOptionText(cat, options) {
       // OFF時もシート集計の日時／回数はそのまま（揃い問題だけの再集計はしない）
       var n = getRetryCountNumber(cat.max_retry_count);
       var m = getRetryCountNumber(cat.min_total_study_count);
-      displayText += '：' + formatYmdForDisplay(lastDateValue) + ' （' + n + '/' + m + '回）';
+      displayText += colonSep + formatYmdForDisplay(lastDateValue) + ' （' + n + '/' + m + '回）';
     } else {
       // 学習日が1つでも空 →「-」（回数は出さない）
-      displayText += '：-';
+      displayText += colonSep + '-';
     }
   }
   if (options && options.withAudioDlLack && isCategoryHomeAudioDlLack_(cat)) {
@@ -1479,7 +1485,10 @@ function refreshHomeCategoryAudioDlUi() {
       }
       var cat = findCategoryByNo(opt.value);
       if (cat) {
-        opt.textContent = formatCategoryOptionText(cat, { withAudioDlLack: true });
+        opt.textContent = formatCategoryOptionText(cat, {
+          withAudioDlLack: true,
+          breakAfterColon: true
+        });
       }
     }
     syncCustomCategorySelect(select);
@@ -1570,7 +1579,10 @@ function syncCategoryLastDateFromList() {
   if (select && catRef) {
     for (var j = 0; j < select.options.length; j++) {
       if (String(select.options[j].value) === String(categoryCatalog.no)) {
-        select.options[j].textContent = formatCategoryOptionText(catRef, { withAudioDlLack: true });
+        select.options[j].textContent = formatCategoryOptionText(catRef, {
+          withAudioDlLack: true,
+          breakAfterColon: true
+        });
         break;
       }
     }

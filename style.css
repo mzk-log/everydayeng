@@ -1243,6 +1243,12 @@ select.native-category-select-hidden {
   transition: background-color 0.3s ease;
 }
 
+/* HOME：Category の「：」直後改行を反映 */
+#screen1 .custom-category-select-trigger,
+#screen1 .custom-category-select-option {
+  white-space: pre-line;
+}
+
 .custom-category-select-trigger:disabled {
   background-color: #e0e0e0 !important;
   color: #666 !important;
