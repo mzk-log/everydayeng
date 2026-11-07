@@ -3715,19 +3715,6 @@ function buildCategoryEndText_(cat) {
   return raw + '、終わり';
 }
 
-/**
- * @param {Object|null} cat
- * @returns {boolean}
- */
-function categoryGuideHeardMatches_(cat) {
-  var heard = categoryAnnounce.heard;
-  if (!heard || !cat) {
-    return false;
-  }
-  return String(heard.no) === String(cat.no) &&
-    heard.text === normalizeTextForTTS(buildCategoryGuideText_(cat));
-}
-
 function releaseCategoryAnnounceAudio_() {
   var audio = categoryAnnounce.audio;
   categoryAnnounce.audio = null;
@@ -4286,10 +4273,8 @@ function playCategoryGuideThen_(cat, showFirst) {
     show();
     return;
   }
+  // 着地案内で聞き済みでも、学習開始時は再再生する（無音の Title/Next 待ちを避ける）
   enterCategoryGuideWait_(cat, show);
-  if (categoryGuideHeardMatches_(cat)) {
-    return;
-  }
   playCategoryPhrase_(text, cat.no, {
     saveDrive: true,
     markHeard: true
