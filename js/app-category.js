@@ -947,7 +947,8 @@ function renderVisibleCategoriesChecklist() {
     text.className = 'visible-categories-check-text';
     var main = document.createElement('span');
     main.className = 'visible-categories-check-main';
-    main.textContent = formatCategoryOptionText(cat);
+    // 表示カテゴリパネルのみ：日付・回数を「：」の次行へ（HOMEのCategory文言は変えない）
+    main.textContent = String(formatCategoryOptionText(cat) || '').replace('：', '：\n');
     var idb = document.createElement('span');
     idb.className = 'visible-categories-check-idb';
     idb.setAttribute('data-category-no', catNo);
@@ -1017,6 +1018,34 @@ function setAllVisibleCategoryChecks(checked) {
   var inputs = container.querySelectorAll('input[type="checkbox"]');
   for (var i = 0; i < inputs.length; i++) {
     inputs[i].checked = !!checked;
+  }
+  updateVisibleCategoriesCount();
+}
+
+/**
+ * 学習回数（分母＝min TotalStudyCount）が maxInclusive 以下のカテゴリだけ選択
+ * @param {number} maxInclusive
+ */
+function setVisibleCategoryChecksByMinTotalStudyCount(maxInclusive) {
+  var container = dom.visibleCategoriesChecklist;
+  if (!container) {
+    return;
+  }
+  hideVisibleCategoriesError();
+  var limit = Number(maxInclusive);
+  if (isNaN(limit)) {
+    return;
+  }
+  var inputs = container.querySelectorAll('input[type="checkbox"]');
+  for (var i = 0; i < inputs.length; i++) {
+    var input = inputs[i];
+    var cat = (typeof findCategoryByNo === 'function')
+      ? findCategoryByNo(input.value)
+      : null;
+    var minTotal = cat
+      ? getRetryCountNumber(cat.min_total_study_count)
+      : 0;
+    input.checked = minTotal <= limit;
   }
   updateVisibleCategoriesCount();
 }

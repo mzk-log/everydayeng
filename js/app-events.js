@@ -356,6 +356,18 @@ function setupEventListeners() {
   dom.visibleCategoriesClearAllButton.addEventListener('click', function() {
     setAllVisibleCategoryChecks(false);
   });
+  var selectMinTotalLe10 = dom.visibleCategoriesSelectMinTotalLe10Button;
+  if (selectMinTotalLe10) {
+    selectMinTotalLe10.addEventListener('click', function() {
+      setVisibleCategoryChecksByMinTotalStudyCount(10);
+    });
+  }
+  var selectMinTotalLe20 = dom.visibleCategoriesSelectMinTotalLe20Button;
+  if (selectMinTotalLe20) {
+    selectMinTotalLe20.addEventListener('click', function() {
+      setVisibleCategoryChecksByMinTotalStudyCount(20);
+    });
+  }
   dom.visibleCategoriesSaveButton.addEventListener('click', function() {
     saveVisibleCategoriesFromUi();
   });

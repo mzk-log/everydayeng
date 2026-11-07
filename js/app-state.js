@@ -477,6 +477,8 @@ var dom = {
   visibleCategoriesOverlay: document.getElementById('visibleCategoriesOverlay'),
   visibleCategoriesSaveButton: document.getElementById('visibleCategoriesSaveButton'),
   visibleCategoriesSelectAllButton: document.getElementById('visibleCategoriesSelectAllButton'),
+  visibleCategoriesSelectMinTotalLe10Button: document.getElementById('visibleCategoriesSelectMinTotalLe10Button'),
+  visibleCategoriesSelectMinTotalLe20Button: document.getElementById('visibleCategoriesSelectMinTotalLe20Button'),
   visibleCategoriesTitle: document.getElementById('visibleCategoriesTitle'),
   audioSettingsButton: document.getElementById('audioSettingsButton'),
   audioSettingsSubmenu: document.getElementById('audioSettingsSubmenu'),

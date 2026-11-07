@@ -347,6 +347,11 @@
   min-width: 0;
 }
 
+.visible-categories-check-main {
+  display: block;
+  white-space: pre-line;
+}
+
 .visible-categories-check-idb {
   display: block;
   margin-top: 4px;
