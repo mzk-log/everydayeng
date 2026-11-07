@@ -1982,15 +1982,7 @@ function syncAudioStockStatusUi() {
       summary.itemReady >= summary.itemTarget && summary.itemTarget > 0 ? 'ok' : 'lack'
     );
   }
-  if (summary.sfxChecking) {
-    setVal(dom.audioStockSfxValue, '確認中', 'wait');
-  } else {
-    setVal(
-      dom.audioStockSfxValue,
-      summary.sfxReady + '/' + summary.sfxTarget,
-      summary.sfxReady >= summary.sfxTarget ? 'ok' : 'lack'
-    );
-  }
+  // 効果音の内部集計は継続するが、メニューには出さない
   if (typeof updateVisibleCategoriesIdbLabels === 'function') {
     updateVisibleCategoriesIdbLabels();
   }

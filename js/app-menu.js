@@ -44,53 +44,85 @@ function toggleSideMenu() {
   }
 }
 
-// 背景画像選択を開く
-// 背景画像サブメニューをトグル
-function toggleBackgroundSubmenu() {
-  var submenu = dom.backgroundSubmenu;
-  var parentButton = dom.changeBackgroundButton;
-  if (submenu && parentButton) {
-    var isActive = submenu.classList.contains('active');
-    if (isActive) {
-      submenu.classList.remove('active');
-      parentButton.classList.remove('active');
-    } else {
-      submenu.classList.add('active');
-      parentButton.classList.add('active');
+/**
+ * サイドメニューのアコーディオン一覧
+ * @returns {Array.<{submenu: HTMLElement|null, button: HTMLElement|null}>}
+ */
+function getSideMenuAccordionPairs_() {
+  return [
+    { submenu: dom.backgroundSubmenu, button: dom.changeBackgroundButton },
+    { submenu: dom.audioSettingsSubmenu, button: dom.audioSettingsButton },
+    { submenu: dom.questionSettingsSubmenu, button: dom.questionSettingsButton }
+  ];
+}
+
+/**
+ * 他のアコーディオンを閉じる（exceptSubmenu は残す）
+ * @param {HTMLElement|null} exceptSubmenu
+ */
+function closeOtherSideMenuAccordions_(exceptSubmenu) {
+  var pairs = getSideMenuAccordionPairs_();
+  for (var i = 0; i < pairs.length; i++) {
+    var pair = pairs[i];
+    if (!pair.submenu || pair.submenu === exceptSubmenu) {
+      continue;
+    }
+    pair.submenu.classList.remove('active');
+    if (pair.button) {
+      pair.button.classList.remove('active');
     }
   }
+}
+
+/**
+ * 開いた親項目が見える位置へスクロール
+ * @param {HTMLElement|null} parentButton
+ */
+function scrollSideMenuAccordionIntoView_(parentButton) {
+  if (!parentButton || typeof parentButton.scrollIntoView !== 'function') {
+    return;
+  }
+  try {
+    parentButton.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  } catch (e) {
+    parentButton.scrollIntoView(true);
+  }
+}
+
+/**
+ * アコーディオンをトグル（同時に開けるのは1つ）
+ * @param {HTMLElement|null} submenu
+ * @param {HTMLElement|null} parentButton
+ */
+function toggleSideMenuAccordion_(submenu, parentButton) {
+  if (!submenu || !parentButton) {
+    return;
+  }
+  var isActive = submenu.classList.contains('active');
+  if (isActive) {
+    submenu.classList.remove('active');
+    parentButton.classList.remove('active');
+    return;
+  }
+  closeOtherSideMenuAccordions_(submenu);
+  submenu.classList.add('active');
+  parentButton.classList.add('active');
+  scrollSideMenuAccordionIntoView_(parentButton);
+}
+
+// 背景画像サブメニューをトグル
+function toggleBackgroundSubmenu() {
+  toggleSideMenuAccordion_(dom.backgroundSubmenu, dom.changeBackgroundButton);
 }
 
 // 音声設定サブメニューをトグル
 function toggleAudioSettingsSubmenu() {
-  var submenu = dom.audioSettingsSubmenu;
-  var parentButton = dom.audioSettingsButton;
-  if (submenu && parentButton) {
-    var isActive = submenu.classList.contains('active');
-    if (isActive) {
-      submenu.classList.remove('active');
-      parentButton.classList.remove('active');
-    } else {
-      submenu.classList.add('active');
-      parentButton.classList.add('active');
-    }
-  }
+  toggleSideMenuAccordion_(dom.audioSettingsSubmenu, dom.audioSettingsButton);
 }
 
 // 出題設定サブメニューをトグル
 function toggleQuestionSettingsSubmenu() {
-  var submenu = dom.questionSettingsSubmenu;
-  var parentButton = dom.questionSettingsButton;
-  if (submenu && parentButton) {
-    var isActive = submenu.classList.contains('active');
-    if (isActive) {
-      submenu.classList.remove('active');
-      parentButton.classList.remove('active');
-    } else {
-      submenu.classList.add('active');
-      parentButton.classList.add('active');
-    }
-  }
+  toggleSideMenuAccordion_(dom.questionSettingsSubmenu, dom.questionSettingsButton);
 }
 
 // 音声ボタンのアクティブ状態を更新

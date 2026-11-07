@@ -190,6 +190,9 @@ function showPageLoading() {
     loadingOverlay.setAttribute('aria-hidden', 'false');
     beginLoadDiag('boot', '起動', 0);
     setPageLoadingProgress(5, '起動');
+    if (typeof updateAuthRequiredBanner === 'function') {
+      updateAuthRequiredBanner();
+    }
     return;
   }
   loadingOverlay = document.createElement('div');
@@ -200,6 +203,9 @@ function showPageLoading() {
   document.body.appendChild(loadingOverlay);
   beginLoadDiag('boot', '起動', 0);
   setPageLoadingProgress(5, '起動');
+  if (typeof updateAuthRequiredBanner === 'function') {
+    updateAuthRequiredBanner();
+  }
 }
 
 // ページローディングを非表示にする
@@ -214,6 +220,9 @@ function hidePageLoading() {
     }
     // フェードアウトアニメーション
     loadingOverlay.classList.add('hidden');
+    if (typeof updateAuthRequiredBanner === 'function') {
+      updateAuthRequiredBanner();
+    }
     syncAppHeaderHeight();
     // アニメーション完了後にDOMから削除
     setTimeout(function() {

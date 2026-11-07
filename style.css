@@ -137,6 +137,12 @@
   overflow-y: auto;
 }
 
+.side-menu-footer {
+  flex-shrink: 0;
+  border-top: 1px solid #ddd;
+  background-color: #fff;
+}
+
 .side-menu-item-container {
   width: 100%;
 }
@@ -165,13 +171,12 @@
   background-color: #e0e0e0;
 }
 
-#addStudyItemItemContainer {
-  flex-shrink: 0;
-  margin-top: auto;
-}
-
 #addStudyItemMenuButton {
   background-color: #ececec;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+#accountLoginMenuButton {
   border-bottom: none;
 }
 
@@ -645,7 +650,7 @@
 .question-method-radios {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .question-method-radio {
@@ -655,7 +660,8 @@
   font-size: 14px;
   color: #333;
   cursor: pointer;
-  line-height: 1.4;
+  line-height: 1.45;
+  padding: 2px 0;
 }
 
 .question-method-radio input[type="radio"] {

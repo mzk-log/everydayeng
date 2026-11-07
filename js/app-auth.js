@@ -163,6 +163,7 @@ function setAppAuthUiLocked(locked) {
 
 /**
  * 未ログインでオーバーレイを閉じたときの案内帯（ヘッダーログイン代替）
+ * 起動ローディング中／ログインオーバーレイ表示中は出さない
  */
 function updateAuthRequiredBanner() {
   var banner = dom.authRequiredBanner;
@@ -170,10 +171,12 @@ function updateAuthRequiredBanner() {
     return;
   }
   var locked = isAppAuthUiLocked();
+  var needLogin = locked && !(typeof hasUsableAuth === 'function' && hasUsableAuth());
   var overlay = dom.googleLoginOverlay;
   var overlayOpen = !!(overlay && overlay.style.display !== 'none' &&
     overlay.getAttribute('aria-hidden') !== 'true');
-  var show = locked && !overlayOpen;
+  var loading = (typeof isPageLoadingVisible === 'function') && isPageLoadingVisible();
+  var show = needLogin && !overlayOpen && !loading;
   banner.style.display = show ? 'block' : 'none';
   if (show) {
     banner.removeAttribute('hidden');
