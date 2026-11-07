@@ -161,11 +161,34 @@ function setupEventListeners() {
     }
   });
   
-  dom.loginButton.addEventListener('click', function() {
+  function openAccountSwitchLogin_() {
     // 再ログイン時は自動選択を止め、アカウント切替できるようにする
     disableGoogleAutoSelect();
     showGoogleLoginDialog({ cancellable: true, forceAccountSelect: true });
-  });
+  }
+  var accountLoginMenuButton = dom.accountLoginMenuButton;
+  if (accountLoginMenuButton) {
+    accountLoginMenuButton.addEventListener('click', function() {
+      try {
+        closeSideMenu();
+      } catch (e) {
+        // ignore
+      }
+      openAccountSwitchLogin_();
+    });
+  }
+  var authRequiredLoginButton = dom.authRequiredLoginButton;
+  if (authRequiredLoginButton) {
+    authRequiredLoginButton.addEventListener('click', function() {
+      openAccountSwitchLogin_();
+    });
+  }
+  var audioDownloadToggleButton = dom.audioDownloadToggleButton;
+  if (audioDownloadToggleButton) {
+    audioDownloadToggleButton.addEventListener('click', function() {
+      toggleAudioDownloadEnabled();
+    });
+  }
 
   var googleSignInAppButton = dom.googleSignInAppButton;
   if (googleSignInAppButton) {

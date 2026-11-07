@@ -158,9 +158,27 @@ function setAppAuthUiLocked(locked) {
   } else {
     document.body.classList.remove('app-auth-locked');
   }
-  var loginBtn = dom.loginButton;
-  if (loginBtn) {
-    loginBtn.disabled = false;
+  updateAuthRequiredBanner();
+}
+
+/**
+ * 未ログインでオーバーレイを閉じたときの案内帯（ヘッダーログイン代替）
+ */
+function updateAuthRequiredBanner() {
+  var banner = dom.authRequiredBanner;
+  if (!banner) {
+    return;
+  }
+  var locked = isAppAuthUiLocked();
+  var overlay = dom.googleLoginOverlay;
+  var overlayOpen = !!(overlay && overlay.style.display !== 'none' &&
+    overlay.getAttribute('aria-hidden') !== 'true');
+  var show = locked && !overlayOpen;
+  banner.style.display = show ? 'block' : 'none';
+  if (show) {
+    banner.removeAttribute('hidden');
+  } else {
+    banner.setAttribute('hidden', '');
   }
 }
 
@@ -900,6 +918,7 @@ function showGoogleLoginDialog(options) {
   setGoogleLoginError('');
   hidePageLoading();
   cancelGoogleIdentityPrompt();
+  updateAuthRequiredBanner();
 
   // Brave等で GIS iframe ボタンが死ぬため、自前ボタンを主にする
   var appBtn = dom.googleSignInAppButton;
@@ -930,6 +949,7 @@ function hideGoogleLoginDialog() {
   }
   googleLogin.dialogCancellable = false;
   googleLogin.forceAccountSelect = false;
+  updateAuthRequiredBanner();
 }
 
 /**

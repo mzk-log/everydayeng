@@ -82,28 +82,29 @@ function updateVisibleCategoriesMenuLock() {
 }
 
 /**
- * 音声ダウンロード切替は HOME 時のみ
+ * 音声ダウンロード：メニュー文言とヘッダートグルを同期（HOME／学習とも操作可）
  */
 function updateAudioDownloadMenuLock() {
-  var locked = !isHomeScreenActive();
   var container = dom.audioDownloadMenuItemContainer;
   var button = dom.audioDownloadMenuButton;
   var label = dom.audioDownloadMenuButtonText;
-  var lockTitle = '音声ダウンロードはHOME画面でのみ変更できます。';
+  var headerToggle = dom.audioDownloadToggleButton;
   var hintTitle = '音声のDrive／TTS取得のみ。表やAnsの通信は対象外';
+  var on = typeof isAudioDownloadEnabled === 'function' && isAudioDownloadEnabled();
   if (container) {
-    if (locked) {
-      container.classList.add('is-locked');
-    } else {
-      container.classList.remove('is-locked');
-    }
+    container.classList.remove('is-locked');
   }
   if (label) {
-    label.textContent = isAudioDownloadEnabled() ? '音声ダウンロード ON' : '音声ダウンロード OFF';
+    label.textContent = on ? '音声ダウンロード ON' : '音声ダウンロード OFF';
   }
   if (button) {
-    button.disabled = locked;
-    button.title = locked ? lockTitle : hintTitle;
+    button.disabled = false;
+    button.title = hintTitle;
+  }
+  if (headerToggle) {
+    headerToggle.classList.toggle('active', on);
+    headerToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+    headerToggle.title = hintTitle;
   }
   if (typeof syncAudioStockStatusUi === 'function') {
     syncAudioStockStatusUi();
@@ -111,10 +112,10 @@ function updateAudioDownloadMenuLock() {
 }
 
 /**
- * 音声ダウンロード ON/OFF（HOME のみ・セッション限定）
+ * 音声ダウンロード ON/OFF（セッション限定・HOME／学習とも可）
  */
 function toggleAudioDownloadEnabled() {
-  if (!isHomeScreenActive()) {
+  if (typeof isAppAuthUiLocked === 'function' && isAppAuthUiLocked()) {
     return;
   }
   audioDownloadEnabled = !audioDownloadEnabled;
@@ -124,20 +125,25 @@ function toggleAudioDownloadEnabled() {
       abortRunningAudioPrefetch();
     }
     if (typeof invalidateGasAudioFetches === 'function') {
-      // 先読み・準備中の Drive／TTS を止める（本問再生中は稀。HOME なので本問無し想定）
+      // 先読み・準備中の Drive／TTS を止める
       invalidateGasAudioFetches();
     }
   }
+  var onHome = typeof isHomeScreenActive === 'function' && isHomeScreenActive();
   function afterIdb() {
-    if (typeof clearSelection === 'function') {
-      clearSelection();
-    } else {
-      questionList.selected = [];
-    }
-    if (typeof refreshVisibleCategoriesRuntimeUi === 'function') {
-      refreshVisibleCategoriesRuntimeUi();
-    } else if (typeof syncDailyStudyStatsDisplay === 'function') {
-      syncDailyStudyStatsDisplay();
+    if (onHome) {
+      if (typeof clearSelection === 'function') {
+        clearSelection();
+      } else {
+        questionList.selected = [];
+      }
+      if (typeof refreshVisibleCategoriesRuntimeUi === 'function') {
+        refreshVisibleCategoriesRuntimeUi();
+      } else if (typeof syncDailyStudyStatsDisplay === 'function') {
+        syncDailyStudyStatsDisplay();
+      }
+    } else if (typeof refreshLearningIdbStatusUi === 'function') {
+      refreshLearningIdbStatusUi();
     }
     if (isAudioDownloadEnabled()) {
       if (typeof scheduleAudioPrefetch === 'function') {
@@ -146,14 +152,12 @@ function toggleAudioDownloadEnabled() {
       if (typeof fetchDriveAudioCoverage === 'function') {
         fetchDriveAudioCoverage();
       }
-    } else {
-      if (typeof showError === 'function') {
-        var visible = (typeof getVisibleCategories === 'function') ? getVisibleCategories() : [];
-        if (!visible.length) {
-          showError('端末に音声がある問題がありません。Wi‑Fi等で音声ダウンロードをONにして取得してください。');
-        } else {
-          showError('端末に音声がある問題だけ表示します。');
-        }
+    } else if (onHome && typeof showError === 'function') {
+      var visible = (typeof getVisibleCategories === 'function') ? getVisibleCategories() : [];
+      if (!visible.length) {
+        showError('端末に音声がある問題がありません。Wi‑Fi等で音声ダウンロードをONにして取得してください。');
+      } else {
+        showError('端末に音声がある問題だけ表示します。');
       }
     }
   }

@@ -1508,21 +1508,104 @@ function migrateLocalStorageAudioToIdb() {
 }
 
 /**
+ * IndexedDB へ1件保存する。完了後に onDone(ok) を呼ぶ。
  * @param {Object} record
+ * @param {function(boolean): void} [onDone]
  */
-function putAudioIdbRecord(record) {
+function putAudioIdbRecord(record, onDone) {
+  var done = typeof onDone === 'function' ? onDone : function() {};
   openAudioIdb().then(function(db) {
     if (!db || !record || !record.id) {
+      done(false);
       return;
     }
     evictAudioIdbIfNeeded(record.byteLength || 0, function() {
       try {
         var tx = db.transaction(AUDIO_IDB_STORE, 'readwrite');
         tx.objectStore(AUDIO_IDB_STORE).put(record);
+        var settled = false;
+        function finish(ok) {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          done(!!ok);
+        }
+        tx.oncomplete = function() {
+          finish(true);
+        };
+        tx.onerror = function() {
+          finish(false);
+        };
+        tx.onabort = function() {
+          finish(false);
+        };
       } catch (e) {
-        // ignore
+        done(false);
       }
     });
+  });
+}
+
+/**
+ * IdB 揃いフラグを立てる（put 成功後専用）
+ * @param {string} idbId
+ */
+function markAudioIdbIdReady_(idbId) {
+  if (!idbId) {
+    return;
+  }
+  if (!audioStock.idbIds) {
+    audioStock.idbIds = {};
+  }
+  if (!audioStock.idbIds[idbId]) {
+    audioStock.idbIds[idbId] = true;
+    audioStock.idbReady = (audioStock.idbReady || 0) + 1;
+  }
+  invalidateCategoryIdbProgressCache();
+}
+
+/**
+ * Mem にある音声を IdB へ書き戻す（既に idbIds にあれば何もしない）
+ * @param {string} text
+ * @param {string} voice
+ * @param {string} speed
+ * @param {function(boolean): void} [onDone]
+ */
+function ensureAudioPersistedToIdb_(text, voice, speed, onDone) {
+  var done = typeof onDone === 'function' ? onDone : function() {};
+  var phrase = normalizeTextForTTS(text || '');
+  if (!phrase) {
+    done(true);
+    return;
+  }
+  var v = voice || AUDIO_VOICE_DEFAULT;
+  var sp = speed || AUDIO_SPEED_FIXED;
+  var cacheKey = phrase + '_' + v + '_' + sp;
+  var idbId = audioIdbRecordId(cacheKey);
+  if (audioStock.idbIds && audioStock.idbIds[idbId]) {
+    done(true);
+    return;
+  }
+  var mem = audioCache[cacheKey];
+  if (!mem || !mem.audioContent) {
+    done(false);
+    return;
+  }
+  putAudioIdbRecord({
+    id: idbId,
+    audioContent: mem.audioContent,
+    timestamp: mem.timestamp || Date.now(),
+    textHash: mem.textHash || hashText(cacheKey),
+    byteLength: String(mem.audioContent || '').length
+  }, function(ok) {
+    if (ok) {
+      markAudioIdbIdReady_(idbId);
+      if (typeof syncAudioStockStatusUi === 'function') {
+        syncAudioStockStatusUi();
+      }
+    }
+    done(ok);
   });
 }
 
@@ -1630,7 +1713,7 @@ function invalidateCategoryIdbProgressCache() {
 }
 
 /**
- * テキストが Mem／IdB にあるか（IdB 未集計時は Mem のみ）
+ * 再生可否用：Mem または IdB（IdB 未集計時は Mem のみ）
  * @param {string} text
  * @param {string} voice
  * @param {string} speed
@@ -1652,7 +1735,39 @@ function isTextAudioLocalReady_(text, voice, speed) {
 }
 
 /**
- * カテゴリ案内（タイトル）が端末にあるか
+ * メニュー／状況表示用：IdB 実在のみ（Mem だけでは済にしない）
+ * @param {string} text
+ * @param {string} voice
+ * @param {string} speed
+ * @returns {boolean|null} null=確認中
+ */
+function isTextAudioIdbReady_(text, voice, speed) {
+  var phrase = normalizeTextForTTS(text || '');
+  if (!phrase) {
+    return true;
+  }
+  if (!audioStock.idbInventoryReady) {
+    return null;
+  }
+  var idbId = audioIdbRecordId(phrase + '_' + voice + '_' + speed);
+  return !!(audioStock.idbIds && audioStock.idbIds[idbId]);
+}
+
+/**
+ * カテゴリ案内の IdB キー（本文・表示順に依存しない。再起動後の件数ズレ防止）
+ * @param {string|number} categoryNo
+ * @param {string} [voice]
+ * @param {string} [speed]
+ * @returns {string}
+ */
+function categoryGuideIdbId_(categoryNo, voice, speed) {
+  return 'cg_' + String(categoryNo) + '_' +
+    (voice || AUDIO_VOICE_DEFAULT) + '_' +
+    (speed || AUDIO_SPEED_FIXED);
+}
+
+/**
+ * カテゴリ案内（タイトル）が端末 IdB にあるか（メニュー用）
  * @param {Object|null} cat
  * @returns {boolean|null} null=対象外または確認中
  */
@@ -1661,12 +1776,20 @@ function isCategoryTitleAudioReady(cat) {
   if (!cat || !text) {
     return null;
   }
+  if (!audioStock.idbInventoryReady) {
+    return null;
+  }
   var voice = (typeof getAudioVoice === 'function') ? getAudioVoice('question') : AUDIO_VOICE_DEFAULT;
-  return isTextAudioLocalReady_(text, voice, AUDIO_SPEED_FIXED);
+  var stableId = categoryGuideIdbId_(cat.no, voice, AUDIO_SPEED_FIXED);
+  if (audioStock.idbIds && audioStock.idbIds[stableId]) {
+    return true;
+  }
+  // 旧：本文ハッシュキーで保存済みのものも済とみなす
+  return isTextAudioIdbReady_(text, voice, AUDIO_SPEED_FIXED) === true;
 }
 
 /**
- * 問題の出題・解答が両方揃っているか（画像・空欄は不要欄としてスキップ）
+ * 問題の出題・解答が両方揃っているか（Mem／IdB。学習フィルタ用）
  * @param {Object} item
  * @returns {boolean}
  */
@@ -1674,6 +1797,49 @@ function isStudyItemQaLocalReady(item) {
   return typeof isStudyItemLocalAudioReady === 'function'
     ? isStudyItemLocalAudioReady(item)
     : getStudyItemMissingAudioFields(item).length === 0;
+}
+
+/**
+ * 問題の出題・解答が IdB に揃っているか（メニュー／一覧の済未用）
+ * @param {Object} item
+ * @returns {boolean}
+ */
+function isStudyItemQaIdbReady(item) {
+  if (!item) {
+    return false;
+  }
+  if (!audioStock.idbInventoryReady) {
+    return false;
+  }
+  return getStudyItemMissingAudioFields(item, { idbOnly: true }).length === 0;
+}
+
+/**
+ * 学習画面の表示側（出題／解答）テキストが IdB にあるか
+ * @param {Object|null} item
+ * @param {'question'|'answer'} displaySide
+ * @returns {boolean|null} true=揃い／対象外、false=未、null=確認中
+ */
+function isStudyDisplaySideIdbReady(item, displaySide) {
+  if (!item || (displaySide !== 'question' && displaySide !== 'answer')) {
+    return true;
+  }
+  if (!audioStock.idbInventoryReady) {
+    return null;
+  }
+  var text = displaySide === 'answer'
+    ? (typeof getEffectiveAnswer === 'function' ? getEffectiveAnswer(item) : item.answer)
+    : (typeof getEffectiveQuestion === 'function' ? getEffectiveQuestion(item) : item.question);
+  if (!text || (typeof isImageUrl === 'function' && isImageUrl(text))) {
+    return true;
+  }
+  var voice = (typeof getAudioVoice === 'function')
+    ? getAudioVoice(displaySide)
+    : AUDIO_VOICE_DEFAULT;
+  var speed = (typeof getAudioSpeed === 'function')
+    ? getAudioSpeed(displaySide)
+    : AUDIO_SPEED_FIXED;
+  return isTextAudioIdbReady_(text, voice, speed) === true;
 }
 
 /**
@@ -1736,7 +1902,7 @@ function buildCategoryAudioStatusMap() {
       };
     }
     map[catKey].itemTarget += 1;
-    if (isStudyItemQaLocalReady(item)) {
+    if (isStudyItemQaIdbReady(item)) {
       map[catKey].itemReady += 1;
     } else if (!audioStock.idbInventoryReady) {
       map[catKey].checking = true;
@@ -1830,6 +1996,12 @@ function syncAudioStockStatusUi() {
   }
   if (typeof syncAddStudyItemAudioStatusUi === 'function') {
     syncAddStudyItemAudioStatusUi();
+  }
+  if (typeof refreshHomeCategoryAudioDlUi === 'function') {
+    refreshHomeCategoryAudioDlUi();
+  }
+  if (typeof refreshLearningIdbStatusUi === 'function') {
+    refreshLearningIdbStatusUi();
   }
 }
 
@@ -2014,7 +2186,7 @@ function clearStaleAudioIdbId_(idbId) {
 }
 
 /**
- * 音声データをキャッシュに保存
+ * 音声データをキャッシュに保存（Mem は即時。IdB は put 成功後に揃い扱い）
  */
 function saveAudioToCache(text, audioContent, voiceGender, speed) {
   var normalizedText = normalizeTextForTTS(text);
@@ -2033,19 +2205,19 @@ function saveAudioToCache(text, audioContent, voiceGender, speed) {
     timestamp: audioData.timestamp,
     textHash: audioData.textHash,
     byteLength: String(audioContent || '').length
+  }, function(ok) {
+    if (!ok) {
+      return;
+    }
+    markAudioIdbIdReady_(idbId);
+    if (typeof syncAudioStockStatusUi === 'function') {
+      syncAudioStockStatusUi();
+    }
+    // 学習中は全件 getAll を避け、アイドル時のみ診断用に更新
+    if (!(typeof isActiveLearningSession === 'function' && isActiveLearningSession())) {
+      setTimeout(refreshAudioIdbStats, 0);
+    }
   });
-  if (!audioStock.idbIds) {
-    audioStock.idbIds = {};
-  }
-  if (!audioStock.idbIds[idbId]) {
-    audioStock.idbIds[idbId] = true;
-    audioStock.idbReady = (audioStock.idbReady || 0) + 1;
-  }
-  invalidateCategoryIdbProgressCache();
-  // 学習中は全件 getAll を避け、アイドル時のみ診断用に更新
-  if (!(typeof isActiveLearningSession === 'function' && isActiveLearningSession())) {
-    setTimeout(refreshAudioIdbStats, 0);
-  }
   return audioData;
 }
 
@@ -2757,14 +2929,13 @@ function collectCategoryGuidePrefetchJobs_() {
     if (!phrase || phrase.length > TTS_TEXT_MAX_LENGTH) {
       continue;
     }
-    var cacheKey = phrase + '_' + voice + '_' + speed;
     jobs.push({
       kind: 'categoryGuide',
       categoryNo: cat.no,
       text: phrase,
       voice: voice,
       speed: speed,
-      idbId: audioIdbRecordId(cacheKey),
+      idbId: categoryGuideIdbId_(cat.no, voice, speed),
       focus: focusNo !== '' && String(cat.no) === focusNo
     });
   }
@@ -2792,18 +2963,14 @@ function categoryGuidePrefetchPending_() {
 }
 
 /**
- * 先読みで取った案内を端末に置く。揃いの ready は増やさない。
+ * 先読みで取った案内を端末フラグに反映（IdB put 成功後に呼ぶ）
  * @param {string} idbId
  */
 function noteCategoryGuideCached_(idbId) {
   if (!idbId) {
     return;
   }
-  if (!audioStock.idbIds) {
-    audioStock.idbIds = {};
-  }
-  audioStock.idbIds[idbId] = true;
-  invalidateCategoryIdbProgressCache();
+  markAudioIdbIdReady_(idbId);
   if (typeof syncAudioStockStatusUi === 'function') {
     syncAudioStockStatusUi();
   }
@@ -2817,6 +2984,8 @@ function scheduleAudioPrefetch() {
     return;
   }
   if (!isAudioDownloadEnabled()) {
+    // OFF でも端末集計は更新する（起動直後のタイトル 0 誤表示を防ぐ）
+    refreshAudioIdbStats();
     return;
   }
   if (!WEB_APP_URL || WEB_APP_URL === 'YOUR_WEB_APP_URL_HERE') {
@@ -2860,9 +3029,17 @@ function scheduleAudioPrefetch() {
   var queued = 0;
   jobs.forEach(function(job) {
     if (getCachedAudio(job.text, job.voice, job.speed)) {
+      // Mem だけでスキップせず、IdB 未書き込みなら書き戻す
+      if (!(audioStock.idbIds && audioStock.idbIds[job.idbId])) {
+        if (job.kind === 'categoryGuide') {
+          ensureCategoryGuidePersistedToIdb_(job);
+        } else {
+          ensureAudioPersistedToIdb_(job.text, job.voice, job.speed);
+        }
+      }
       return;
     }
-    if (audioStock.idbIds[job.idbId]) {
+    if (audioStock.idbIds && audioStock.idbIds[job.idbId]) {
       return;
     }
     queued += 1;
@@ -3005,10 +3182,16 @@ function prefetchOneCategoryGuide_(job, signal, generation, done) {
     done();
     return;
   }
-  getCachedAudioFromIdb(job.text, job.voice, job.speed, function(cached) {
+  getCategoryGuideFromIdb_(job.categoryNo, job.text, job.voice, job.speed, function(cached) {
     if (cached) {
-      noteCategoryGuideCached_(job.idbId);
-      done();
+      if (cached.source === 'indexedDB' || (audioStock.idbIds && audioStock.idbIds[job.idbId])) {
+        noteCategoryGuideCached_(job.idbId);
+        done();
+        return;
+      }
+      ensureCategoryGuidePersistedToIdb_(job, function() {
+        done();
+      });
       return;
     }
     ensureFreshGoogleAuthToken(function() {
@@ -3057,8 +3240,7 @@ function prefetchOneCategoryGuide_(job, signal, generation, done) {
             return;
           }
           if (data && data.success && data.found && data.audioContent) {
-            rememberCategoryGuideAudio_(job.text, data.audioContent, job.voice, job.speed);
-            noteCategoryGuideCached_(job.idbId);
+            rememberCategoryGuideAudio_(job.text, data.audioContent, job.voice, job.speed, job.categoryNo);
             finishLoadDiag('run', 'OK', { ok: true, bytes: String(data.audioContent).length });
             audioPrefetch.failStreak = 0;
             done();
@@ -3404,12 +3586,15 @@ function filterItemsForAudioDownloadMode(items) {
 }
 
 /**
- * 当該問題で IdB／Mem に無い欄（sheet 基準。Start前準備・追加保存後準備で使用）
+ * 当該問題で無い欄（sheet 基準。Start前準備・追加保存後準備で使用）
  * @param {Object} item
+ * @param {{idbOnly?: boolean}} [options] - true なら IdB のみ（メニュー済未用）。省略時は Mem／IdB
  * @returns {string[]} 'question'|'answer'
  */
-function getStudyItemMissingAudioFields(item) {
+function getStudyItemMissingAudioFields(item, options) {
   var missing = [];
+  options = options || {};
+  var idbOnly = !!options.idbOnly;
   if (!item || item.id == null) {
     return missing;
   }
@@ -3427,7 +3612,7 @@ function getStudyItemMissingAudioFields(item) {
       continue;
     }
     var voice = fields[i].voice;
-    if (getCachedAudio(text, voice, speed)) {
+    if (!idbOnly && getCachedAudio(text, voice, speed)) {
       continue;
     }
     var idbId = audioIdbRecordId(text + '_' + voice + '_' + speed);
@@ -3754,10 +3939,105 @@ function stopCategoryAnnounce(options) {
 }
 
 /**
- * メモリと端末だけに置く。揃い件数は増やさない。
+ * Mem にあるカテゴリ案内を安定キーで IdB へ書き戻す
+ * @param {{categoryNo: *, text: string, voice: string, speed: string, idbId: string}} job
+ * @param {function(boolean): void} [onDone]
+ */
+function ensureCategoryGuidePersistedToIdb_(job, onDone) {
+  var done = typeof onDone === 'function' ? onDone : function() {};
+  if (!job || !job.idbId) {
+    done(false);
+    return;
+  }
+  if (audioStock.idbIds && audioStock.idbIds[job.idbId]) {
+    done(true);
+    return;
+  }
+  var mem = getCachedAudio(job.text, job.voice, job.speed);
+  var audioData = mem && mem.audioData ? mem.audioData : null;
+  if (!audioData || !audioData.audioContent) {
+    done(false);
+    return;
+  }
+  putAudioIdbRecord({
+    id: job.idbId,
+    audioContent: audioData.audioContent,
+    timestamp: audioData.timestamp || Date.now(),
+    textHash: audioData.textHash || hashText(job.text + '_' + job.voice + '_' + job.speed),
+    byteLength: String(audioData.audioContent || '').length,
+    categoryNo: job.categoryNo != null ? String(job.categoryNo) : ''
+  }, function(ok) {
+    if (ok) {
+      noteCategoryGuideCached_(job.idbId);
+    }
+    done(ok);
+  });
+}
+
+/**
+ * IdB のカテゴリ案内を Mem に載せる（安定キー優先、旧本文キーも可）
+ * @param {string|number} categoryNo
+ * @param {string} text
+ * @param {string} voice
+ * @param {string} speed
+ * @param {function({audioData: Object, source: string}|null): void} onDone
+ */
+function getCategoryGuideFromIdb_(categoryNo, text, voice, speed, onDone) {
+  var done = typeof onDone === 'function' ? onDone : function() {};
+  var v = voice || AUDIO_VOICE_DEFAULT;
+  var sp = speed || AUDIO_SPEED_FIXED;
+  var phrase = normalizeTextForTTS(text || '');
+  var stableId = categoryGuideIdbId_(categoryNo, v, sp);
+  var mem = getCachedAudio(phrase, v, sp);
+  if (mem) {
+    done(mem);
+    return;
+  }
+  getAudioIdbRecord(stableId, function(record) {
+    if (record && record.audioContent) {
+      var cacheKey = phrase + '_' + v + '_' + sp;
+      var audioData = {
+        audioContent: record.audioContent,
+        timestamp: record.timestamp || Date.now(),
+        textHash: record.textHash || hashText(cacheKey)
+      };
+      ensureMp3BlobOnAudioData(audioData);
+      if (phrase) {
+        audioCache[cacheKey] = audioData;
+      }
+      done({ audioData: audioData, source: 'indexedDB' });
+      return;
+    }
+    getCachedAudioFromIdb(phrase, v, sp, function(legacy) {
+      if (legacy && legacy.audioData && legacy.audioData.audioContent) {
+        putAudioIdbRecord({
+          id: stableId,
+          audioContent: legacy.audioData.audioContent,
+          timestamp: legacy.audioData.timestamp || Date.now(),
+          textHash: legacy.audioData.textHash || hashText(phrase + '_' + v + '_' + sp),
+          byteLength: String(legacy.audioData.audioContent || '').length,
+          categoryNo: String(categoryNo)
+        }, function(ok) {
+          if (ok) {
+            noteCategoryGuideCached_(stableId);
+          }
+        });
+      }
+      done(legacy);
+    });
+  });
+}
+
+/**
+ * 案内を Mem に置き、IdB put 成功後に揃いフラグを立てる（安定キー）。
+ * @param {string} text
+ * @param {string} audioContent
+ * @param {string} voiceGender
+ * @param {string} speed
+ * @param {string|number} [categoryNo]
  * @returns {Object}
  */
-function rememberCategoryGuideAudio_(text, audioContent, voiceGender, speed) {
+function rememberCategoryGuideAudio_(text, audioContent, voiceGender, speed, categoryNo) {
   var normalizedText = normalizeTextForTTS(text);
   var cacheKey = normalizedText + '_' + (voiceGender || AUDIO_VOICE_DEFAULT) + '_' + (speed || AUDIO_SPEED_FIXED);
   var audioData = {
@@ -3767,15 +4047,21 @@ function rememberCategoryGuideAudio_(text, audioContent, voiceGender, speed) {
   };
   ensureMp3BlobOnAudioData(audioData);
   audioCache[cacheKey] = audioData;
-  var idbId = audioIdbRecordId(cacheKey);
+  var idbId = (categoryNo != null && String(categoryNo) !== '')
+    ? categoryGuideIdbId_(categoryNo, voiceGender, speed)
+    : audioIdbRecordId(cacheKey);
   putAudioIdbRecord({
     id: idbId,
     audioContent: audioContent,
     timestamp: audioData.timestamp,
     textHash: audioData.textHash,
-    byteLength: String(audioContent || '').length
+    byteLength: String(audioContent || '').length,
+    categoryNo: categoryNo != null ? String(categoryNo) : ''
+  }, function(ok) {
+    if (ok) {
+      noteCategoryGuideCached_(idbId);
+    }
   });
-  noteCategoryGuideCached_(idbId);
   return audioData;
 }
 
@@ -3862,7 +4148,7 @@ function fetchCategoryGuideFromNet_(phrase, categoryNo, voice, speed, gen, optio
       finish('fail');
       return;
     }
-    var audioData = rememberCategoryGuideAudio_(phrase, audioContent, voice, speed);
+    var audioData = rememberCategoryGuideAudio_(phrase, audioContent, voice, speed, categoryNo);
     if (options.saveDrive && !fromDrive) {
       saveCategoryGuideDriveAudio_(categoryNo, audioContent, voice, speed, phrase);
     }
@@ -4046,7 +4332,7 @@ function playCategoryPhrase_(text, categoryNo, options) {
       afterIdb(null);
       return;
     }
-    getCachedAudioFromIdb(phrase, voice, speed, afterIdb);
+    getCategoryGuideFromIdb_(categoryNo, phrase, voice, speed, afterIdb);
   }
   begin();
 }

@@ -976,9 +976,11 @@ function renderAddStudyItemList() {
       '" role="listitem" data-add-id="' + escapeAddStudyItemHtml(id) + '">';
     html += '<div class="add-study-list-body">';
     html += '<div class="add-study-list-row-main">';
-    var itemReady = (typeof isStudyItemQaLocalReady === 'function')
-      ? isStudyItemQaLocalReady(it)
-      : (typeof isStudyItemLocalAudioReady === 'function' && isStudyItemLocalAudioReady(it));
+    var itemReady = (typeof isStudyItemQaIdbReady === 'function')
+      ? isStudyItemQaIdbReady(it)
+      : ((typeof isStudyItemQaLocalReady === 'function')
+        ? isStudyItemQaLocalReady(it)
+        : (typeof isStudyItemLocalAudioReady === 'function' && isStudyItemLocalAudioReady(it)));
     html += '<span class="add-study-list-no-col">';
     html += '<span class="add-study-list-no">' + escapeAddStudyItemHtml(it.no) + '</span>';
     html += '<span class="add-study-list-no-flag ' + (itemReady ? 'is-ok' : 'is-lack') + '">' +

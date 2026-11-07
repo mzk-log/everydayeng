@@ -270,6 +270,10 @@ function applyStudyItemsToApp(items, options) {
   }
   syncDailyStudyStatsDisplay();
   lastEffectiveVisibleCategoriesKey = getEffectiveVisibleCategoriesKey();
+  // カテゴリ一覧が揃ったあとで端末音声状況を再集計（起動直後のタイトル 0 誤表示防止）
+  if (typeof refreshAudioIdbStats === 'function') {
+    refreshAudioIdbStats();
+  }
 }
 
 /**
@@ -1097,12 +1101,13 @@ function findSelectableCategoryIndex(fromIndex, direction) {
  */
 function populateCategorySelectOptions(select, selectedValue) {
   if (!select) return;
+  var withAudioDlLack = !!(dom.categorySelect && select === dom.categorySelect);
   
   select.innerHTML = '<option value="">Categoryを選択してください</option>';
   getVisibleCategories().forEach(function(cat) {
     var option = document.createElement('option');
     option.value = cat.no;
-    option.textContent = formatCategoryOptionText(cat);
+    option.textContent = formatCategoryOptionText(cat, { withAudioDlLack: withAudioDlLack });
     select.appendChild(option);
   });
   
@@ -1240,6 +1245,8 @@ function syncCustomCategorySelect(select) {
   panel.innerHTML = '';
   
   var selectedLabel = 'Categoryを選択してください';
+  var selectedCat = null;
+  var isHomeSelect = !!(dom.categorySelect && select === dom.categorySelect);
   for (var i = 0; i < select.options.length; i++) {
     var opt = select.options[i];
     var btn = document.createElement('button');
@@ -1257,6 +1264,9 @@ function syncCustomCategorySelect(select) {
       btn.classList.add('is-selected');
       btn.setAttribute('aria-selected', 'true');
       selectedLabel = opt.textContent || selectedLabel;
+      if (opt.value) {
+        selectedCat = findCategoryByNo(opt.value);
+      }
     } else {
       btn.setAttribute('aria-selected', 'false');
     }
@@ -1282,6 +1292,11 @@ function syncCustomCategorySelect(select) {
   }
   
   trigger.textContent = selectedLabel;
+  if (isHomeSelect) {
+    trigger.classList.toggle('is-title-audio-lack', isCategoryHomeTitleAudioLack_(selectedCat));
+  } else {
+    trigger.classList.remove('is-title-audio-lack');
+  }
 }
 
 /**
@@ -1338,13 +1353,53 @@ function hideLearningCategorySelect() {
 }
 
 /**
+ * HOME Category：タイトルまたは出題・解答が IdB 未揃いか
+ * @param {Object|null} cat
+ * @returns {boolean}
+ */
+function isCategoryHomeAudioDlLack_(cat) {
+  if (!cat || cat.no == null || isEndCategory(cat)) {
+    return false;
+  }
+  if (!audioStock || !audioStock.idbInventoryReady ||
+      typeof buildCategoryIdbProgressMap !== 'function') {
+    return false;
+  }
+  var progress = buildCategoryIdbProgressMap()[String(cat.no)];
+  if (!progress) {
+    return false;
+  }
+  var titleOk = progress.titleReady === true;
+  var qaOk = progress.target > 0 ? progress.ready >= progress.target : true;
+  return !(titleOk && qaOk);
+}
+
+/**
+ * HOME Category：タイトル案内が IdB 未か（閉じた表示の赤用）
+ * @param {Object|null} cat
+ * @returns {boolean}
+ */
+function isCategoryHomeTitleAudioLack_(cat) {
+  if (!cat || cat.no == null || isEndCategory(cat)) {
+    return false;
+  }
+  if (!audioStock || !audioStock.idbInventoryReady ||
+      typeof buildCategoryIdbProgressMap !== 'function') {
+    return false;
+  }
+  var progress = buildCategoryIdbProgressMap()[String(cat.no)];
+  return !!(progress && progress.titleReady === false);
+}
+
+/**
  * カテゴリドロップダウン用の表示文言を生成
  * 例）[1] 名前（5問）：2026/8/1 （3/1回） ／ 空欄ありは（5問）：-（回数なし）
  * 括弧内は Category_Order（無ければ Category_No）
  * @param {Object} cat
+ * @param {{withAudioDlLack?: boolean}} [options] - HOME用。不足時末尾に「音声DL未」
  * @returns {string}
  */
-function formatCategoryOptionText(cat) {
+function formatCategoryOptionText(cat, options) {
   // ENDは区切り表示のみ（番号・問数・日付・回数なし）
   if (isEndCategory(cat)) {
     return 'END';
@@ -1373,7 +1428,36 @@ function formatCategoryOptionText(cat) {
       displayText += '：-';
     }
   }
+  if (options && options.withAudioDlLack && isCategoryHomeAudioDlLack_(cat)) {
+    displayText += '　音声DL未';
+  }
   return displayText;
+}
+
+/**
+ * HOME の Category／List の音声DL表示を IdB 集計に合わせて更新
+ */
+function refreshHomeCategoryAudioDlUi() {
+  if (typeof isHomeScreenActive === 'function' && !isHomeScreenActive()) {
+    return;
+  }
+  var select = dom.categorySelect;
+  if (select) {
+    for (var i = 0; i < select.options.length; i++) {
+      var opt = select.options[i];
+      if (!opt.value) {
+        continue;
+      }
+      var cat = findCategoryByNo(opt.value);
+      if (cat) {
+        opt.textContent = formatCategoryOptionText(cat, { withAudioDlLack: true });
+      }
+    }
+    syncCustomCategorySelect(select);
+  }
+  if (typeof displayHomeList === 'function' && !studyEnd.done) {
+    displayHomeList();
+  }
 }
 
 /**
@@ -1457,7 +1541,7 @@ function syncCategoryLastDateFromList() {
   if (select && catRef) {
     for (var j = 0; j < select.options.length; j++) {
       if (String(select.options[j].value) === String(categoryCatalog.no)) {
-        select.options[j].textContent = formatCategoryOptionText(catRef);
+        select.options[j].textContent = formatCategoryOptionText(catRef, { withAudioDlLack: true });
         break;
       }
     }

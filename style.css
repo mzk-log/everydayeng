@@ -1239,6 +1239,11 @@ select.native-category-select-hidden {
   opacity: 0.7;
 }
 
+/* HOME：タイトル案内が IdB 未のとき、閉じた Category 表示を赤 */
+.custom-category-select-trigger.is-title-audio-lack:not(:disabled) {
+  color: #c62828;
+}
+
 .custom-category-select.is-open .custom-category-select-trigger {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
@@ -1546,10 +1551,28 @@ tr:last-child td {
   cursor: pointer;
 }
 
+/* HOME：出題・解答の IdB が未揃いの List 行 */
+#screen1 .list-table tbody tr.is-qa-audio-lack td {
+  color: #c62828;
+  background-color: #fdecea;
+}
+
+#screen1 .list-table tbody tr.is-qa-audio-lack:hover td:first-child {
+  background-color: #f8d7d4;
+}
+
 /* 選択されたNo列のスタイル */
 .list-table tbody td.selected-no {
   background-color: #c8e6c9;
   position: relative;
+}
+
+#screen1 .list-table tbody tr.is-qa-audio-lack td.selected-no {
+  background-color: #c8e6c9;
+}
+
+#screen1 .list-table tbody tr.is-qa-audio-lack:hover td.selected-no {
+  background-color: #a5d6a7;
 }
 
 /* 選択されたNo列の左側インジケーター */
@@ -2455,16 +2478,56 @@ tr:last-child td {
 
 /* 学習画面（screen2）でもトグルボタンを表示 */
 
-/* ログインボタン（ヘッダー内） */
-.login-button {
+/* 未ログイン案内帯（オーバーレイを閉じたときの入口） */
+.auth-required-banner {
+  display: none;
   position: relative;
-  margin: 0;
-  font-size: 12px;
-  flex-shrink: 0;
-  z-index: auto;
+  margin: calc(var(--app-header-height) + 12px) 16px 12px;
+  padding: 16px 14px;
+  box-sizing: border-box;
+  text-align: center;
+  background: #fff;
+  border: 1px solid #c62828;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  z-index: 50;
 }
 
-/* 未ログイン／未許可：ログイン以外の操作を無効化 */
+/* 案内帯表示中は container のヘッダー余白を重ねない */
+body.app-auth-locked:has(#authRequiredBanner:not([hidden])) .container {
+  padding-top: 10px;
+}
+
+.auth-required-banner-message {
+  margin: 0 0 12px;
+  font-size: 15px;
+  color: #111;
+  line-height: 1.4;
+}
+
+.auth-required-login-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 18px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  background: #1a73e8;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.auth-required-login-button:hover {
+  background: #1765cc;
+}
+
+.auth-required-login-button:active {
+  background: #1557b0;
+}
+
+/* 未ログイン／未許可：案内帯・ログインオーバーレイ以外の操作を無効化 */
 body.app-auth-locked .hamburger-menu-button,
 body.app-auth-locked #toggleContainer {
   pointer-events: none !important;
@@ -2481,7 +2544,7 @@ body.app-auth-locked .side-menu-overlay {
   pointer-events: none !important;
 }
 
-body.app-auth-locked .login-button {
+body.app-auth-locked .auth-required-banner {
   pointer-events: auto !important;
   opacity: 1 !important;
 }
@@ -2495,11 +2558,6 @@ body.app-auth-locked .google-login-overlay {
 body.app-auth-locked .google-login-overlay,
 body.app-auth-locked .google-login-overlay * {
   pointer-events: auto !important;
-}
-
-/* 学習画面（screen2）がactiveの時はログインボタンを非表示 */
-body:has(#screen2.active) .login-button {
-  display: none;
 }
 
 /* 学習中：OS文字選択は鉛筆の編集欄のみ（誤選択で「Googleで検索」がナビを隠さない） */
@@ -3848,6 +3906,19 @@ textarea.is-tts-too-long {
   overflow-wrap: anywhere;
   word-break: break-word;
   word-wrap: break-word;
+}
+
+/* 学習画面：IdB 未（タイトル案内／出題音／解答音） */
+#screen2 #currentCategory.is-title-audio-lack {
+  color: #c62828;
+}
+
+#screen2 .question-text.is-q-audio-lack {
+  color: #c62828;
+}
+
+#screen2 #answerTextDisplay.is-a-audio-lack {
+  color: #c62828 !important;
 }
 
 /* 学習完了時はテキストを隠し、ドロップダウンのみ表示 */

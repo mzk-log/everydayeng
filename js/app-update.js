@@ -74,6 +74,9 @@ function refreshEditedFieldDisplay(item, text) {
       }
       questionText.style.display = '';
     }
+    if (typeof refreshLearningIdbStatusUi === 'function') {
+      refreshLearningIdbStatusUi();
+    }
     return;
   }
   
@@ -82,6 +85,9 @@ function refreshEditedFieldDisplay(item, text) {
     if (answerTextDisplay) {
       displayImageOrText(answerTextDisplay, getEffectiveAnswer(item));
       answerTextDisplay.style.display = 'block';
+    }
+    if (typeof refreshLearningIdbStatusUi === 'function') {
+      refreshLearningIdbStatusUi();
     }
     return;
   }

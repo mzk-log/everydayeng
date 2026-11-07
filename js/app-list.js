@@ -221,6 +221,11 @@ function displayHomeList() {
     if (isSelected) {
       row.classList.add('selected-row');
     }
+    if (audioStock && audioStock.idbInventoryReady &&
+        typeof isStudyItemQaIdbReady === 'function' &&
+        !isStudyItemQaIdbReady(item)) {
+      row.classList.add('is-qa-audio-lack');
+    }
     var noCell = document.createElement('td');
     noCell.textContent = item.no || '';
     if (isSelected) {

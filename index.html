@@ -7,7 +7,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202611071005';
+    var FRONT_VERSION = '202611071430';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -46,7 +46,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202611071005">
+  <link rel="stylesheet" href="style.css?v=202611071430">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -206,6 +206,12 @@
           <span class="side-menu-item-text">問題の追加・編集</span>
         </button>
       </div>
+      <div class="side-menu-item-container" id="accountLoginMenuItemContainer">
+        <button class="side-menu-item" type="button" id="accountLoginMenuButton"
+          title="アカウント切替のための再ログイン">
+          <span class="side-menu-item-text">ログイン／アカウント切替</span>
+        </button>
+      </div>
     </div>
   </div>
   <header id="appHeader" class="app-header">
@@ -235,9 +241,15 @@
                 <span class="toggle-slider"></span>
               </button>
             </div>
+            <div class="toggle-item">
+              <span class="toggle-label">音声DL</span>
+              <button id="audioDownloadToggleButton" class="toggle-button" type="button"
+                title="音声のDrive／TTS取得のみ。表やAnsの通信は対象外" aria-pressed="false">
+                <span class="toggle-slider"></span>
+              </button>
+            </div>
           </div>
         </div>
-        <button id="loginButton" class="login-button" type="button">ログイン</button>
       </div>
     </div>
     <div class="learning-stats">
@@ -246,6 +258,10 @@
     </div>
     <p class="net-load-diag" id="netLoadDiag" aria-live="polite" style="display: none;"></p>
   </header>
+  <div id="authRequiredBanner" class="auth-required-banner" style="display: none;" hidden>
+    <p class="auth-required-banner-message">利用にはログインが必要です</p>
+    <button type="button" id="authRequiredLoginButton" class="auth-required-login-button">Googleでログイン</button>
+  </div>
   <div class="container">
     <!-- 初期画面 -->
     <div id="screen1" class="screen active">
@@ -709,35 +725,35 @@
     </div>
   </div>
 
-  <script src="js/app-state.js?v=202611071005"></script>
-  <script src="js/app-gas.js?v=202611071005"></script>
-  <script src="js/app-auth.js?v=202611071005"></script>
-  <script src="js/app-settings.js?v=202611071005"></script>
-  <script src="js/app-question.js?v=202611071005"></script>
-  <script src="js/app-practice.js?v=202611071005"></script>
-  <script src="js/app-learning.js?v=202611071005"></script>
-  <script src="js/app-audio.js?v=202611071005"></script>
-  <script src="js/app-nav.js?v=202611071005"></script>
-  <script src="js/app-modal.js?v=202611071005"></script>
-  <script src="js/app-update.js?v=202611071005"></script>
-  <script src="js/app-boot.js?v=202611071005"></script>
-  <script src="js/app-category.js?v=202611071005"></script>
-  <script src="js/app-events.js?v=202611071005"></script>
-  <script src="js/app-menu.js?v=202611071005"></script>
-  <script src="js/app-session.js?v=202611071005"></script>
-  <script src="js/app-add-study.js?v=202611071005"></script>
-  <script src="js/app-sort.js?v=202611071005"></script>
-  <script src="js/app-study-load.js?v=202611071005"></script>
-  <script src="js/app-mode-page.js?v=202611071005"></script>
-  <script src="js/app-background.js?v=202611071005"></script>
-  <script src="js/app-error.js?v=202611071005"></script>
-  <script src="js/app-list.js?v=202611071005"></script>
-  <script src="js/app-list-nav.js?v=202611071005"></script>
-  <script src="js/app-field-edit.js?v=202611071005"></script>
-  <script src="js/app-format.js?v=202611071005"></script>
-  <script src="js/app-image.js?v=202611071005"></script>
-  <script src="js/app-sheet.js?v=202611071005"></script>
-  <script src="js/app-gesture.js?v=202611071005"></script>
+  <script src="js/app-state.js?v=202611071430"></script>
+  <script src="js/app-gas.js?v=202611071430"></script>
+  <script src="js/app-auth.js?v=202611071430"></script>
+  <script src="js/app-settings.js?v=202611071430"></script>
+  <script src="js/app-question.js?v=202611071430"></script>
+  <script src="js/app-practice.js?v=202611071430"></script>
+  <script src="js/app-learning.js?v=202611071430"></script>
+  <script src="js/app-audio.js?v=202611071430"></script>
+  <script src="js/app-nav.js?v=202611071430"></script>
+  <script src="js/app-modal.js?v=202611071430"></script>
+  <script src="js/app-update.js?v=202611071430"></script>
+  <script src="js/app-boot.js?v=202611071430"></script>
+  <script src="js/app-category.js?v=202611071430"></script>
+  <script src="js/app-events.js?v=202611071430"></script>
+  <script src="js/app-menu.js?v=202611071430"></script>
+  <script src="js/app-session.js?v=202611071430"></script>
+  <script src="js/app-add-study.js?v=202611071430"></script>
+  <script src="js/app-sort.js?v=202611071430"></script>
+  <script src="js/app-study-load.js?v=202611071430"></script>
+  <script src="js/app-mode-page.js?v=202611071430"></script>
+  <script src="js/app-background.js?v=202611071430"></script>
+  <script src="js/app-error.js?v=202611071430"></script>
+  <script src="js/app-list.js?v=202611071430"></script>
+  <script src="js/app-list-nav.js?v=202611071430"></script>
+  <script src="js/app-field-edit.js?v=202611071430"></script>
+  <script src="js/app-format.js?v=202611071430"></script>
+  <script src="js/app-image.js?v=202611071430"></script>
+  <script src="js/app-sheet.js?v=202611071430"></script>
+  <script src="js/app-gesture.js?v=202611071430"></script>
 </body>
 </html>
 

@@ -284,6 +284,9 @@ function startLearning() {
       currentCategory.style.overflow = 'visible';
     }
   }
+  if (typeof refreshLearningIdbStatusUi === 'function') {
+    refreshLearningIdbStatusUi();
+  }
   
   // 最初の問題を表示
   questionCursor.index = 0;
@@ -568,6 +571,46 @@ function updateLearningTime() {
 }
 
 // 問題を表示
+/**
+ * 学習画面：IdB 未のカテゴリ／出題／解答テキストを赤表示に同期
+ * カテゴリ＝タイトル案内未、出題＝出題側音未、解答＝解答側音未。集計前は付けない。
+ */
+function refreshLearningIdbStatusUi() {
+  var screen2 = dom.screen2;
+  if (!screen2 || !screen2.classList.contains('active')) {
+    return;
+  }
+  var inventoryReady = !!(typeof audioStock !== 'undefined' && audioStock && audioStock.idbInventoryReady);
+  var currentCategory = dom.currentCategory;
+  if (currentCategory) {
+    var titleLack = false;
+    if (inventoryReady &&
+        typeof isCrossCategoryQuestionMethod === 'function' && !isCrossCategoryQuestionMethod() &&
+        typeof isCategoryTitleAudioReady === 'function') {
+      var cat = (typeof findCatalogCategory_ === 'function')
+        ? findCatalogCategory_(categoryCatalog.no)
+        : ((typeof findCategoryByNo === 'function') ? findCategoryByNo(categoryCatalog.no) : null);
+      titleLack = isCategoryTitleAudioReady(cat) === false;
+    }
+    currentCategory.classList.toggle('is-title-audio-lack', titleLack);
+  }
+  var item = (typeof getCurrentLearningItem === 'function') ? getCurrentLearningItem() : null;
+  var qLack = false;
+  var aLack = false;
+  if (item && inventoryReady && typeof isStudyDisplaySideIdbReady === 'function') {
+    qLack = isStudyDisplaySideIdbReady(item, 'question') === false;
+    aLack = isStudyDisplaySideIdbReady(item, 'answer') === false;
+  }
+  var questionText = dom.questionText;
+  if (questionText) {
+    questionText.classList.toggle('is-q-audio-lack', qLack);
+  }
+  var answerTextDisplay = dom.answerTextDisplay;
+  if (answerTextDisplay) {
+    answerTextDisplay.classList.toggle('is-a-audio-lack', aLack);
+  }
+}
+
 function displayQuestion() {
   if (questionCursor.index < 0 || questionCursor.index >= categoryCatalog.items.length) {
     questionCursor.item = null;
@@ -673,6 +716,9 @@ function displayQuestion() {
   // 次の問題をプリロード（バックグラウンドで非同期実行）
   updateFieldEditPencils();
   preloadNextQuestions();
+  if (typeof refreshLearningIdbStatusUi === 'function') {
+    refreshLearningIdbStatusUi();
+  }
 }
 
 /**
@@ -796,6 +842,9 @@ function showAnswer() {
     displayImageOrText(answerTextDisplay, effectiveAnswer);
     answerTextDisplay.classList.remove('answer-hidden');
     answerTextDisplay.style.display = 'block';
+  }
+  if (typeof refreshLearningIdbStatusUi === 'function') {
+    refreshLearningIdbStatusUi();
   }
   
   // noteを常に表示（空欄／閉じ／開き。問題切替・Ans直後は閉じ）
