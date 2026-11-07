@@ -76,6 +76,9 @@ function bindFieldPlayButton(button, fieldType) {
       if (fieldType === 'answer' && typeof isCategoryGuideAwaitingAdvance === 'function' &&
           isCategoryGuideAwaitingAdvance()) {
         replayCategoryGuideFromWait_(true);
+      } else if (fieldType === 'answer' && typeof isCompletionAnnounceReplayActive === 'function' &&
+          isCompletionAnnounceReplayActive()) {
+        replayCompletionAnnounce_(true);
       } else {
         recreateFieldAudio(fieldType);
       }
@@ -105,6 +108,11 @@ function bindFieldPlayButton(button, fieldType) {
     if (fieldType === 'answer' && typeof isCategoryGuideAwaitingAdvance === 'function' &&
         isCategoryGuideAwaitingAdvance()) {
       replayCategoryGuideFromWait_(false);
+      return;
+    }
+    if (fieldType === 'answer' && typeof isCompletionAnnounceReplayActive === 'function' &&
+        isCompletionAnnounceReplayActive()) {
+      replayCompletionAnnounce_(false);
       return;
     }
     playFieldAudio(fieldType, false);
@@ -151,8 +159,21 @@ function updateFieldPlayButtons() {
     return !!(btn && btn.querySelector('.play-button-spinner'));
   }
 
+  var completionReplay = typeof isCompletionAnnounceReplayActive === 'function' &&
+    isCompletionAnnounceReplayActive();
+  var completionLabel = 'Title';
+  if (completionReplay && categoryAnnounce.completionReplayKind === 'end') {
+    completionLabel = 'End';
+  }
+
   if (answerPlayLabel) {
-    answerPlayLabel.textContent = guideWait ? 'Title' : 'Ans';
+    if (guideWait) {
+      answerPlayLabel.textContent = 'Title';
+    } else if (completionReplay) {
+      answerPlayLabel.textContent = completionLabel;
+    } else {
+      answerPlayLabel.textContent = 'Ans';
+    }
   }
   
   if (guideWait) {
@@ -165,6 +186,24 @@ function updateFieldPlayButtons() {
       answerPlaySlot.classList.remove('is-inactive');
     }
     refreshAdvanceNavControls();
+    return;
+  }
+
+  if (completionReplay) {
+    var replayBlocked = !!isCategoryTransitionInProgress ||
+      (typeof startAudioPrepare !== 'undefined' && startAudioPrepare && startAudioPrepare.busy);
+    if (qBtn && !isLoading(qBtn)) qBtn.disabled = true;
+    if (aBtn && !isLoading(aBtn)) aBtn.disabled = replayBlocked;
+    if (questionPlaySlot) {
+      questionPlaySlot.classList.add('is-inactive');
+    }
+    if (answerPlaySlot) {
+      if (replayBlocked) {
+        answerPlaySlot.classList.add('is-inactive');
+      } else {
+        answerPlaySlot.classList.remove('is-inactive');
+      }
+    }
     return;
   }
   
@@ -3604,7 +3643,10 @@ var categoryAnnounce = {
   finish: null,
   awaitingAdvance: false,
   waitShowFirst: null,
-  waitCategoryNo: null
+  waitCategoryNo: null,
+  // 完了画面の聞き直し（中央は奪わない）。'end' | 'title' | null
+  completionReplayKind: null,
+  completionReplayCategoryNo: null
 };
 
 /**
@@ -4054,6 +4096,7 @@ function syncCategoryGuideWaitUi_() {
  * @param {function(): void} showFirst
  */
 function enterCategoryGuideWait_(cat, showFirst) {
+  clearCompletionAnnounceReplay_();
   categoryAnnounce.awaitingAdvance = true;
   categoryAnnounce.waitShowFirst = typeof showFirst === 'function' ? showFirst : null;
   categoryAnnounce.waitCategoryNo = cat && cat.no != null ? cat.no : null;
@@ -4115,6 +4158,119 @@ function clearCategoryGuideWait_() {
 }
 
 /**
+ * 完了画面の「終わり／着地タイトル」聞き直しが有効か
+ * @returns {boolean}
+ */
+function isCompletionAnnounceReplayActive() {
+  return !!(typeof studyEnd !== 'undefined' && studyEnd && studyEnd.done) &&
+    !!categoryAnnounce.completionReplayKind &&
+    !(typeof isCrossCategoryQuestionMethod === 'function' && isCrossCategoryQuestionMethod());
+}
+
+/**
+ * 完了画面の聞き直し UI を反映
+ */
+function syncCompletionAnnounceReplayUi_() {
+  if (typeof updateFieldPlayButtons === 'function') {
+    updateFieldPlayButtons();
+  }
+}
+
+/**
+ * 完了画面の聞き直しを開始／更新する
+ * @param {'end'|'title'} kind
+ * @param {string|number|null|undefined} categoryNo
+ */
+function setCompletionAnnounceReplay_(kind, categoryNo) {
+  if (typeof isCrossCategoryQuestionMethod === 'function' && isCrossCategoryQuestionMethod()) {
+    clearCompletionAnnounceReplay_();
+    return;
+  }
+  if (!studyEnd || !studyEnd.done || (kind !== 'end' && kind !== 'title') ||
+      categoryNo == null || String(categoryNo) === '') {
+    clearCompletionAnnounceReplay_();
+    return;
+  }
+  categoryAnnounce.completionReplayKind = kind;
+  categoryAnnounce.completionReplayCategoryNo = categoryNo;
+  syncCompletionAnnounceReplayUi_();
+}
+
+/**
+ * End 直後：「名前、終わり」の聞き直しを有効化
+ */
+function enterCompletionEndAnnounceReplay_() {
+  if (!studyEnd || !studyEnd.done) {
+    return;
+  }
+  var catNo = studyEnd.categoryNo != null ? studyEnd.categoryNo : categoryCatalog.no;
+  setCompletionAnnounceReplay_('end', catNo);
+}
+
+/**
+ * 完了画面の表示カテゴリに合わせて聞き直し種別を更新する
+ */
+function refreshCompletionAnnounceReplayForBrowse_() {
+  if (!studyEnd || !studyEnd.done) {
+    clearCompletionAnnounceReplay_();
+    return;
+  }
+  if (typeof isCrossCategoryQuestionMethod === 'function' && isCrossCategoryQuestionMethod()) {
+    clearCompletionAnnounceReplay_();
+    return;
+  }
+  var shownNo = categoryCatalog && categoryCatalog.no != null ? categoryCatalog.no : null;
+  if (shownNo == null || String(shownNo) === '') {
+    clearCompletionAnnounceReplay_();
+    return;
+  }
+  if (studyEnd.categoryNo != null && String(shownNo) === String(studyEnd.categoryNo)) {
+    setCompletionAnnounceReplay_('end', studyEnd.categoryNo);
+    return;
+  }
+  setCompletionAnnounceReplay_('title', shownNo);
+}
+
+/**
+ * 完了画面の聞き直しを解除
+ */
+function clearCompletionAnnounceReplay_() {
+  if (!categoryAnnounce.completionReplayKind && categoryAnnounce.completionReplayCategoryNo == null) {
+    return;
+  }
+  categoryAnnounce.completionReplayKind = null;
+  categoryAnnounce.completionReplayCategoryNo = null;
+  syncCompletionAnnounceReplayUi_();
+}
+
+/**
+ * 完了画面：終わり／着地タイトルの聞き直し
+ * @param {boolean} [forceRefresh]
+ */
+function replayCompletionAnnounce_(forceRefresh) {
+  if (!isCompletionAnnounceReplayActive()) {
+    return;
+  }
+  var cat = findCatalogCategory_(categoryAnnounce.completionReplayCategoryNo);
+  if (!cat) {
+    return;
+  }
+  if (categoryAnnounce.completionReplayKind === 'end') {
+    playCategoryEndAnnouncement_(cat, { forceRefresh: !!forceRefresh });
+    return;
+  }
+  var text = buildCategoryGuideText_(cat);
+  if (!text) {
+    return;
+  }
+  playCategoryPhrase_(text, cat.no, {
+    saveDrive: true,
+    markHeard: true,
+    forceRefresh: !!forceRefresh
+  });
+}
+
+/**
  * 効果音のあと、最初の出題の前に案内を読む（カテゴリ毎は操作待ち）。
  * @param {Object|null} cat
  * @param {function(): void} showFirst
@@ -4160,7 +4316,12 @@ function playTopCategoryGuideFromSingleClick_() {
   announceLandedCategoryGuide_();
 }
 
-function playCategoryEndAnnouncement_(cat) {
+/**
+ * @param {Object|null} cat
+ * @param {{forceRefresh?: boolean}} [options]
+ */
+function playCategoryEndAnnouncement_(cat, options) {
+  options = options || {};
   if (typeof isCrossCategoryQuestionMethod === 'function' && isCrossCategoryQuestionMethod()) {
     return;
   }
@@ -4168,7 +4329,11 @@ function playCategoryEndAnnouncement_(cat) {
   if (!cat || !text) {
     return;
   }
-  playCategoryPhrase_(text, cat.no, { saveDrive: false, markHeard: false });
+  playCategoryPhrase_(text, cat.no, {
+    saveDrive: false,
+    markHeard: false,
+    forceRefresh: !!options.forceRefresh
+  });
 }
 
 function prepareCategoryGuideAudio_(cat, onDone) {

@@ -75,13 +75,8 @@ function bindLearningBodyGestures() {
     return !!(s2 && s2.classList.contains('active'));
   }
 
-  function isPerCategoryQuestionMethod_() {
-    return !isDurationQuestionMethod() && !isLastDateQuestionMethod();
-  }
-
   function fireBodyTapSequence_() {
     var count = tapCount;
-    var fromJ09 = sequenceFromJ09;
     tapTimer = null;
     tapCount = 0;
     sequenceFromJ09 = true;
@@ -135,14 +130,12 @@ function bindLearningBodyGestures() {
       replayFieldFromBodyDoubleTap_();
       return;
     }
-    if (count === 2 && studyEnd.done && fromJ09 && isPerCategoryQuestionMethod_()) {
-      stopCategoryAnnounce({ cancelPending: true });
-      var nextNo = nextVisibleCategoryNoAfter(studyEnd.categoryNo);
-      if (nextNo == null) {
-        goToHome({ sfx: 'home' });
-        return;
+    if (count === 2 && studyEnd.done &&
+        typeof isCompletionAnnounceReplayActive === 'function' &&
+        isCompletionAnnounceReplayActive()) {
+      if (typeof replayCompletionAnnounce_ === 'function') {
+        replayCompletionAnnounce_(false);
       }
-      goToHome({ sfx: 'home', advanceToCategoryNo: nextNo });
       return;
     }
     if (count >= 1) {

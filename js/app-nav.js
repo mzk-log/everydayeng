@@ -153,6 +153,9 @@ function restartCurrentCategoryLearning() {
   if (!studyEnd.done) {
     return;
   }
+  if (typeof clearCompletionAnnounceReplay_ === 'function') {
+    clearCompletionAnnounceReplay_();
+  }
   if (isDurationQuestionMethod()) {
     if (!durationMode.sessionItems || durationMode.sessionItems.length === 0) {
       return;
@@ -349,16 +352,12 @@ function handleNavAnswerButtonClick() {
   if (isNavActionLockedByAudio()) return;
   
   if (studyEnd.done) {
-    var afterCompletionNavClick = function() {
-      if (shouldShowCompletionStartButton()) {
-        startLearningFromCompletion();
-      } else {
-        navigateCompletionCategory(1);
-      }
-    };
+    if (typeof stopCategoryAnnounce === 'function') {
+      stopCategoryAnnounce({ cancelPending: true });
+    }
     if (shouldShowCompletionStartButton()) {
       // start は startLearningAfterAudioPrepare 側（準備なし＝すぐ／準備あり＝完了直前）
-      afterCompletionNavClick();
+      startLearningFromCompletion();
     } else {
       uiSfx.pendingCharge = true;
       if (isCategoryTransitionInProgress) {
@@ -625,6 +624,9 @@ function navigateCompletionCategory(direction) {
   if (!studyEnd.done || isCategoryTransitionInProgress) {
     return;
   }
+  if (typeof stopCategoryAnnounce === 'function') {
+    stopCategoryAnnounce({ cancelPending: true });
+  }
   // Next / << / >> 操作時はお祝いメッセージを透明化し、出題ブロックを畳んで上端へ
   hideCompletionCongratsMessage();
   revealCompletionBrowseChrome(true);
@@ -792,6 +794,9 @@ function finishCompletionCategoryBrowse() {
   updateListNavButtons();
   maintainCompletionScrollAtBottom();
   tryPlayStartWaitCharge();
+  if (typeof refreshCompletionAnnounceReplayForBrowse_ === 'function') {
+    refreshCompletionAnnounceReplayForBrowse_();
+  }
 }
 
 /**
@@ -807,6 +812,9 @@ function startLearningFromCompletion() {
   if (!categoryCatalog.items || categoryCatalog.items.length === 0) {
     showError('データがありません。');
     return;
+  }
+  if (typeof clearCompletionAnnounceReplay_ === 'function') {
+    clearCompletionAnnounceReplay_();
   }
   hideCompletionListSection();
   studyEnd.categoryNo = null;
@@ -1984,6 +1992,9 @@ function showCompletionMessage() {
   scheduleAudioPrefetch();
   studyEnd.categoryNo = categoryCatalog.no;
   studyEnd.browseStarted = false;
+  if (typeof enterCompletionEndAnnounceReplay_ === 'function') {
+    enterCompletionEndAnnounceReplay_();
+  }
 
   var completionSection = dom.completionMessageSection;
   if (completionSection) {
@@ -2123,6 +2134,9 @@ function goToHome(options) {
   // 万一の抜け対策：再生中音声を停止してから遷移する
   if (typeof clearCategoryGuideWait_ === 'function') {
     clearCategoryGuideWait_();
+  }
+  if (typeof clearCompletionAnnounceReplay_ === 'function') {
+    clearCompletionAnnounceReplay_();
   }
   flushPendingAnsSheetPersist();
   stopCurrentAudioPlayback();
