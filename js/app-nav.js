@@ -643,6 +643,23 @@ function navigateCompletionCategory(direction) {
       }
       return;
     }
+    if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
+      if (direction < 0) {
+        cancelStartWaitCharge();
+        return;
+      }
+      hideCompletionCongratsMessage();
+      revealCompletionBrowseChrome(false);
+      if (typeof browseNextCycleCategoryFromCompletion !== 'function' ||
+          !browseNextCycleCategoryFromCompletion()) {
+        cancelStartWaitCharge();
+        finishCompletionCategoryBrowse();
+        return;
+      }
+      studyEnd.categorySession = false;
+      finishCompletionCategoryBrowse();
+      return;
+    }
     var select = dom.learningCategorySelect;
     if (!select || !select.value || categoryCatalog.list.length === 0) {
       return;
@@ -869,7 +886,10 @@ function loadCategoryDataAndStartLearning(categoryNo, forceAllQuestions) {
     syncCustomCategorySelect(homeSelect);
   }
   
-  var items = getItemsForCategoryFromLocal(categoryNo);
+  var items = (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod() &&
+    typeof getCycleItemsForCategory === 'function')
+    ? getCycleItemsForCategory(categoryNo)
+    : getItemsForCategoryFromLocal(categoryNo);
   if (!items.length) {
     showError('データがありません');
     finishCompletionCategoryBrowse();
@@ -1934,7 +1954,8 @@ function tryPlayStartWaitCharge() {
  */
 function revealCompletionBrowseChrome(showCategorySelect) {
   studyEnd.browseStarted = true;
-  if (isDurationQuestionMethod() || isLastDateQuestionMethod()) {
+  if (isDurationQuestionMethod() || isLastDateQuestionMethod() ||
+      (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod())) {
     hideLearningCategorySelect();
   } else if (showCategorySelect) {
     showLearningCategorySelect();
@@ -2025,10 +2046,17 @@ function showCompletionMessage() {
     studyEnd.categorySession = true;
     showCompletionListSection();
     displayList();
-    loadCategories({
-      preserveValue: categoryCatalog.no,
-      quiet: true
-    });
+    if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
+      if (typeof markCycleCategoryCompleted === 'function') {
+        markCycleCategoryCompleted(categoryCatalog.no);
+      }
+      applyQuestionMethodModeUi();
+    } else {
+      loadCategories({
+        preserveValue: categoryCatalog.no,
+        quiet: true
+      });
+    }
   }
   setLearningNavIconsCategoryMode();
   refreshAdvanceNavControls();
@@ -2170,7 +2198,8 @@ function goToHome(options) {
   // 出題画面HOMEは今回学習分を維持。完了後HOMEはカテゴリ全問へ戻す
   var homeFromIncompleteLearning = !studyEnd.done;
   var incompleteSessionItems = homeFromIncompleteLearning ? categoryCatalog.items.slice() : [];
-  if (!homeFromIncompleteLearning && !isCrossCategoryQuestionMethod()) {
+  if (!homeFromIncompleteLearning && !isCrossCategoryQuestionMethod() &&
+      !(typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod())) {
     var shownNo = categoryCatalog.no;
     if (options.advanceToCategoryNo != null && options.advanceToCategoryNo !== '') {
       shownNo = options.advanceToCategoryNo;
@@ -2222,6 +2251,14 @@ function goToHome(options) {
         updateListNavButtons();
       }
     }
+  } else if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
+    applyQuestionMethodModeUi();
+    if (typeof refreshCycleModeHomeList === 'function') {
+      refreshCycleModeHomeList({
+        forceRedecide: true,
+        commitPending: true
+      });
+    }
   } else if (isDurationQuestionMethod()) {
     applyQuestionMethodModeUi();
     loadDurationModeData({ resetPage: true, resort: true, forceFetch: false });
@@ -2237,7 +2274,9 @@ function goToHome(options) {
   }
   
   // カテゴリ一覧を再取得し、ドロップダウンの最終学習日をシート集計でも更新
-  if (!isCrossCategoryQuestionMethod() && categoryCatalog.no != null && categoryCatalog.no !== '') {
+  if (!isCrossCategoryQuestionMethod() &&
+      !(typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) &&
+      categoryCatalog.no != null && categoryCatalog.no !== '') {
     loadCategories({
       preserveValue: categoryCatalog.no,
       quiet: true
@@ -2247,6 +2286,7 @@ function goToHome(options) {
   updateLearningLockedSideMenuControls();
   ensureAudioPrefetchInventory();
   if (!isDurationQuestionMethod() && !isLastDateQuestionMethod() &&
+      !(typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) &&
       categoryCatalog.no != null && categoryCatalog.no !== '') {
     saveLastHomeCategoryNo(categoryCatalog.no);
   }

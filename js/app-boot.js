@@ -53,6 +53,9 @@ window.onload = function() {
   setButtonImages();
   
   // 出題設定（入替え・リスニング）を読み込み
+  if (typeof loadCycleSlotStateFromLocal === 'function') {
+    loadCycleSlotStateFromLocal();
+  }
   loadPracticeSettings();
   
   // 音声設定（声・速さ）を読み込み、メニュー表示に反映

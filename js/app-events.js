@@ -91,7 +91,8 @@ function setupEventListeners() {
   dom.homeButton.addEventListener('click', function() {
     if (this.disabled) return;
     var options = { sfx: 'home' };
-    if (studyEnd.done && !isDurationQuestionMethod() && !isLastDateQuestionMethod()) {
+    if (studyEnd.done && !isDurationQuestionMethod() && !isLastDateQuestionMethod() &&
+        !(typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod())) {
       var nextNo = nextVisibleCategoryNoAfter(studyEnd.categoryNo);
       if (nextNo != null && nextNo !== '') {
         options.advanceToCategoryNo = nextNo;
@@ -537,6 +538,9 @@ function setupEventListeners() {
   }
   if (typeof bindAddStudyCategoryPlayButton_ === 'function') {
     bindAddStudyCategoryPlayButton_();
+  }
+  if (typeof bindAddStudyTitleChips_ === 'function') {
+    bindAddStudyTitleChips_();
   }
   var addStudyItemRenameButton = dom.addStudyItemRenameButton;
   if (addStudyItemRenameButton) {

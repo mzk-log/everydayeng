@@ -700,6 +700,43 @@
   line-height: 1.45;
 }
 
+.cycle-category-label {
+  font-size: 15px;
+  font-weight: bold;
+  color: #333;
+  margin: 2px 0 6px;
+  line-height: 1.45;
+  white-space: pre-line;
+}
+
+.add-study-title-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.add-study-title-chip {
+  border: 1px solid #9aa7b5;
+  background: #f5f7fa;
+  color: #333;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.add-study-title-chip:active {
+  background: #e8eef6;
+}
+
+.add-study-title-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #666;
+  line-height: 1.4;
+}
+
 /* 学習画面（screen2）でもハンバーガーメニューを表示 */
 
 /* ページローディングオーバーレイ */

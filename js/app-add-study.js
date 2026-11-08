@@ -1051,6 +1051,35 @@ function canPlayAddStudyItemField_(item, field) {
 /**
  * カテゴリ名の再生。短押しは保存済みの案内、長押しは作り直す。
  */
+/**
+ * 出題／解答見出しの定型チップ
+ */
+function bindAddStudyTitleChips_() {
+  var chips = document.querySelectorAll('.add-study-title-chip');
+  for (var i = 0; i < chips.length; i++) {
+    (function(btn) {
+      if (btn.getAttribute('data-bound') === '1') {
+        return;
+      }
+      btn.setAttribute('data-bound', '1');
+      btn.addEventListener('click', function() {
+        var wrap = btn.closest('.add-study-title-chips');
+        var targetId = wrap ? wrap.getAttribute('data-target') : '';
+        var input = targetId ? document.getElementById(targetId) : null;
+        if (!input || input.disabled) {
+          return;
+        }
+        input.value = btn.getAttribute('data-value') || '';
+        try {
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        } catch (e) {
+          // ignore
+        }
+      });
+    })(chips[i]);
+  }
+}
+
 function bindAddStudyCategoryPlayButton_() {
   var button = dom.addStudyItemCategoryPlayButton;
   if (!button || button.getAttribute('data-add-play-bound') === '1') {

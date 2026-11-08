@@ -118,6 +118,14 @@ function updateListNavPair(config) {
     return;
   }
 
+  if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
+    setListNavContainerVisible(config.containerId, false);
+    updateCategoryNavIndicatorElement(indicator, null);
+    prevButton.disabled = true;
+    nextButton.disabled = true;
+    return;
+  }
+
   // 解答時間優先：7件ページ送り
   if (isDurationQuestionMethod()) {
     updateCategoryNavIndicatorElement(indicator, null);
@@ -227,6 +235,9 @@ function updateListNavButtons() {
 
 // 前のカテゴリに移動（学習日優先時はページ戻し）
 function navigateToPreviousCategory() {
+  if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
+    return;
+  }
   if (isDurationQuestionMethod()) {
     navigateDurationModePage(-1);
     return;
@@ -267,6 +278,9 @@ function navigateToPreviousCategory() {
 
 // 次のカテゴリに移動（学習日優先時はページ送り）
 function navigateToNextCategory() {
+  if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
+    return;
+  }
   if (isDurationQuestionMethod()) {
     navigateDurationModePage(1);
     return;

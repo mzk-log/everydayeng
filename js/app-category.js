@@ -197,13 +197,16 @@ function applyStudyItemsToApp(items, options) {
         resetListDisplay();
       }
     }
-    if (!skipLearningArrays && !isDurationQuestionMethod() && !isLastDateQuestionMethod() && !valueToRestore) {
+    if (!skipLearningArrays && !isDurationQuestionMethod() && !isLastDateQuestionMethod() &&
+        !(typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) &&
+        !valueToRestore) {
       valueToRestore = resolveStartupCategoryNo();
     }
     select.disabled = false;
     populateCategorySelectOptions(select, valueToRestore);
   }
   if (!skipLearningArrays && !isDurationQuestionMethod() && !isLastDateQuestionMethod() &&
+      !(typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) &&
       valueToRestore && (categoryCatalog.no == null || categoryCatalog.no === '')) {
     categoryCatalog.no = valueToRestore;
   }
@@ -239,6 +242,11 @@ function applyStudyItemsToApp(items, options) {
       sortItemsForLastDatePriorityMode(lastDateMode.allItems);
       if (!isActiveLearningSession()) {
         regenerateLastDateModeList();
+      }
+    } else if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
+      applyQuestionMethodModeUi();
+      if (!isActiveLearningSession() && typeof refreshCycleModeHomeList === 'function') {
+        refreshCycleModeHomeList({ forceRedecide: false });
       }
     } else if (categoryCatalog.no != null && categoryCatalog.no !== '') {
       var catItems = getItemsForCategoryFromLocal(categoryCatalog.no);
@@ -860,7 +868,8 @@ function refreshVisibleCategoriesRuntimeUi() {
       questionList.selected = [];
       questionList.original = [];
       hideCategoryLoadingSpinner();
-      if (!isDurationQuestionMethod() && !isLastDateQuestionMethod()) {
+      if (!isDurationQuestionMethod() && !isLastDateQuestionMethod() &&
+          !(typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod())) {
         var fallbackNo = resolveStartupCategoryNo();
         if (fallbackNo && select) {
           categoryCatalog.no = fallbackNo;
@@ -876,6 +885,10 @@ function refreshVisibleCategoriesRuntimeUi() {
       loadDurationModeData({ resetPage: true, resort: true, forceFetch: true, pageLoading: true });
     } else if (isLastDateQuestionMethod()) {
       loadLastDateModeData({ regenerate: true, forceFetch: true, pageLoading: true });
+    } else if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
+      if (typeof refreshCycleModeHomeList === 'function') {
+        refreshCycleModeHomeList({ forceRedecide: true });
+      }
     } else {
       updateListNavButtons();
     }

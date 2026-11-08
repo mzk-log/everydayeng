@@ -6,6 +6,7 @@
 var QUESTION_METHOD_VALUES = {
   category: true,         // カテゴリ毎（ノーマル）
   categoryShuffle: true,  // カテゴリ毎（シャッフル）
+  categoryCycle: true,    // カテゴリ毎（サイクル）
   lastDate: true,         // 学習日優先（シャッフル）
   lastDateNormal: true,   // 学習日優先（ノーマル）
   duration: true          // 解答時間優先
@@ -62,6 +63,13 @@ function setQuestionMethod(method) {
     loadDurationModeData({ resetPage: true, resort: true, forceFetch: true, pageLoading: true });
   } else if (next === 'lastDate' || next === 'lastDateNormal') {
     loadLastDateModeData({ regenerate: true, forceFetch: true, pageLoading: true });
+  } else if (next === 'categoryCycle') {
+    if (typeof loadCycleSlotStateFromLocal === 'function') {
+      loadCycleSlotStateFromLocal();
+    }
+    if (typeof refreshCycleModeHomeList === 'function') {
+      refreshCycleModeHomeList({ forceRedecide: true });
+    }
   } else {
     // カテゴリ毎（ノーマル／シャッフル）：選択中カテゴリを再読込（シャッフル時は再シャッフル、ノーマルは No 昇順）
     restoreCategoryModeListFromSelection();
@@ -91,6 +99,14 @@ function isDurationQuestionMethod() {
  */
 function isCategoryShuffleQuestionMethod() {
   return getQuestionMethod() === 'categoryShuffle';
+}
+
+/**
+ * カテゴリ毎（サイクル）か
+ * @returns {boolean}
+ */
+function isCategoryCycleQuestionMethod() {
+  return getQuestionMethod() === 'categoryCycle';
 }
 
 /**
@@ -140,6 +156,9 @@ function getCrossCategoryModeLabel() {
   if (isDurationQuestionMethod()) {
     return '解答時間優先モード';
   }
+  if (isCategoryCycleQuestionMethod()) {
+    return 'カテゴリ毎（サイクル）';
+  }
   return '';
 }
 
@@ -148,6 +167,9 @@ function getCrossCategoryModeLabel() {
  * @returns {string}
  */
 function getCategorySectionLabelText() {
+  if (isCategoryCycleQuestionMethod()) {
+    return 'カテゴリ毎（サイクル）';
+  }
   if (isCrossCategoryQuestionMethod()) {
     return '出題方法';
   }
@@ -162,6 +184,8 @@ function getCategorySectionLabelText() {
  */
 function applyQuestionMethodModeUi() {
   var isCross = isCrossCategoryQuestionMethod();
+  var isCycle = isCategoryCycleQuestionMethod();
+  var hideSelect = isCross || isCycle;
   var selectContainer = dom.categorySelectContainer;
   var modeLabel = dom.questionMethodModeLabel;
   var sectionLabel = dom.categorySectionLabel;
@@ -169,13 +193,21 @@ function applyQuestionMethodModeUi() {
   var currentCategory = dom.currentCategory;
   var modeLabelText = getCrossCategoryModeLabel();
   var categorySectionText = getCategorySectionLabelText();
+  var cycleLabel = document.getElementById('cycleCategoryLabel');
   
   if (selectContainer) {
-    selectContainer.style.display = isCross ? 'none' : '';
+    selectContainer.style.display = hideSelect ? 'none' : '';
   }
   if (modeLabel) {
-    modeLabel.style.display = isCross ? 'block' : 'none';
+    modeLabel.style.display = hideSelect ? 'block' : 'none';
     modeLabel.textContent = modeLabelText;
+  }
+  if (cycleLabel) {
+    if (!isCycle) {
+      cycleLabel.style.display = 'none';
+    } else if (typeof updateCycleCategoryLabelUi === 'function') {
+      updateCycleCategoryLabelUi();
+    }
   }
   if (sectionLabel) {
     sectionLabel.textContent = categorySectionText;
@@ -192,6 +224,8 @@ function applyQuestionMethodModeUi() {
       currentCategory.style.display = 'block';
       currentCategory.textContent = modeLabelText;
     }
+  } else if (isCycle) {
+    if (learningSelectContainer) learningSelectContainer.style.display = 'none';
   } else if (!studyEnd.done) {
     if (currentCategory && currentCategory.classList.contains('is-hidden') === false) {
       // 学習中のカテゴリ表示は startLearning 側で設定

@@ -90,7 +90,10 @@ function buildUserSettingsPayloadFromLocal() {
     practice: {
       questionMethod: getQuestionMethod(),
       swapQA: isSwapQAEnabled() ? 'on' : 'off',
-      listeningMode: isListeningModeEnabled() ? 'on' : 'off'
+      listeningMode: isListeningModeEnabled() ? 'on' : 'off',
+      cycleSlot: (typeof getCycleSlotStateForSettings === 'function')
+        ? getCycleSlotStateForSettings()
+        : { nextKind: 'new', lastCategoryNo: null, dateYmd: '' }
     },
     readToggle: {
       question: getReadToggle('question') ? 'on' : 'off',
@@ -191,6 +194,9 @@ function applyUserSettingsFromServerBody_(settings, imageContent, mimeType) {
       }
       if (settings.practice.listeningMode === 'on' || settings.practice.listeningMode === 'off') {
         localStorage.setItem('practiceListeningMode', settings.practice.listeningMode);
+      }
+      if (settings.practice.cycleSlot && typeof applyCycleSlotStateFromSettings === 'function') {
+        applyCycleSlotStateFromSettings(settings.practice.cycleSlot);
       }
     } catch (e6) {
       // ignore

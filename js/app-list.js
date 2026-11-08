@@ -118,6 +118,7 @@ function getListUiConfig() {
       showStartButton: false
     };
   }
+  var cycle = typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod();
   return {
     tableBodyId: 'listTableBody',
     headerId: 'listTableHeader',
@@ -125,8 +126,8 @@ function getListUiConfig() {
     containerId: 'listContainer',
     selectionCountId: 'selectionCount',
     clearButtonId: 'clearSelectionButton',
-    allowPreviewModal: true,
-    allowRowSelect: true,
+    allowPreviewModal: !cycle,
+    allowRowSelect: !cycle,
     showStartButton: true
   };
 }
