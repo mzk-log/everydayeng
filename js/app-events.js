@@ -22,6 +22,15 @@ function setupEventListeners() {
     }
     // ボタンの状態はloadCategoryData()内で更新されるため、ここでは呼び出さない
   });
+
+  var learningCategoryNameEditPencil = dom.learningCategoryNameEditPencil;
+  if (learningCategoryNameEditPencil) {
+    learningCategoryNameEditPencil.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      openCategoryNameEditFromPencil_();
+    });
+  }
   
   // 学習完了時のCategoryドロップダウン：List表示のみ（学習開始しない）
   var learningCategorySelect = dom.learningCategorySelect;
@@ -47,6 +56,9 @@ function setupEventListeners() {
         return;
       }
       loadCategoryDataForCompletionBrowse(categoryNo);
+      if (typeof updateCategoryNameEditPencil === 'function') {
+        updateCategoryNameEditPencil();
+      }
     });
   }
   

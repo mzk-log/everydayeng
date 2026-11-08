@@ -444,6 +444,9 @@ function bindLearningBodyGestures() {
 
 function updateFieldEditPencils() {
   var show = !updateMode.active && !studyEnd.done && questionCursor.answerShown;
+  if (typeof isCategoryGuideAwaitingAdvance === 'function' && isCategoryGuideAwaitingAdvance()) {
+    show = false;
+  }
   var q = dom.questionEditPencil;
   var a = dom.answerEditPencil;
   if (q) {
@@ -462,6 +465,39 @@ function updateFieldEditPencils() {
   }
   if (notePencil) {
     notePencil.hidden = !(show && (!hasNote || learningNote.expanded));
+  }
+  if (typeof updateCategoryNameEditPencil === 'function') {
+    updateCategoryNameEditPencil();
+  }
+}
+
+/**
+ * カテゴリ名編集鉛筆（Ans後の学習中のみ。出題／解答／noteと同条件。横断は出さない）
+ */
+function updateCategoryNameEditPencil() {
+  var learningPencil = dom.learningCategoryNameEditPencil;
+  if (!learningPencil) {
+    return;
+  }
+  var cross = typeof isCrossCategoryQuestionMethod === 'function' && isCrossCategoryQuestionMethod();
+  var show = !updateMode.active && !studyEnd.done && questionCursor.answerShown;
+  if (typeof isCategoryGuideAwaitingAdvance === 'function' && isCategoryGuideAwaitingAdvance()) {
+    show = false;
+  }
+  var learningNo = categoryCatalog && categoryCatalog.no != null ? String(categoryCatalog.no) : '';
+  learningPencil.hidden = !(show && !cross && !!learningNo);
+}
+
+/**
+ * 学習中の鉛筆からカテゴリ名編集を開く
+ */
+function openCategoryNameEditFromPencil_() {
+  var no = categoryCatalog && categoryCatalog.no != null ? categoryCatalog.no : '';
+  if (!no) {
+    return;
+  }
+  if (typeof openAddStudyItemOverlayForCategoryRename === 'function') {
+    openAddStudyItemOverlayForCategoryRename(no);
   }
 }
 

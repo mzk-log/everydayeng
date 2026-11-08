@@ -4132,6 +4132,7 @@ function fetchCategoryGuideFromNet_(phrase, categoryNo, voice, speed, gen, optio
   if (typeof audioPrefetch !== 'undefined' && audioPrefetch) {
     audioPrefetch.playBlocked = true;
   }
+  var isEndPhrase = options && options.kind === 'end';
   function useContent(audioContent, fromDrive) {
     if (gen !== categoryAnnounce.generation) {
       return;
@@ -4140,8 +4141,11 @@ function fetchCategoryGuideFromNet_(phrase, categoryNo, voice, speed, gen, optio
       finish('fail');
       return;
     }
-    var audioData = rememberCategoryGuideAudio_(phrase, audioContent, voice, speed, categoryNo);
-    if (options.saveDrive && !fromDrive) {
+    // 「終わり」は案内安定キー cg_ に書かない（本文キーの Mem／IdB のみ）
+    var audioData = isEndPhrase
+      ? saveAudioToCache(phrase, audioContent, voice, speed)
+      : rememberCategoryGuideAudio_(phrase, audioContent, voice, speed, categoryNo);
+    if (!isEndPhrase && options.saveDrive && !fromDrive) {
       saveCategoryGuideDriveAudio_(categoryNo, audioContent, voice, speed, phrase);
     }
     if (options.silent) {
@@ -4201,15 +4205,17 @@ function fetchCategoryGuideFromNet_(phrase, categoryNo, voice, speed, gen, optio
 }
 
 /**
- * 案内全文を1本で再生する。順番は全文に含める。
+ * カテゴリ案内／「終わり」を再生する。
+ * kind:'end' は案内安定キー cg_ を使わず、本文キーの Mem／IdB／TTS のみ。
  * @param {string} text
  * @param {string|number} categoryNo
- * @param {{saveDrive?: boolean, silent?: boolean, forceRefresh?: boolean, markHeard?: boolean, forEdit?: boolean, onDone?: function(string): void}} [options]
+ * @param {{kind?: 'guide'|'end', saveDrive?: boolean, silent?: boolean, forceRefresh?: boolean, markHeard?: boolean, forEdit?: boolean, onDone?: function(string): void}} [options]
  */
 function playCategoryPhrase_(text, categoryNo, options) {
   options = options || {};
   var phrase = normalizeTextForTTS(text || '');
   var done = typeof options.onDone === 'function' ? options.onDone : function() {};
+  var isEndPhrase = options.kind === 'end';
   if (!phrase || categoryNo == null || String(categoryNo) === '' || phrase.length > TTS_TEXT_MAX_LENGTH) {
     done('skip');
     return;
@@ -4324,6 +4330,11 @@ function playCategoryPhrase_(text, categoryNo, options) {
       afterIdb(null);
       return;
     }
+    if (isEndPhrase) {
+      // 「終わり」は cg_（案内全文）を読まない
+      getCachedAudioFromIdb(phrase, voice, speed, afterIdb);
+      return;
+    }
     getCategoryGuideFromIdb_(categoryNo, phrase, voice, speed, afterIdb);
   }
   begin();
@@ -4366,6 +4377,9 @@ function enterCategoryGuideWait_(cat, showFirst) {
   categoryAnnounce.waitShowFirst = typeof showFirst === 'function' ? showFirst : null;
   categoryAnnounce.waitCategoryNo = cat && cat.no != null ? cat.no : null;
   categoryAnnounce.pendingStart = null;
+  if (typeof hideStudyFieldsForCategoryGuideWait_ === 'function') {
+    hideStudyFieldsForCategoryGuideWait_();
+  }
   syncCategoryGuideWaitUi_();
 }
 
@@ -4382,6 +4396,9 @@ function advanceFromCategoryGuideWait_() {
   categoryAnnounce.waitShowFirst = null;
   categoryAnnounce.waitCategoryNo = null;
   categoryAnnounce.heard = null;
+  if (typeof showStudyFieldsAfterCategoryGuideWait_ === 'function') {
+    showStudyFieldsAfterCategoryGuideWait_();
+  }
   syncCategoryGuideWaitUi_();
   if (typeof show === 'function') {
     show();
@@ -4419,6 +4436,9 @@ function clearCategoryGuideWait_() {
   categoryAnnounce.awaitingAdvance = false;
   categoryAnnounce.waitShowFirst = null;
   categoryAnnounce.waitCategoryNo = null;
+  if (typeof showStudyFieldsAfterCategoryGuideWait_ === 'function') {
+    showStudyFieldsAfterCategoryGuideWait_();
+  }
   syncCategoryGuideWaitUi_();
 }
 
@@ -4593,6 +4613,7 @@ function playCategoryEndAnnouncement_(cat, options) {
     return;
   }
   playCategoryPhrase_(text, cat.no, {
+    kind: 'end',
     saveDrive: false,
     markHeard: false,
     forceRefresh: !!options.forceRefresh

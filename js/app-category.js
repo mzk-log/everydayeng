@@ -1131,6 +1131,7 @@ function findSelectableCategoryIndex(fromIndex, direction) {
 function populateCategorySelectOptions(select, selectedValue) {
   if (!select) return;
   var isHomeSelect = !!(dom.categorySelect && select === dom.categorySelect);
+  var isLearningSelect = !!(dom.learningCategorySelect && select === dom.learningCategorySelect);
   
   select.innerHTML = '<option value="">Categoryを選択してください</option>';
   getVisibleCategories().forEach(function(cat) {
@@ -1138,7 +1139,7 @@ function populateCategorySelectOptions(select, selectedValue) {
     option.value = cat.no;
     option.textContent = formatCategoryOptionText(cat, {
       withAudioDlLack: isHomeSelect,
-      breakAfterColon: isHomeSelect
+      breakAfterColon: isHomeSelect || isLearningSelect
     });
     select.appendChild(option);
   });
@@ -1347,6 +1348,9 @@ function showLearningCategorySelect() {
     container.style.display = 'block';
   }
   populateCategorySelectOptions(learningSelect, categoryCatalog.no);
+  if (typeof updateCategoryNameEditPencil === 'function') {
+    updateCategoryNameEditPencil();
+  }
 }
 
 /**
@@ -1366,6 +1370,9 @@ function hideLearningCategorySelect() {
   }
   if (learningSelect) {
     learningSelect.value = '';
+  }
+  if (typeof updateCategoryNameEditPencil === 'function') {
+    updateCategoryNameEditPencil();
   }
   setListNavContainerVisible('screen2ListNavContainer', false);
   // 完了UIを閉じるときは領域も解放（高さ予約を残さない）
@@ -1593,7 +1600,9 @@ function syncCategoryLastDateFromList() {
   if (learningSelect && catRef && learningContainer && learningContainer.style.display !== 'none') {
     for (var k = 0; k < learningSelect.options.length; k++) {
       if (String(learningSelect.options[k].value) === String(categoryCatalog.no)) {
-        learningSelect.options[k].textContent = formatCategoryOptionText(catRef);
+        learningSelect.options[k].textContent = formatCategoryOptionText(catRef, {
+          breakAfterColon: true
+        });
         break;
       }
     }

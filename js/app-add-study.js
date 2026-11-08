@@ -1559,6 +1559,55 @@ function openAddStudyItemOverlay() {
 }
 
 /**
+ * 学習中（Ans後）からカテゴリ名編集へ（既存カテゴリの名前更新パネルを開く）
+ * @param {string|number} categoryNo
+ */
+function openAddStudyItemOverlayForCategoryRename(categoryNo) {
+  var midLearningEditable = !!(typeof studyEnd !== 'undefined' && studyEnd && !studyEnd.done &&
+    typeof questionCursor !== 'undefined' && questionCursor && questionCursor.answerShown &&
+    (typeof updateMode === 'undefined' || !updateMode || !updateMode.active));
+  if (!midLearningEditable) {
+    return;
+  }
+  if (typeof isCategoryGuideAwaitingAdvance === 'function' && isCategoryGuideAwaitingAdvance()) {
+    return;
+  }
+  if (typeof isCrossCategoryQuestionMethod === 'function' && isCrossCategoryQuestionMethod()) {
+    return;
+  }
+  var no = categoryNo != null ? String(categoryNo) : '';
+  if (!no) {
+    return;
+  }
+  var cat = (typeof findCategoryByNo === 'function') ? findCategoryByNo(no) : null;
+  if (!cat || (typeof isEndCategory === 'function' && isEndCategory(cat))) {
+    return;
+  }
+  try {
+    closeSideMenu();
+  } catch (e) {
+    // ignore
+  }
+  if (typeof pauseBackgroundAudioForAddStudy_ === 'function') {
+    pauseBackgroundAudioForAddStudy_();
+  }
+  addStudy.lastUpdatedId = '';
+  addStudy.noteOpen = false;
+  resetAddStudyItemEditor({ clearFields: true });
+  fillAddStudyItemCategoryOptions(no);
+  addStudy.categorySettingsOpen = true;
+  syncAddStudyItemCategorySettingsUi_();
+  syncAddStudyItemRenameFields(true);
+  setAddStudyItemStatus('', false);
+  markAddStudyItemClean_();
+  var overlay = dom.addStudyItemOverlay;
+  if (overlay) {
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+  }
+}
+
+/**
  * カテゴリ選択を反映する（未保存確認のあと）
  */
 function applyAddStudyItemCategorySelection_() {
@@ -1961,12 +2010,18 @@ function submitRenameStudyCategory() {
         applyAddStudyItemLocalItems(items, data.dataGeneration, categoryNo);
       }
       syncAddStudyItemRenameFields(true);
+      if (typeof refreshLearningCurrentCategoryLabel === 'function') {
+        refreshLearningCurrentCategoryLabel();
+      }
       var renamedCat = (typeof findCatalogCategory_ === 'function') ? findCatalogCategory_(categoryNo) : null;
       if (renamedCat && typeof prepareCategoryGuideAudio_ === 'function') {
         setAddStudyItemAskStatus('音声準備中...');
         return new Promise(function(resolve) {
           prepareCategoryGuideAudio_(renamedCat, resolve);
         }).then(function() {
+          if (typeof refreshLearningCurrentCategoryLabel === 'function') {
+            refreshLearningCurrentCategoryLabel();
+          }
           setAddStudyItemStatus('名前を更新しました。', true);
         });
       }
@@ -2115,7 +2170,9 @@ function applyAddStudyItemLocalItems(items, dataGeneration, keepCategoryNo) {
   writeLocalStudyBundle(items, dataGeneration);
   var topSelect = dom.categorySelect;
   applyStudyItemsToApp(items, {
-    preserveValue: topSelect ? topSelect.value : ''
+    preserveValue: topSelect ? topSelect.value : '',
+    // 学習中リネーム等で出題配列・カーソルを壊さない
+    skipLearningArrays: typeof isActiveLearningSession === 'function' && isActiveLearningSession()
   });
   fillAddStudyItemCategoryOptions(keepCategoryNo || '');
 }

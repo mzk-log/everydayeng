@@ -403,6 +403,7 @@ var dom = {
   addStudyItemStatusProgressBar: document.getElementById('addStudyItemStatusProgressBar'),
   categoryLoadingSpinner: document.getElementById('categoryLoadingSpinner'),
   currentCategory: document.getElementById('currentCategory'),
+  learningCategoryNameEditPencil: document.getElementById('learningCategoryNameEditPencil'),
   learningCategoryNavInfo: document.getElementById('learningCategoryNavInfo'),
   learningListNextButton: document.getElementById('learningListNextButton'),
   learningListPrevButton: document.getElementById('learningListPrevButton'),

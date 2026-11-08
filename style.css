@@ -1243,9 +1243,11 @@ select.native-category-select-hidden {
   transition: background-color 0.3s ease;
 }
 
-/* HOME：Category の「：」直後改行を反映 */
+/* HOME／学習画面：Category の「：」直後改行を反映 */
 #screen1 .custom-category-select-trigger,
-#screen1 .custom-category-select-option {
+#screen1 .custom-category-select-option,
+#screen2 .custom-category-select-trigger,
+#screen2 .custom-category-select-option {
   white-space: pre-line;
 }
 
@@ -1750,6 +1752,25 @@ tr:last-child td {
 
 .field-edit-pencil[hidden] {
   display: none !important;
+}
+
+.category-section-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.category-section-label-row .section-label {
+  margin-bottom: 0;
+}
+
+.category-name-edit-pencil {
+  position: static;
+  top: auto;
+  right: auto;
+  margin-left: auto; /* 出題／解答／note の鉛筆と同じ右端揃え */
+  flex-shrink: 0;
 }
 
 .completion-list-container .clear-button {
@@ -3917,7 +3938,7 @@ textarea.is-tts-too-long {
   margin: 3px 0;
   padding: 0;
   line-height: 1.45;
-  white-space: pre-wrap;
+  white-space: pre-line;
   overflow: visible;
   text-overflow: unset;
   overflow-wrap: anywhere;

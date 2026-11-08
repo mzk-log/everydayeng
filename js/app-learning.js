@@ -273,12 +273,14 @@ function startLearning() {
     });
     if (selectedCategory && currentCategory) {
       currentCategory.classList.remove('is-hidden');
-      currentCategory.textContent = formatCategoryOptionText(selectedCategory);
+      currentCategory.textContent = formatCategoryOptionText(selectedCategory, {
+        breakAfterColon: true
+      });
       currentCategory.style.display = 'block';
       currentCategory.style.width = '100%';
       currentCategory.style.maxWidth = '100%';
       currentCategory.style.minWidth = '0';
-      currentCategory.style.whiteSpace = 'pre-wrap';
+      currentCategory.style.whiteSpace = 'pre-line';
       currentCategory.style.overflowWrap = 'anywhere';
       currentCategory.style.wordBreak = 'break-word';
       currentCategory.style.overflow = 'visible';
@@ -309,6 +311,59 @@ function startLearning() {
   updateQuestionInfoDisplay();
 
   beginStudyAfterCategoryGuide_();
+}
+
+/**
+ * カテゴリ案内待ち中：前回の出題／解答／note を出さない
+ */
+function hideStudyFieldsForCategoryGuideWait_() {
+  var questionSection = dom.questionSection;
+  var answerSection = dom.answerSection;
+  var noteSection = dom.noteSection;
+  if (questionSection) {
+    questionSection.style.display = 'none';
+    questionSection.style.opacity = '';
+  }
+  if (answerSection) {
+    answerSection.style.display = 'none';
+    answerSection.style.opacity = '';
+  }
+  if (noteSection) {
+    noteSection.style.display = 'none';
+    noteSection.style.opacity = '';
+  }
+  if (dom.questionText) {
+    dom.questionText.textContent = '';
+  }
+  if (dom.answerTextDisplay) {
+    dom.answerTextDisplay.textContent = '';
+    dom.answerTextDisplay.style.display = 'none';
+  }
+  if (dom.answerButtonContainer) {
+    dom.answerButtonContainer.style.display = 'none';
+  }
+  if (dom.learningMeta) {
+    dom.learningMeta.textContent = '';
+  }
+  if (typeof updateFieldEditPencils === 'function') {
+    updateFieldEditPencils();
+  }
+}
+
+/**
+ * 案内待ち解除後：出題ブロックを再表示（中身は displayQuestion 側）
+ */
+function showStudyFieldsAfterCategoryGuideWait_() {
+  var questionSection = dom.questionSection;
+  var answerSection = dom.answerSection;
+  if (questionSection) {
+    questionSection.style.display = '';
+    questionSection.style.opacity = '';
+  }
+  if (answerSection) {
+    answerSection.style.display = '';
+    answerSection.style.opacity = '';
+  }
 }
 
 /**
@@ -571,6 +626,43 @@ function updateLearningTime() {
 }
 
 // 問題を表示
+/**
+ * 学習中の #currentCategory 文言をカタログから差し替える（名前更新後など）
+ */
+function refreshLearningCurrentCategoryLabel() {
+  var screen2 = dom.screen2;
+  if (!screen2 || !screen2.classList.contains('active')) {
+    return;
+  }
+  if (studyEnd && studyEnd.done) {
+    return;
+  }
+  if (typeof isCrossCategoryQuestionMethod === 'function' && isCrossCategoryQuestionMethod()) {
+    return;
+  }
+  var currentCategory = dom.currentCategory;
+  if (!currentCategory) {
+    return;
+  }
+  var selectedCategory = null;
+  if (typeof findCatalogCategory_ === 'function') {
+    selectedCategory = findCatalogCategory_(categoryCatalog.no);
+  } else if (categoryCatalog && categoryCatalog.list) {
+    selectedCategory = categoryCatalog.list.find(function(cat) {
+      return cat && String(cat.no) === String(categoryCatalog.no);
+    });
+  }
+  if (!selectedCategory || typeof formatCategoryOptionText !== 'function') {
+    return;
+  }
+  currentCategory.textContent = formatCategoryOptionText(selectedCategory, {
+    breakAfterColon: true
+  });
+  if (typeof refreshLearningIdbStatusUi === 'function') {
+    refreshLearningIdbStatusUi();
+  }
+}
+
 /**
  * 学習画面：IdB 未のカテゴリ／出題／解答テキストを赤表示に同期
  * カテゴリ＝タイトル案内未、出題＝出題側音未、解答＝解答側音未。集計前は付けない。
