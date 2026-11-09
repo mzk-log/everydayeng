@@ -1767,11 +1767,28 @@ function categoryGuideIdbId_(categoryNo, voice, speed) {
 }
 
 /**
- * カテゴリ案内（タイトル）が端末 IdB にあるか（メニュー用）
+ * 「{名前}、終わり」が端末 IdB にあるか
  * @param {Object|null} cat
- * @returns {boolean|null} null=対象外または確認中
+ * @returns {boolean|null} null=対象外または確認中／true=済／false=未
  */
-function isCategoryTitleAudioReady(cat) {
+function isCategoryEndAudioReady(cat) {
+  var text = typeof buildCategoryEndText_ === 'function' ? buildCategoryEndText_(cat) : '';
+  if (!cat || !text) {
+    return null;
+  }
+  if (!audioStock.idbInventoryReady) {
+    return null;
+  }
+  var voice = (typeof getAudioVoice === 'function') ? getAudioVoice('question') : AUDIO_VOICE_DEFAULT;
+  return isTextAudioIdbReady_(text, voice, AUDIO_SPEED_FIXED) === true;
+}
+
+/**
+ * カテゴリ案内が端末 IdB にあるか（cg_ または旧本文キー）
+ * @param {Object|null} cat
+ * @returns {boolean|null}
+ */
+function isCategoryGuideAudioReady_(cat) {
   var text = buildCategoryGuideText_(cat);
   if (!cat || !text) {
     return null;
@@ -1786,6 +1803,27 @@ function isCategoryTitleAudioReady(cat) {
   }
   // 旧：本文ハッシュキーで保存済みのものも済とみなす
   return isTextAudioIdbReady_(text, voice, AUDIO_SPEED_FIXED) === true;
+}
+
+/**
+ * タイトル（案内全文＋「終わり」）が端末 IdB に揃っているか（メニュー／一覧用）
+ * @param {Object|null} cat
+ * @returns {boolean|null} null=対象外または確認中
+ */
+function isCategoryTitleAudioReady(cat) {
+  var guideReady = isCategoryGuideAudioReady_(cat);
+  if (guideReady !== true) {
+    return guideReady;
+  }
+  var endText = typeof buildCategoryEndText_ === 'function' ? buildCategoryEndText_(cat) : '';
+  if (!endText) {
+    return true;
+  }
+  var endReady = isCategoryEndAudioReady(cat);
+  if (endReady === null) {
+    return null;
+  }
+  return endReady === true;
 }
 
 /**
@@ -2896,7 +2934,7 @@ function noteAudioPrefetchFailure_() {
 }
 
 /**
- * カテゴリ案内の先読み（揃い件数には入れない。「終わり」は対象外）
+ * カテゴリ案内の先読み（出題・解答の idbReady/target には入れない）
  * 今のカテゴリ（カテゴリ毎だけ）は focus。ほかは出題ジョブの後ろ。
  * @returns {Array<{kind: string, categoryNo: *, text: string, voice: string, speed: string, idbId: string, focus: boolean}>}
  */
@@ -2935,11 +2973,50 @@ function collectCategoryGuidePrefetchJobs_() {
 }
 
 /**
- * 案内全文がメモリにも端末にも無い
+ * 「終わり」の先読み（Drive 無し。ON時 TTS。出題・解答の idbReady/target には入れない）
+ * @returns {Array<{kind: string, categoryNo: *, text: string, voice: string, speed: string, idbId: string, focus: boolean}>}
+ */
+function collectCategoryEndPrefetchJobs_() {
+  var voice = (typeof getAudioVoice === 'function') ? getAudioVoice('question') : AUDIO_VOICE_DEFAULT;
+  var speed = AUDIO_SPEED_FIXED;
+  var cats = (typeof getConfigurableCategories === 'function') ? getConfigurableCategories() : [];
+  var focusNo = '';
+  var cross = (typeof isCrossCategoryQuestionMethod === 'function') && isCrossCategoryQuestionMethod();
+  if (!cross && categoryCatalog && categoryCatalog.no != null && categoryCatalog.no !== '') {
+    focusNo = String(categoryCatalog.no);
+  }
+  var jobs = [];
+  var i;
+  for (i = 0; i < cats.length; i++) {
+    var cat = cats[i];
+    var text = typeof buildCategoryEndText_ === 'function' ? buildCategoryEndText_(cat) : '';
+    if (!cat || cat.no == null || String(cat.no) === '' || !text) {
+      continue;
+    }
+    var phrase = normalizeTextForTTS(text);
+    if (!phrase || phrase.length > TTS_TEXT_MAX_LENGTH) {
+      continue;
+    }
+    var cacheKey = phrase + '_' + voice + '_' + speed;
+    jobs.push({
+      kind: 'categoryEnd',
+      categoryNo: cat.no,
+      text: phrase,
+      voice: voice,
+      speed: speed,
+      idbId: audioIdbRecordId(cacheKey),
+      focus: focusNo !== '' && String(cat.no) === focusNo
+    });
+  }
+  return jobs;
+}
+
+/**
+ * 案内全文または「終わり」がメモリにも端末にも無い
  * @returns {boolean}
  */
 function categoryGuidePrefetchPending_() {
-  var jobs = collectCategoryGuidePrefetchJobs_();
+  var jobs = collectCategoryGuidePrefetchJobs_().concat(collectCategoryEndPrefetchJobs_());
   var i;
   for (i = 0; i < jobs.length; i++) {
     var job = jobs[i];
@@ -3004,6 +3081,7 @@ function scheduleAudioPrefetch() {
   var jobs = collectAudioPrefetchJobs();
   audioStock.idbTarget = jobs.length;
   var guideJobs = collectCategoryGuidePrefetchJobs_();
+  var endJobs = collectCategoryEndPrefetchJobs_();
   var maxPri = 0;
   var gi;
   for (gi = 0; gi < jobs.length; gi++) {
@@ -3014,6 +3092,11 @@ function scheduleAudioPrefetch() {
   for (gi = 0; gi < guideJobs.length; gi++) {
     guideJobs[gi].priority = guideJobs[gi].focus ? 0.5 : (maxPri + 1);
     jobs.push(guideJobs[gi]);
+  }
+  for (gi = 0; gi < endJobs.length; gi++) {
+    // 案内の直後に「終わり」（focus は 0.55、他は案内と同じ帯の直後）
+    endJobs[gi].priority = endJobs[gi].focus ? 0.55 : (maxPri + 1.1);
+    jobs.push(endJobs[gi]);
   }
   jobs.sort(function(a, b) {
     return a.priority - b.priority;
@@ -3038,6 +3121,10 @@ function scheduleAudioPrefetch() {
     enqueueGasAudioFetch(function(signal, generation, done) {
       if (job.kind === 'categoryGuide') {
         prefetchOneCategoryGuide_(job, signal, generation, done);
+        return;
+      }
+      if (job.kind === 'categoryEnd') {
+        prefetchOneCategoryEnd_(job, signal, generation, done);
         return;
       }
       prefetchOneDriveAudio(job, signal, generation, done);
@@ -3239,6 +3326,94 @@ function prefetchOneCategoryGuide_(job, signal, generation, done) {
             return;
           }
           finishLoadDiag('run', 'miss', { ok: false });
+          audioPrefetch.failStreak = 0;
+          done();
+        })
+        .catch(function(error) {
+          clearTimeout(timeoutId);
+          if (generation !== audioFetch.generation || isAbortError(error)) {
+            if (timedOut) {
+              finishLoadDiag('run', 'timeout', { ok: false });
+              noteAudioPrefetchFailure_();
+            }
+            done();
+            return;
+          }
+          finishLoadDiag('run', loadDiagStatusFromError(error), { ok: false });
+          noteAudioPrefetchFailure_();
+          done();
+        });
+    }, function() {
+      audioPrefetch.stopped = true;
+      audioFetch.prefetchQueue = [];
+      clearAudioPrefetchRecheck_();
+      done();
+    });
+  });
+}
+
+/**
+ * 「終わり」の先読み1本（Drive 無し。Cloud TTS → IdB／Mem。再生しない）
+ */
+function prefetchOneCategoryEnd_(job, signal, generation, done) {
+  if (generation !== audioFetch.generation) {
+    done();
+    return;
+  }
+  if (!job || !job.text) {
+    done();
+    return;
+  }
+  getCachedAudioFromIdb(job.text, job.voice, job.speed, function(cached) {
+    if (cached) {
+      if (cached.source === 'indexedDB' || (audioStock.idbIds && audioStock.idbIds[job.idbId])) {
+        markAudioIdbIdReady_(job.idbId);
+        if (typeof syncAudioStockStatusUi === 'function') {
+          syncAudioStockStatusUi();
+        }
+        done();
+        return;
+      }
+      ensureAudioPersistedToIdb_(job.text, job.voice, job.speed, function() {
+        done();
+      });
+      return;
+    }
+    ensureFreshGoogleAuthToken(function() {
+      if (generation !== audioFetch.generation) {
+        done();
+        return;
+      }
+      beginLoadDiag('run', '先読み', 1, {
+        status: 'TTS',
+        queueWait: audioFetch.prefetchQueue.length
+      });
+      var timedOut = false;
+      var timeoutId = setTimeout(function() {
+        timedOut = true;
+        try {
+          if (signal && typeof signal.throwIfAborted !== 'function' && audioFetch.abort) {
+            audioFetch.abort.abort();
+          } else if (audioFetch.abort) {
+            audioFetch.abort.abort();
+          }
+        } catch (eAbort) {
+          // ignore
+        }
+      }, AUDIO_PREFETCH_TIMEOUT_MS);
+
+      synthesizeTtsAudioContent_(job.text, job.voice, job.speed, signal)
+        .then(function(audioContent) {
+          if (timedOut) {
+            throw new Error('タイムアウト');
+          }
+          clearTimeout(timeoutId);
+          if (generation !== audioFetch.generation) {
+            done();
+            return;
+          }
+          saveAudioToCache(job.text, audioContent, job.voice, job.speed);
+          finishLoadDiag('run', 'OK', { ok: true, bytes: String(audioContent).length });
           audioPrefetch.failStreak = 0;
           done();
         })
