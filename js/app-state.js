@@ -158,7 +158,9 @@ var addStudy = {
   pendingCategoryValue: '',
   committedCategoryValue: '',
   baseline: null, // 未保存判定の基準
-  lastUpdatedId: '' // 更新完了後も一覧で薄緑にする問題 ID
+  lastUpdatedId: '', // 更新完了後も一覧で薄緑にする問題 ID
+  categorySelectOpen: false, // カテゴリ select 操作中（IdBラベル更新を保留）
+  categorySelectLabelRefreshPending: false // 操作中に IdB 更新が来たら閉じたあと反映
 };
 var addStudySsmlSelection = {
   start: null,

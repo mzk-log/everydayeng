@@ -1531,7 +1531,28 @@ function fillAddStudyItemCategoryOptions(selectedValue) {
 }
 
 /**
+ * カテゴリ select の操作開始／終了（開いているあいだは option 文言を触らない）
+ * @param {boolean} open
+ */
+function setAddStudyCategorySelectOpen_(open) {
+  var next = !!open;
+  if (addStudy.categorySelectOpen === next) {
+    if (!next && addStudy.categorySelectLabelRefreshPending) {
+      addStudy.categorySelectLabelRefreshPending = false;
+      refreshAddStudyItemCategoryOptionQaLabels_();
+    }
+    return;
+  }
+  addStudy.categorySelectOpen = next;
+  if (!next && addStudy.categorySelectLabelRefreshPending) {
+    addStudy.categorySelectLabelRefreshPending = false;
+    refreshAddStudyItemCategoryOptionQaLabels_();
+  }
+}
+
+/**
  * 追加・編集のカテゴリ選択肢の出題・解答 n/m だけ更新（選択は維持）
+ * select 操作中は保留し、閉じたあとに反映する（スマホでスクロールが先頭へ戻るのを防ぐ）
  */
 function refreshAddStudyItemCategoryOptionQaLabels_() {
   var select = dom.addStudyItemCategorySelect;
@@ -1540,6 +1561,10 @@ function refreshAddStudyItemCategoryOptionQaLabels_() {
   }
   var overlay = dom.addStudyItemOverlay;
   if (!overlay || overlay.style.display === 'none') {
+    return;
+  }
+  if (addStudy.categorySelectOpen) {
+    addStudy.categorySelectLabelRefreshPending = true;
     return;
   }
   var progressMap = (typeof buildCategoryIdbProgressMap === 'function')
@@ -1563,9 +1588,38 @@ function refreshAddStudyItemCategoryOptionQaLabels_() {
       continue;
     }
     var formatted = formatAddStudyCategoryOptionWithQa_(cat, progressMap[no]);
-    opt.textContent = formatted.text;
-    opt.style.color = formatted.color;
+    if (opt.textContent !== formatted.text) {
+      opt.textContent = formatted.text;
+    }
+    if (opt.style.color !== formatted.color) {
+      opt.style.color = formatted.color;
+    }
   }
+}
+
+/**
+ * カテゴリ select の focus／blur で操作中フラグを付ける
+ */
+function bindAddStudyCategorySelectInteraction_() {
+  var select = dom.addStudyItemCategorySelect;
+  if (!select || select.getAttribute('data-idb-label-bound') === '1') {
+    return;
+  }
+  select.setAttribute('data-idb-label-bound', '1');
+  function markOpen() {
+    setAddStudyCategorySelectOpen_(true);
+  }
+  function markClosed() {
+    // ネイティブピッカー閉じ直後の blur を次ティックで処理
+    setTimeout(function() {
+      setAddStudyCategorySelectOpen_(false);
+    }, 0);
+  }
+  select.addEventListener('focus', markOpen);
+  select.addEventListener('mousedown', markOpen);
+  select.addEventListener('touchstart', markOpen, { passive: true });
+  select.addEventListener('blur', markClosed);
+  select.addEventListener('change', markClosed);
 }
 
 function openAddStudyItemOverlay() {
@@ -1576,6 +1630,8 @@ function openAddStudyItemOverlay() {
   addStudy.lastUpdatedId = '';
   addStudy.categorySettingsOpen = false;
   addStudy.noteOpen = false;
+  addStudy.categorySelectOpen = false;
+  addStudy.categorySelectLabelRefreshPending = false;
   resetAddStudyItemEditor({ clearFields: true });
   fillAddStudyItemCategoryOptions('');
   setAddStudyItemStatus('', false);
@@ -1776,6 +1832,8 @@ function closeAddStudyItemOverlay() {
   addStudy.audioBusy = false;
   addStudy.audioPlayId = '';
   addStudy.audioPlayField = '';
+  addStudy.categorySelectOpen = false;
+  addStudy.categorySelectLabelRefreshPending = false;
   resetAddStudyItemEditor({ clearFields: true });
   var overlay = dom.addStudyItemOverlay;
   if (overlay) {

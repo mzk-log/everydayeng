@@ -292,6 +292,19 @@ function pickCycleReviewCategoryNo_() {
     total += w;
   }
   if (!candidates.length || total <= 0) {
+    // 直前除外だけで空なら同一カテゴリを許可（対象1件時の行き止まり防止）
+    if (lastNo != null) {
+      for (var k = 0; k < list.length; k++) {
+        var lastEntry = list[k];
+        if (String(lastEntry.no) !== String(lastNo)) {
+          continue;
+        }
+        if (lastEntry.m >= 1 && getCycleReviewWeight(lastEntry.m) > 0) {
+          return lastEntry.no;
+        }
+        break;
+      }
+    }
     return null;
   }
   var r = Math.random() * total;

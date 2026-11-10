@@ -542,6 +542,9 @@ function setupEventListeners() {
   if (typeof bindAddStudyTitleChips_ === 'function') {
     bindAddStudyTitleChips_();
   }
+  if (typeof bindAddStudyCategorySelectInteraction_ === 'function') {
+    bindAddStudyCategorySelectInteraction_();
+  }
   var addStudyItemRenameButton = dom.addStudyItemRenameButton;
   if (addStudyItemRenameButton) {
     addStudyItemRenameButton.addEventListener('click', function() {
