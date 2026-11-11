@@ -113,6 +113,12 @@ function bindLearningBodyGestures() {
       return;
     }
     if (count === 3) {
+      // Next 着地後（中央 Start）は案内待ちと同様に何もしない
+      if (typeof studyEnd !== 'undefined' && studyEnd && studyEnd.done &&
+          typeof shouldShowCompletionStartButton === 'function' &&
+          shouldShowCompletionStartButton()) {
+        return;
+      }
       if (stopCategoryAnnounce({ continueStart: true })) {
         return;
       }

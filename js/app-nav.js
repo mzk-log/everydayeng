@@ -69,6 +69,10 @@ function handlePlusButtonClick() {
   
   // 学習完了時：同じカテゴリを全問で再学習（位置はそのまま）
   if (studyEnd.done) {
+    // Next 着地後（中央 Start）は再学習しない（案内待ちの3タップと同様）
+    if (shouldShowCompletionStartButton()) {
+      return;
+    }
     restartCurrentCategoryLearning();
     return;
   }
@@ -438,6 +442,10 @@ function updateNavAnswerButton() {
         }
       } else if (isLastDateQuestionMethod()) {
         blocked = isCategoryTransitionInProgress;
+      } else if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
+        var cycleHasNext = typeof canBrowseNextCycleFromCompletion === 'function' &&
+          canBrowseNextCycleFromCompletion();
+        blocked = !cycleHasNext || isCategoryTransitionInProgress;
       } else {
         var idx = getCurrentCategoryIndex();
         blocked = (idx < 0 || findSelectableCategoryIndex(idx, 1) < 0) || isCategoryTransitionInProgress;
@@ -938,6 +946,15 @@ function updatePlusButton() {
   }
   
   if (studyEnd.done) {
+    // Next 着地後（中央 Start）は Retry 無効（次カテゴリ開始前は何もしない）
+    if (shouldShowCompletionStartButton()) {
+      plusButton.disabled = true;
+      plusButton.removeAttribute('title');
+      plusButton.setAttribute('aria-label', 'もう一度');
+      setRetrySlotInactive(true);
+      if (badge) badge.style.display = '';
+      return;
+    }
     var prepareBusy = !!(startAudioPrepare && startAudioPrepare.busy);
     plusButton.disabled = prepareBusy || isCategoryTransitionInProgress || isNavActionLockedByAudio();
     plusButton.setAttribute('aria-label', '同じカテゴリをもう一度');

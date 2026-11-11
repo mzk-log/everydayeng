@@ -319,6 +319,29 @@ function pickCycleReviewCategoryNo_() {
 }
 
 /**
+ * 完了画面 Next で次スロットへ進めるか（スロット状態は変えない）
+ * End 直後の slotAdvancePending は反転後の kind として見る
+ * @returns {boolean}
+ */
+function canBrowseNextCycleFromCompletion() {
+  ensureCycleSlotDate_();
+  var kind = cycleMode.nextKind === 'review' ? 'review' : 'new';
+  if (cycleMode.slotAdvancePending) {
+    kind = (kind === 'new') ? 'review' : 'new';
+  }
+  if (kind === 'review') {
+    if (pickCycleReviewCategoryNo_() != null) {
+      return true;
+    }
+    kind = 'new';
+  }
+  if (pickCycleNewCategoryNo_() != null) {
+    return true;
+  }
+  return pickCycleReviewCategoryNo_() != null;
+}
+
+/**
  * 次に出すべきカテゴリを決定（スロット更新を含む）
  * @returns {{categoryNo: string|number, kind: string}|null}
  */
