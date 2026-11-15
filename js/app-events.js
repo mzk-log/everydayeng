@@ -390,12 +390,6 @@ function setupEventListeners() {
       closeVisibleCategoriesOverlay();
     });
   }
-  var audioDownloadMenuButton = dom.audioDownloadMenuButton;
-  if (audioDownloadMenuButton) {
-    audioDownloadMenuButton.addEventListener('click', function() {
-      toggleAudioDownloadEnabled();
-    });
-  }
   var loadDiagMenuButton = dom.loadDiagMenuButton;
   if (loadDiagMenuButton) {
     loadDiagMenuButton.addEventListener('click', function() {

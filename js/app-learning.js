@@ -526,21 +526,41 @@ function getVisibleCategoriesStats() {
 }
 
 /**
+ * ハンバーガー「表示カテゴリ」カードの件数をヘッダー選択と同趣旨で更新
+ */
+function syncVisibleCategoriesMenuStats() {
+  var catEl = dom.visibleCategoriesMenuCatValue;
+  var qEl = dom.visibleCategoriesMenuQValue;
+  if (!catEl && !qEl) {
+    return;
+  }
+  var totalCategories = getTotalSheetCategoryCount();
+  var totalQuestions = getTotalSheetQuestionCount();
+  var visibleStats = getVisibleCategoriesStats();
+  if (catEl) {
+    catEl.textContent = visibleStats.categoryCount + '/' + totalCategories;
+  }
+  if (qEl) {
+    qEl.textContent = visibleStats.questionCount + '/' + totalQuestions;
+  }
+}
+
+/**
  * 画面上の学習統計表示を更新（例：14問｜18問　選択：8/12カテゴリ・50/320問）
  */
 function updateDailyStudyStatsDisplay() {
   var el = dom.learningItemCount;
-  if (!el) {
-    return;
-  }
-  var itemCount = getTodayStudiedItemCountForDisplay();
-  var ansCount = getTodayStudiedAnsCountForDisplay();
   var totalCategories = getTotalSheetCategoryCount();
   var totalQuestions = getTotalSheetQuestionCount();
   var visibleStats = getVisibleCategoriesStats();
-  el.textContent = itemCount + '問｜' + ansCount + '問　選択：' +
-    visibleStats.categoryCount + '/' + totalCategories + 'カテゴリ・' +
-    visibleStats.questionCount + '/' + totalQuestions + '問';
+  if (el) {
+    var itemCount = getTodayStudiedItemCountForDisplay();
+    var ansCount = getTodayStudiedAnsCountForDisplay();
+    el.textContent = itemCount + '問｜' + ansCount + '問　選択：' +
+      visibleStats.categoryCount + '/' + totalCategories + 'カテゴリ・' +
+      visibleStats.questionCount + '/' + totalQuestions + '問';
+  }
+  syncVisibleCategoriesMenuStats();
 }
 
 /**

@@ -61,12 +61,22 @@ function isLoadDiagVisible() {
  */
 function syncLoadDiagAccessUi() {
   var box = dom.loadDiagMenuItemContainer;
+  var button = dom.loadDiagMenuButton;
   var label = dom.loadDiagMenuButtonText;
+  var on = loadDiagVisible === true;
   if (box) {
     box.style.display = isLoadDiagAdmin() ? '' : 'none';
   }
   if (label) {
-    label.textContent = loadDiagVisible ? '通信ログ ON' : '通信ログ OFF';
+    label.textContent = on ? 'ON' : 'OFF';
+    if (on) {
+      label.classList.add('is-on');
+    } else {
+      label.classList.remove('is-on');
+    }
+  }
+  if (button) {
+    button.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
   if (!isLoadDiagVisible()) {
     stopLoadDiagTicker('boot');

@@ -82,25 +82,12 @@ function updateVisibleCategoriesMenuLock() {
 }
 
 /**
- * 音声ダウンロード：メニュー文言とヘッダートグルを同期（HOME／学習とも操作可）
+ * 音声ダウンロード：ヘッダートグルを同期（切替はヘッダーのみ。HOME／学習とも操作可）
  */
 function updateAudioDownloadMenuLock() {
-  var container = dom.audioDownloadMenuItemContainer;
-  var button = dom.audioDownloadMenuButton;
-  var label = dom.audioDownloadMenuButtonText;
   var headerToggle = dom.audioDownloadToggleButton;
   var hintTitle = '音声のDrive／TTS取得のみ。表やAnsの通信は対象外';
   var on = typeof isAudioDownloadEnabled === 'function' && isAudioDownloadEnabled();
-  if (container) {
-    container.classList.remove('is-locked');
-  }
-  if (label) {
-    label.textContent = on ? '音声ダウンロード ON' : '音声ダウンロード OFF';
-  }
-  if (button) {
-    button.disabled = false;
-    button.title = hintTitle;
-  }
   if (headerToggle) {
     headerToggle.classList.toggle('active', on);
     headerToggle.setAttribute('aria-pressed', on ? 'true' : 'false');

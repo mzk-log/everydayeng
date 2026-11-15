@@ -7,7 +7,7 @@
   <!-- フロント版チェック：version.json（GAS経由）と不一致なら index.html?v=版 へ1回だけ置換 -->
   <script>
   (function () {
-    var FRONT_VERSION = '202611150957';
+    var FRONT_VERSION = '202611152007';
     window.APP_FRONT_VERSION = FRONT_VERSION;
     // app.js の WEB_APP_URL（PRD）と同一に保つ
     var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxTBkXrUOsYjzb1xERU-GXe5g8w9f0lxqOyxn6P8-VC9zNDMtjmTXOKRH_lBnRra3Kzcw/exec';
@@ -46,7 +46,7 @@
       });
   })();
   </script>
-  <link rel="stylesheet" href="style.css?v=202611150957">
+  <link rel="stylesheet" href="style.css?v=202611152007">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -74,73 +74,42 @@
         <button id="sideMenuCloseButton" class="side-menu-close-button" type="button" aria-label="閉じる">×</button>
       </div>
       <div class="side-menu-body">
-        <div class="side-menu-item-container">
-          <button class="side-menu-item side-menu-item-parent" type="button" id="changeBackgroundButton">
-            <span class="side-menu-item-text">背景画像の変更</span>
-            <span class="side-menu-item-arrow">▼</span>
-          </button>
-          <div class="side-menu-submenu" id="backgroundSubmenu">
-            <button class="side-menu-submenu-item" type="button" id="selectBackgroundButton">
-              背景画像を選択
-            </button>
-            <div class="side-menu-submenu-item side-menu-brightness-item">
-              <span class="side-menu-brightness-label">明るさ変更</span>
-              <div class="side-menu-brightness-controls">
-                <button class="brightness-button" data-brightness="dark" type="button">暗い</button>
-                <button class="brightness-button brightness-button-active" data-brightness="bright" type="button">明るい</button>
+        <div class="menu-cards">
+          <div class="audio-stock-block" id="audioStockStatus" aria-live="polite" aria-label="端末音声">
+            <p class="audio-stock-heading">端末音声</p>
+            <div class="audio-stock-status">
+              <div class="audio-stock-row">
+                <span class="audio-stock-row-label">タイトル</span>
+                <strong id="audioStockTitleValue" class="audio-stock-value is-wait">確認中</strong>
               </div>
-            </div>
-            <button class="side-menu-submenu-item" type="button" id="resetBackgroundButton">
-              初期値に戻す
-            </button>
-          </div>
-        </div>
-        <div class="side-menu-item-container">
-          <button class="side-menu-item side-menu-item-parent" type="button" id="audioSettingsButton">
-            <span class="side-menu-item-text">音声設定</span>
-            <span class="side-menu-item-arrow">▼</span>
-          </button>
-          <div class="side-menu-submenu side-menu-submenu-tall" id="audioSettingsSubmenu">
-            <div class="side-menu-submenu-item side-menu-brightness-item">
-              <span class="side-menu-brightness-label">出題音声</span>
-              <div class="side-menu-brightness-controls">
-                <button class="audio-voice-button audio-voice-button-active" data-voice-type="question" data-voice-gender="male" type="button">男性</button>
-                <button class="audio-voice-button" data-voice-type="question" data-voice-gender="female" type="button">女性</button>
-              </div>
-            </div>
-            <div class="side-menu-submenu-item side-menu-brightness-item">
-              <span class="side-menu-brightness-label">出題読みの速さ</span>
-              <div class="side-menu-brightness-controls">
-                <button class="audio-speed-button" data-speed-type="question" data-speed-value="fast" type="button" disabled>速い</button>
-                <button class="audio-speed-button audio-speed-button-active" data-speed-type="question" data-speed-value="medium" type="button">中</button>
-                <button class="audio-speed-button" data-speed-type="question" data-speed-value="slow" type="button" disabled>遅い</button>
-              </div>
-            </div>
-            <div class="side-menu-submenu-item side-menu-brightness-item">
-              <span class="side-menu-brightness-label">解答音声</span>
-              <div class="side-menu-brightness-controls">
-                <button class="audio-voice-button audio-voice-button-active" data-voice-type="answer" data-voice-gender="male" type="button">男性</button>
-                <button class="audio-voice-button" data-voice-type="answer" data-voice-gender="female" type="button">女性</button>
-              </div>
-            </div>
-            <div class="side-menu-submenu-item side-menu-brightness-item">
-              <span class="side-menu-brightness-label">解答読みの速さ</span>
-              <div class="side-menu-brightness-controls">
-                <button class="audio-speed-button" data-speed-type="answer" data-speed-value="fast" type="button" disabled>速い</button>
-                <button class="audio-speed-button audio-speed-button-active" data-speed-type="answer" data-speed-value="medium" type="button">中</button>
-                <button class="audio-speed-button" data-speed-type="answer" data-speed-value="slow" type="button" disabled>遅い</button>
+              <div class="audio-stock-row">
+                <span class="audio-stock-row-label">出題・解答</span>
+                <strong id="audioStockQaValue" class="audio-stock-value is-wait">確認中</strong>
               </div>
             </div>
           </div>
-        </div>
-        <div class="side-menu-item-container" id="visibleCategoriesItemContainer">
-          <button class="side-menu-item" type="button" id="visibleCategoriesButton">
-            <span class="side-menu-item-text">表示カテゴリ</span>
-          </button>
+          <div class="side-menu-item-container" id="visibleCategoriesItemContainer">
+            <button class="vc-entry" type="button" id="visibleCategoriesButton" aria-haspopup="dialog" aria-label="表示カテゴリを開く">
+              <div class="vc-entry-top">
+                <span>表示カテゴリ</span>
+                <span class="vc-entry-arrow" aria-hidden="true">›</span>
+              </div>
+              <div class="vc-entry-metrics">
+                <div class="metric-chip">
+                  <span class="metric-chip-label">カテゴリ</span>
+                  <span class="metric-chip-value" id="visibleCategoriesMenuCatValue">-/-</span>
+                </div>
+                <div class="metric-chip">
+                  <span class="metric-chip-label">問題</span>
+                  <span class="metric-chip-value" id="visibleCategoriesMenuQValue">-/-</span>
+                </div>
+              </div>
+            </button>
+          </div>
         </div>
         <div class="side-menu-item-container">
           <button class="side-menu-item side-menu-item-parent" type="button" id="questionSettingsButton">
-            <span class="side-menu-item-text">出題設定</span>
+            <span class="side-menu-item-text">出題モード</span>
             <span class="side-menu-item-arrow">▼</span>
           </button>
           <div class="side-menu-submenu side-menu-submenu-tall" id="questionSettingsSubmenu">
@@ -189,18 +158,69 @@
             </div>
           </div>
         </div>
-        <div class="side-menu-item-container" id="audioDownloadMenuItemContainer">
-          <button class="side-menu-item" type="button" id="audioDownloadMenuButton" title="音声のDrive／TTS取得のみ。表やAnsの通信は対象外">
-            <span class="side-menu-item-text" id="audioDownloadMenuButtonText">音声ダウンロード OFF</span>
+        <div class="side-menu-item-container">
+          <button class="side-menu-item side-menu-item-parent" type="button" id="audioSettingsButton">
+            <span class="side-menu-item-text">音声設定</span>
+            <span class="side-menu-item-arrow">▼</span>
           </button>
-          <div class="audio-stock-status" id="audioStockStatus" aria-live="polite">
-            <div class="audio-stock-status-row">タイトル <strong id="audioStockTitleValue" class="audio-stock-value is-wait">確認中</strong></div>
-            <div class="audio-stock-status-row">出題・解答 <strong id="audioStockQaValue" class="audio-stock-value is-wait">確認中</strong></div>
+          <div class="side-menu-submenu side-menu-submenu-tall" id="audioSettingsSubmenu">
+            <div class="side-menu-submenu-item side-menu-brightness-item">
+              <span class="side-menu-brightness-label">出題音声</span>
+              <div class="side-menu-brightness-controls">
+                <button class="audio-voice-button audio-voice-button-active" data-voice-type="question" data-voice-gender="male" type="button">男性</button>
+                <button class="audio-voice-button" data-voice-type="question" data-voice-gender="female" type="button">女性</button>
+              </div>
+            </div>
+            <div class="side-menu-submenu-item side-menu-brightness-item">
+              <span class="side-menu-brightness-label">出題読みの速さ</span>
+              <div class="side-menu-brightness-controls">
+                <button class="audio-speed-button" data-speed-type="question" data-speed-value="fast" type="button" disabled>速い</button>
+                <button class="audio-speed-button audio-speed-button-active" data-speed-type="question" data-speed-value="medium" type="button">中</button>
+                <button class="audio-speed-button" data-speed-type="question" data-speed-value="slow" type="button" disabled>遅い</button>
+              </div>
+            </div>
+            <div class="side-menu-submenu-item side-menu-brightness-item">
+              <span class="side-menu-brightness-label">解答音声</span>
+              <div class="side-menu-brightness-controls">
+                <button class="audio-voice-button audio-voice-button-active" data-voice-type="answer" data-voice-gender="male" type="button">男性</button>
+                <button class="audio-voice-button" data-voice-type="answer" data-voice-gender="female" type="button">女性</button>
+              </div>
+            </div>
+            <div class="side-menu-submenu-item side-menu-brightness-item">
+              <span class="side-menu-brightness-label">解答読みの速さ</span>
+              <div class="side-menu-brightness-controls">
+                <button class="audio-speed-button" data-speed-type="answer" data-speed-value="fast" type="button" disabled>速い</button>
+                <button class="audio-speed-button audio-speed-button-active" data-speed-type="answer" data-speed-value="medium" type="button">中</button>
+                <button class="audio-speed-button" data-speed-type="answer" data-speed-value="slow" type="button" disabled>遅い</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="side-menu-item-container">
+          <button class="side-menu-item side-menu-item-parent" type="button" id="changeBackgroundButton">
+            <span class="side-menu-item-text">背景画像の変更</span>
+            <span class="side-menu-item-arrow">▼</span>
+          </button>
+          <div class="side-menu-submenu" id="backgroundSubmenu">
+            <button class="side-menu-submenu-item" type="button" id="selectBackgroundButton">
+              背景画像を選択
+            </button>
+            <div class="side-menu-submenu-item side-menu-brightness-item">
+              <span class="side-menu-brightness-label">明るさ変更</span>
+              <div class="side-menu-brightness-controls">
+                <button class="brightness-button" data-brightness="dark" type="button">暗い</button>
+                <button class="brightness-button brightness-button-active" data-brightness="bright" type="button">明るい</button>
+              </div>
+            </div>
+            <button class="side-menu-submenu-item" type="button" id="resetBackgroundButton">
+              初期値に戻す
+            </button>
           </div>
         </div>
         <div class="side-menu-item-container" id="loadDiagMenuItemContainer" style="display: none;">
-          <button class="side-menu-item" type="button" id="loadDiagMenuButton">
-            <span class="side-menu-item-text" id="loadDiagMenuButtonText">通信ログ OFF</span>
+          <button class="menu-toggle-row" type="button" id="loadDiagMenuButton" aria-pressed="false">
+            <span class="menu-toggle-row-label">通信ログ</span>
+            <span class="menu-toggle-pill" id="loadDiagMenuButtonText">OFF</span>
           </button>
         </div>
       </div>
@@ -749,36 +769,36 @@
     </div>
   </div>
 
-  <script src="js/app-state.js?v=202611150957"></script>
-  <script src="js/app-gas.js?v=202611150957"></script>
-  <script src="js/app-auth.js?v=202611150957"></script>
-  <script src="js/app-settings.js?v=202611150957"></script>
-  <script src="js/app-question.js?v=202611150957"></script>
-  <script src="js/app-practice.js?v=202611150957"></script>
-  <script src="js/app-learning.js?v=202611150957"></script>
-  <script src="js/app-audio.js?v=202611150957"></script>
-  <script src="js/app-nav.js?v=202611150957"></script>
-  <script src="js/app-modal.js?v=202611150957"></script>
-  <script src="js/app-update.js?v=202611150957"></script>
-  <script src="js/app-boot.js?v=202611150957"></script>
-  <script src="js/app-category.js?v=202611150957"></script>
-  <script src="js/app-cycle.js?v=202611150957"></script>
-  <script src="js/app-events.js?v=202611150957"></script>
-  <script src="js/app-menu.js?v=202611150957"></script>
-  <script src="js/app-session.js?v=202611150957"></script>
-  <script src="js/app-add-study.js?v=202611150957"></script>
-  <script src="js/app-sort.js?v=202611150957"></script>
-  <script src="js/app-study-load.js?v=202611150957"></script>
-  <script src="js/app-mode-page.js?v=202611150957"></script>
-  <script src="js/app-background.js?v=202611150957"></script>
-  <script src="js/app-error.js?v=202611150957"></script>
-  <script src="js/app-list.js?v=202611150957"></script>
-  <script src="js/app-list-nav.js?v=202611150957"></script>
-  <script src="js/app-field-edit.js?v=202611150957"></script>
-  <script src="js/app-format.js?v=202611150957"></script>
-  <script src="js/app-image.js?v=202611150957"></script>
-  <script src="js/app-sheet.js?v=202611150957"></script>
-  <script src="js/app-gesture.js?v=202611150957"></script>
+  <script src="js/app-state.js?v=202611152007"></script>
+  <script src="js/app-gas.js?v=202611152007"></script>
+  <script src="js/app-auth.js?v=202611152007"></script>
+  <script src="js/app-settings.js?v=202611152007"></script>
+  <script src="js/app-question.js?v=202611152007"></script>
+  <script src="js/app-practice.js?v=202611152007"></script>
+  <script src="js/app-learning.js?v=202611152007"></script>
+  <script src="js/app-audio.js?v=202611152007"></script>
+  <script src="js/app-nav.js?v=202611152007"></script>
+  <script src="js/app-modal.js?v=202611152007"></script>
+  <script src="js/app-update.js?v=202611152007"></script>
+  <script src="js/app-boot.js?v=202611152007"></script>
+  <script src="js/app-category.js?v=202611152007"></script>
+  <script src="js/app-cycle.js?v=202611152007"></script>
+  <script src="js/app-events.js?v=202611152007"></script>
+  <script src="js/app-menu.js?v=202611152007"></script>
+  <script src="js/app-session.js?v=202611152007"></script>
+  <script src="js/app-add-study.js?v=202611152007"></script>
+  <script src="js/app-sort.js?v=202611152007"></script>
+  <script src="js/app-study-load.js?v=202611152007"></script>
+  <script src="js/app-mode-page.js?v=202611152007"></script>
+  <script src="js/app-background.js?v=202611152007"></script>
+  <script src="js/app-error.js?v=202611152007"></script>
+  <script src="js/app-list.js?v=202611152007"></script>
+  <script src="js/app-list-nav.js?v=202611152007"></script>
+  <script src="js/app-field-edit.js?v=202611152007"></script>
+  <script src="js/app-format.js?v=202611152007"></script>
+  <script src="js/app-image.js?v=202611152007"></script>
+  <script src="js/app-sheet.js?v=202611152007"></script>
+  <script src="js/app-gesture.js?v=202611152007"></script>
 </body>
 </html>
 
