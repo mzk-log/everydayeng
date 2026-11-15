@@ -3250,7 +3250,9 @@ function prefetchOneDriveAudio(job, signal, generation, done) {
 }
 
 /**
- * カテゴリ案内の先読み1本（Drive hit のみ。miss は TTS しない。揃い件数は増やさない）
+ * カテゴリ案内の先読み1本。
+ * 通常：Drive hit のみ（miss は TTS しない）。
+ * 英語枠（Category. …）：旧日本語 Drive を避け、TTS → IdB／Mem（Drive へも保存）。
  */
 function prefetchOneCategoryGuide_(job, signal, generation, done) {
   if (generation !== audioFetch.generation) {
@@ -3261,6 +3263,7 @@ function prefetchOneCategoryGuide_(job, signal, generation, done) {
     done();
     return;
   }
+  var englishGuide = isEnglishCategoryGuidePhrase_(job.text);
   getCategoryGuideFromIdb_(job.categoryNo, job.text, job.voice, job.speed, function(cached) {
     if (cached) {
       if (cached.source === 'indexedDB' || (audioStock.idbIds && audioStock.idbIds[job.idbId])) {
@@ -3279,7 +3282,7 @@ function prefetchOneCategoryGuide_(job, signal, generation, done) {
         return;
       }
       beginLoadDiag('run', '先読み', 1, {
-        status: '取得中',
+        status: englishGuide ? 'TTS' : '取得中',
         queueWait: audioFetch.prefetchQueue.length
       });
       var timedOut = false;
@@ -3295,6 +3298,42 @@ function prefetchOneCategoryGuide_(job, signal, generation, done) {
           // ignore
         }
       }, AUDIO_PREFETCH_TIMEOUT_MS);
+
+      if (englishGuide) {
+        synthesizeTtsAudioContent_(job.text, job.voice, job.speed, signal)
+          .then(function(audioContent) {
+            if (timedOut) {
+              throw new Error('タイムアウト');
+            }
+            clearTimeout(timeoutId);
+            if (generation !== audioFetch.generation) {
+              done();
+              return;
+            }
+            rememberCategoryGuideAudio_(job.text, audioContent, job.voice, job.speed, job.categoryNo);
+            if (typeof saveCategoryGuideDriveAudio_ === 'function') {
+              saveCategoryGuideDriveAudio_(job.categoryNo, audioContent, job.voice, job.speed, job.text);
+            }
+            finishLoadDiag('run', 'OK', { ok: true, bytes: String(audioContent).length });
+            audioPrefetch.failStreak = 0;
+            done();
+          })
+          .catch(function(error) {
+            clearTimeout(timeoutId);
+            if (generation !== audioFetch.generation || isAbortError(error)) {
+              if (timedOut) {
+                finishLoadDiag('run', 'timeout', { ok: false });
+                noteAudioPrefetchFailure_();
+              }
+              done();
+              return;
+            }
+            finishLoadDiag('run', loadDiagStatusFromError(error), { ok: false });
+            noteAudioPrefetchFailure_();
+            done();
+          });
+        return;
+      }
 
       var params = new URLSearchParams();
       params.append('action', 'getDriveAudio');
@@ -4029,6 +4068,26 @@ function findCatalogCategory_(categoryNo) {
 }
 
 /**
+ * 応用カテゴリ名か（表示名が Scene: …. Pattern: ….）。
+ * 該当時は案内／終了の枠文言を英語にする。
+ * @param {string} visibleName
+ * @returns {boolean}
+ */
+function isEnglishCategoryAnnounceVisible_(visibleName) {
+  var s = String(visibleName || '').replace(/^\s+|\s+$/g, '');
+  return /^Scene:\s.+\.\s*Pattern:\s.+\.\s*$/i.test(s);
+}
+
+/**
+ * 英語枠の案内全文か（先読み／Drive 判定用）
+ * @param {string} phrase
+ * @returns {boolean}
+ */
+function isEnglishCategoryGuidePhrase_(phrase) {
+  return /^Category\./.test(String(phrase || ''));
+}
+
+/**
  * @param {Object|null} cat
  * @returns {string}
  */
@@ -4046,6 +4105,9 @@ function buildCategoryGuideText_(cat) {
   var order = (typeof getCategoryOrderSortValue === 'function')
     ? getCategoryOrderSortValue(cat)
     : (cat.no != null ? cat.no : '');
+  if (isEnglishCategoryAnnounceVisible_(visible)) {
+    return 'Category. ' + order + '. ' + raw;
+  }
   return 'カテゴリ。' + order + '。' + raw;
 }
 
@@ -4063,6 +4125,9 @@ function buildCategoryEndText_(cat) {
     : raw;
   if (!visible || visible === 'END') {
     return '';
+  }
+  if (isEnglishCategoryAnnounceVisible_(visible)) {
+    return raw + '. End.';
   }
   return raw + '、終わり';
 }
@@ -4161,12 +4226,14 @@ function getCategoryGuideFromIdb_(categoryNo, text, voice, speed, onDone) {
     return;
   }
   getAudioIdbRecord(stableId, function(record) {
-    if (record && record.audioContent) {
-      var cacheKey = phrase + '_' + v + '_' + sp;
+    var cacheKey = phrase + '_' + v + '_' + sp;
+    var expectedHash = hashText(cacheKey);
+    // 本文が変わった旧案内（例: 日本語枠→英語枠）は安定キーでも破棄
+    if (record && record.audioContent && record.textHash && record.textHash === expectedHash) {
       var audioData = {
         audioContent: record.audioContent,
         timestamp: record.timestamp || Date.now(),
-        textHash: record.textHash || hashText(cacheKey)
+        textHash: record.textHash
       };
       ensureMp3BlobOnAudioData(audioData);
       if (phrase) {
@@ -4351,7 +4418,8 @@ function fetchCategoryGuideFromNet_(phrase, categoryNo, voice, speed, gen, optio
       }
     });
   }
-  if (options.forceRefresh || !options.saveDrive) {
+  // 英語枠案内は旧日本語 Drive を読まず TTS（成功後 saveDrive で上書き）
+  if (options.forceRefresh || !options.saveDrive || isEnglishCategoryGuidePhrase_(phrase)) {
     tts();
     return;
   }
