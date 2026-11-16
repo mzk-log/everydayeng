@@ -628,7 +628,7 @@ function setupEventListeners() {
     toggleQuestionSettingsSubmenu();
   });
   
-  // 速さ：0.7／0.8／0.9／1.0（1.0以外＝PCM ストレッチ。保管は常に medium）
+  // 速さ：0.5／0.7／0.8／1.0（1.0以外＝HTMLAudio+preservesPitch。保管は常に medium）
   var audioSpeedButtons = document.querySelectorAll('.audio-speed-button');
   audioSpeedButtons.forEach(function(button) {
     button.addEventListener('click', function() {

@@ -231,7 +231,7 @@ var AUDIO_VOICE_DEFAULT = 'male';
 /** 保管・TTS／Drive／IdB キー用の速さ（常に中） */
 var AUDIO_SPEED_FIXED = 'medium';
 /** UI／localStorage の再生倍率（文字列）。1.0＝そのまま、未満は PCM ストレッチ */
-var AUDIO_TIME_SCALE_OPTIONS = ['0.7', '0.8', '0.9', '1.0'];
+var AUDIO_TIME_SCALE_OPTIONS = ['0.5', '0.7', '0.8', '1.0'];
 var AUDIO_TIME_SCALE_DEFAULT = '1.0';
 /**
  * @deprecated 旧「遅い」固定倍率。現行は getAudioSlowTimeScale（UI倍率）を使う

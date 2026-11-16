@@ -177,14 +177,14 @@ function migrateAudioVoicePrefs_() {
 }
 
 /**
- * UI／localStorage 用の再生倍率を正規化（0.7|0.8|0.9|1.0）
- * 旧値：slow→0.8、medium／fast→1.0
+ * UI／localStorage 用の再生倍率を正規化（0.5|0.7|0.8|1.0）
+ * 旧値：slow→0.8、0.9→0.8、medium／fast→1.0
  * @param {*} value
- * @returns {'0.7'|'0.8'|'0.9'|'1.0'}
+ * @returns {'0.5'|'0.7'|'0.8'|'1.0'}
  */
 function normalizeAudioSpeedUi_(value) {
   var s = String(value == null ? '' : value).toLowerCase().trim();
-  if (s === 'slow') {
+  if (s === 'slow' || s === '0.9' || s === '0.90') {
     return '0.8';
   }
   if (s === 'medium' || s === 'fast' || s === '1' || s === '1.00') {
@@ -192,7 +192,7 @@ function normalizeAudioSpeedUi_(value) {
   }
   var options = typeof AUDIO_TIME_SCALE_OPTIONS !== 'undefined'
     ? AUDIO_TIME_SCALE_OPTIONS
-    : ['0.7', '0.8', '0.9', '1.0'];
+    : ['0.5', '0.7', '0.8', '1.0'];
   for (var i = 0; i < options.length; i++) {
     if (s === options[i]) {
       return options[i];
@@ -220,9 +220,9 @@ function getAudioStorageSpeed() {
 }
 
 /**
- * UI の再生倍率（'0.7'|'0.8'|'0.9'|'1.0'）
+ * UI の再生倍率（'0.5'|'0.7'|'0.8'|'1.0'）
  * @param {'question'|'answer'} [speedType]
- * @returns {'0.7'|'0.8'|'0.9'|'1.0'}
+ * @returns {'0.5'|'0.7'|'0.8'|'1.0'}
  */
 function getAudioSpeed(speedType) {
   try {
@@ -302,7 +302,7 @@ function migrateAudioSpeedPrefs_() {
 }
 
 /**
- * 速さボタン：0.7／0.8／0.9／1.0 を選択可
+ * 速さボタン：0.5／0.7／0.8／1.0 を選択可
  */
 function syncAudioSpeedButtonsUi_() {
   var types = ['question', 'answer'];
