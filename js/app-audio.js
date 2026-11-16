@@ -279,16 +279,28 @@ function clearAudioBusyWatchdogs_() {
 
 /**
  * 再生残り時間から操作復帰の期限を決める
- * @param {{buffer?: AudioBuffer, source?: AudioBufferSourceNode}|null} audio
+ * @param {{buffer?: AudioBuffer, source?: AudioBufferSourceNode, kind?: string, element?: HTMLAudioElement, duration?: number, playbackRate?: number}|null} audio
  * @returns {number}
  */
 function getAudioBusyDeadlineMs_(audio) {
-  var d = audio && audio.buffer ? audio.buffer.duration : 0;
+  var d = 0;
   var rate = 1;
-  if (audio && audio.source && audio.source.playbackRate) {
-    var rawRate = Number(audio.source.playbackRate.value);
-    if (isFinite(rawRate) && rawRate > 0) {
-      rate = rawRate;
+  if (audio && audio.kind === 'html') {
+    d = Number(audio.duration);
+    if (!(typeof d === 'number' && isFinite(d) && d > 0) && audio.element) {
+      d = Number(audio.element.duration);
+    }
+    rate = Number(audio.playbackRate);
+    if (!(isFinite(rate) && rate > 0)) {
+      rate = 1;
+    }
+  } else {
+    d = audio && audio.buffer ? audio.buffer.duration : 0;
+    if (audio && audio.source && audio.source.playbackRate) {
+      var rawRate = Number(audio.source.playbackRate.value);
+      if (isFinite(rawRate) && rawRate > 0) {
+        rate = rawRate;
+      }
     }
   }
   if (typeof d === 'number' && isFinite(d) && d > 0) {
@@ -536,6 +548,35 @@ function preloadPcmUrl_(url) {
 }
 
 /**
+ * 必要なら PCM をタイムストレッチして返す（音程維持。結果は audioData にセッションキャッシュ）
+ * @param {Object} audioData
+ * @param {AudioBuffer} buffer
+ * @param {number} timeScale
+ * @returns {Promise<AudioBuffer>}
+ */
+function ensureStretchedPcmBuffer_(audioData, buffer, timeScale) {
+  var scale = Number(timeScale);
+  if (!buffer || !isFinite(scale) || scale <= 0 || Math.abs(scale - 1) < 0.001) {
+    return Promise.resolve(buffer);
+  }
+  if (typeof stretchPcmBufferAsync_ !== 'function') {
+    return Promise.resolve(buffer);
+  }
+  var key = String(Math.round(scale * 1000) / 1000);
+  if (!audioData.pcmStretch) {
+    audioData.pcmStretch = {};
+  }
+  if (audioData.pcmStretch[key]) {
+    return Promise.resolve(audioData.pcmStretch[key]);
+  }
+  var ctx = getPcmAudioContext_();
+  return stretchPcmBufferAsync_(ctx, buffer, scale).then(function(out) {
+    audioData.pcmStretch[key] = out;
+    return out;
+  });
+}
+
+/**
  * PCM を1本鳴らす。onEnded は最後まで鳴ったときだけ。
  * @param {AudioBuffer} buffer
  * @param {{volume?: number, playbackRate?: number, onEnded?: function(): void}} [options]
@@ -576,11 +617,137 @@ function playPcmBuffer_(buffer, options) {
 }
 
 /**
+ * HTMLAudio の Blob URL を破棄する
+ * @param {{objectUrl?: string|null}|null} handle
+ */
+function revokeHtmlAudioObjectUrl_(handle) {
+  if (!handle || !handle.objectUrl) {
+    return;
+  }
+  try {
+    URL.revokeObjectURL(handle.objectUrl);
+  } catch (e) {
+    // ignore
+  }
+  handle.objectUrl = null;
+}
+
+/**
+ * mp3 Blob を HTMLAudio で再生（playbackRate＋preservesPitch。data URI は使わない）
+ * @param {Blob} blob
+ * @param {number} playbackRate
+ * @param {{onEnded?: function(): void, onError?: function(*): void, onMeta?: function(Object): void}|null} [options]
+ * @returns {{kind: string, element: HTMLAudioElement, objectUrl: string, playbackRate: number, duration: number, stopped: boolean, onEnded: function(): void|null}}
+ */
+function playHtmlAudioBlob_(blob, playbackRate, options) {
+  options = options || {};
+  var rate = Number(playbackRate);
+  if (!isFinite(rate) || rate <= 0) {
+    rate = 1;
+  }
+  var url = URL.createObjectURL(blob);
+  var el = new Audio();
+  el.preload = 'auto';
+  el.src = url;
+  el.playbackRate = rate;
+  el.preservesPitch = true;
+  el.mozPreservesPitch = true;
+  el.webkitPreservesPitch = true;
+
+  var handle = {
+    kind: 'html',
+    element: el,
+    objectUrl: url,
+    playbackRate: rate,
+    duration: 0,
+    stopped: false,
+    onEnded: typeof options.onEnded === 'function' ? options.onEnded : null,
+    source: null,
+    buffer: null
+  };
+
+  function finishEnded_() {
+    if (handle.stopped) {
+      return;
+    }
+    handle.stopped = true;
+    revokeHtmlAudioObjectUrl_(handle);
+    var cb = handle.onEnded;
+    handle.onEnded = null;
+    if (typeof cb === 'function') {
+      cb();
+    }
+  }
+
+  function finishError_(err) {
+    if (handle.stopped) {
+      return;
+    }
+    handle.stopped = true;
+    handle.onEnded = null;
+    revokeHtmlAudioObjectUrl_(handle);
+    if (typeof options.onError === 'function') {
+      options.onError(err || new Error('html audio failed'));
+    }
+  }
+
+  el.addEventListener('loadedmetadata', function() {
+    var d = Number(el.duration);
+    if (isFinite(d) && d > 0) {
+      handle.duration = d;
+      if (typeof options.onMeta === 'function') {
+        options.onMeta(handle);
+      }
+    }
+  });
+  el.onended = finishEnded_;
+  el.onerror = function() {
+    finishError_(new Error('html audio error'));
+  };
+
+  var playRet = el.play();
+  if (playRet && typeof playRet.then === 'function') {
+    playRet.then(function() {
+      // started
+    }).catch(function(err) {
+      if (isAbortError(err)) {
+        if (!handle.stopped) {
+          handle.stopped = true;
+          handle.onEnded = null;
+          revokeHtmlAudioObjectUrl_(handle);
+        }
+        return;
+      }
+      finishError_(err);
+    });
+  }
+  return handle;
+}
+
+/**
  * 再生を止める。終了コールバックは呼ばない。
- * @param {{source?: AudioBufferSourceNode, gain?: GainNode, stopped?: boolean, onEnded?: function(): void}|null} handle
+ * @param {{kind?: string, element?: HTMLAudioElement, objectUrl?: string, source?: AudioBufferSourceNode, gain?: GainNode, stopped?: boolean, onEnded?: function(): void}|null} handle
  */
 function stopPcmPlayback_(handle) {
-  if (!handle || !handle.source || handle.stopped) {
+  if (!handle || handle.stopped) {
+    return;
+  }
+  if (handle.kind === 'html' || handle.element) {
+    handle.stopped = true;
+    handle.onEnded = null;
+    try {
+      handle.element.onended = null;
+      handle.element.onerror = null;
+      handle.element.pause();
+      handle.element.removeAttribute('src');
+      handle.element.load();
+    } catch (eHtml) {
+      // ignore
+    }
+    revokeHtmlAudioObjectUrl_(handle);
+    return;
+  }
+  if (!handle.source) {
     return;
   }
   handle.stopped = true;
@@ -942,7 +1109,8 @@ function clearLocalAudioCachesForText(text) {
   if (!text) {
     return;
   }
-  var genders = ['female', 'male'];
+  // female も消す（旧キャッシュ掃除。新規は male のみ）
+  var genders = ['male', 'female'];
   var speeds = ['fast', 'medium', 'slow'];
   for (var i = 0; i < genders.length; i++) {
     for (var j = 0; j < speeds.length; j++) {
@@ -1090,7 +1258,7 @@ function playFieldAudio(fieldType, forceRefresh, options) {
   updateFieldPlayButtons();
   
   var voiceGender = fieldType === 'question' ? getAudioVoice('question') : getAudioVoice('answer');
-  var speed = fieldType === 'question' ? getAudioSpeed('question') : getAudioSpeed('answer');
+  var speed = typeof getAudioStorageSpeed === 'function' ? getAudioStorageSpeed() : AUDIO_SPEED_FIXED;
   var sheetField = getSheetAudioFieldType(fieldType);
   
   if (!forceRefresh) {
@@ -1204,7 +1372,7 @@ function playAddStudyItemFieldAudio(item, fieldType, forceRefresh) {
   }
 
   var voiceGender = fieldType === 'question' ? getAudioVoice('question') : getAudioVoice('answer');
-  var speed = fieldType === 'question' ? getAudioSpeed('question') : getAudioSpeed('answer');
+  var speed = typeof getAudioStorageSpeed === 'function' ? getAudioStorageSpeed() : AUDIO_SPEED_FIXED;
   var sheetField = fieldType;
 
   function settleAudioNetwork() {
@@ -1352,7 +1520,7 @@ function recreateFieldAudio(fieldType) {
   if (!text || isImageUrl(text)) return;
   
   var voiceGender = fieldType === 'question' ? getAudioVoice('question') : getAudioVoice('answer');
-  var speed = fieldType === 'question' ? getAudioSpeed('question') : getAudioSpeed('answer');
+  var speed = typeof getAudioStorageSpeed === 'function' ? getAudioStorageSpeed() : AUDIO_SPEED_FIXED;
   
   removeCachedAudio(text, voiceGender, speed);
   playFieldAudio(fieldType, true);
@@ -1874,9 +2042,7 @@ function isStudyDisplaySideIdbReady(item, displaySide) {
   var voice = (typeof getAudioVoice === 'function')
     ? getAudioVoice(displaySide)
     : AUDIO_VOICE_DEFAULT;
-  var speed = (typeof getAudioSpeed === 'function')
-    ? getAudioSpeed(displaySide)
-    : AUDIO_SPEED_FIXED;
+  var speed = typeof getAudioStorageSpeed === 'function' ? getAudioStorageSpeed() : AUDIO_SPEED_FIXED;
   return isTextAudioIdbReady_(text, voice, speed) === true;
 }
 
@@ -1886,9 +2052,9 @@ function isStudyDisplaySideIdbReady(item, displaySide) {
  */
 function buildCategoryAudioStatusMap() {
   var qVoice = getAudioVoice('question');
-  var qSpeed = getAudioSpeed('question');
+  var qSpeed = typeof getAudioStorageSpeed === 'function' ? getAudioStorageSpeed() : AUDIO_SPEED_FIXED;
   var aVoice = getAudioVoice('answer');
-  var aSpeed = getAudioSpeed('answer');
+  var aSpeed = qSpeed;
   var items = getMemoryAllStudyItems();
   var cacheKey = [
     'status',
@@ -2416,36 +2582,81 @@ function playAudioFromCache(audioData, fieldType, source) {
       settleThisPlay_('fail');
     }, AUDIO_PLAY_START_TIMEOUT_MS);
 
-    decodeAudioDataToBuffer_(audioData).then(function(buffer) {
-      if (audioWatch.playStartTimer) {
-        clearTimeout(audioWatch.playStartTimer);
-        audioWatch.playStartTimer = null;
-      }
-      if (fieldPlay.audio !== token) {
-        return;
-      }
-      var handle = playPcmBuffer_(buffer, {
-        onEnded: function() {
-          if (fieldPlay.audio !== handle) {
-            return;
-          }
-          settleThisPlay_('ended');
+    var scale = typeof getAudioSlowTimeScale === 'function'
+      ? getAudioSlowTimeScale(fieldType)
+      : 1;
+    // 1.0未満：HTMLAudio + preservesPitch（スマホ検証）。1.0は PCM のまま
+    if (Math.abs(Number(scale) - 1) >= 0.001) {
+      try {
+        var slowBlob = ensureMp3BlobOnAudioData(audioData);
+        if (!slowBlob) {
+          throw new Error('empty audio');
         }
+        var htmlHandle = playHtmlAudioBlob_(slowBlob, scale, {
+          onEnded: function() {
+            if (fieldPlay.audio !== htmlHandle) {
+              return;
+            }
+            settleThisPlay_('ended');
+          },
+          onError: function(err) {
+            if (fieldPlay.audio !== htmlHandle &&
+                !(fieldPlay.audio && fieldPlay.audio.owner === token)) {
+              return;
+            }
+            showError('音声の再生に失敗しました: ' + (err && err.toString ? err.toString() : String(err)));
+            settleThisPlay_('fail');
+          },
+          onMeta: function(h) {
+            if (fieldPlay.audio === h) {
+              armAudioBusyWatchdog_(h);
+            }
+          }
+        });
+        if (audioWatch.playStartTimer) {
+          clearTimeout(audioWatch.playStartTimer);
+          audioWatch.playStartTimer = null;
+        }
+        htmlHandle.owner = token;
+        fieldPlay.audio = htmlHandle;
+        armAudioBusyWatchdog_(htmlHandle);
+      } catch (htmlErr) {
+        showError('音声の再生に失敗しました: ' + htmlErr.toString());
+        settleThisPlay_('fail');
+      }
+    } else {
+      decodeAudioDataToBuffer_(audioData).then(function(buffer) {
+        if (audioWatch.playStartTimer) {
+          clearTimeout(audioWatch.playStartTimer);
+          audioWatch.playStartTimer = null;
+        }
+        if (fieldPlay.audio !== token) {
+          return;
+        }
+        var handle = playPcmBuffer_(buffer, {
+          playbackRate: 1,
+          onEnded: function() {
+            if (fieldPlay.audio !== handle) {
+              return;
+            }
+            settleThisPlay_('ended');
+          }
+        });
+        handle.owner = token;
+        fieldPlay.audio = handle;
+        armAudioBusyWatchdog_(handle);
+      }).catch(function(error) {
+        if (fieldPlay.audio !== token && !(fieldPlay.audio && fieldPlay.audio.owner === token)) {
+          return;
+        }
+        if (isAbortError(error)) {
+          settleThisPlay_('abort');
+          return;
+        }
+        showError('音声の再生に失敗しました: ' + error.toString());
+        settleThisPlay_('fail');
       });
-      handle.owner = token;
-      fieldPlay.audio = handle;
-      armAudioBusyWatchdog_(handle);
-    }).catch(function(error) {
-      if (fieldPlay.audio !== token && !(fieldPlay.audio && fieldPlay.audio.owner === token)) {
-        return;
-      }
-      if (isAbortError(error)) {
-        settleThisPlay_('abort');
-        return;
-      }
-      showError('音声の再生に失敗しました: ' + error.toString());
-      settleThisPlay_('fail');
-    });
+    }
   } catch (error) {
     showError('音声の再生に失敗しました: ' + error.toString());
     clearAudioBusyWatchdogs_();
@@ -2622,7 +2833,7 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
 /**
  * APIから音声データを取得
  * @param {string} text - 読み上げるテキスト
- * @param {string} voiceGender - 音声の性別（'male' または 'female'）
+ * @param {string} voiceGender - 音声の性別（現行は male 固定）
  * @param {string} speed - 読み上げの速さ（'fast', 'medium', 'slow'）
  * @param {string} fieldType - 'question' | 'answer'
  * @param {Object} [item]
@@ -2817,9 +3028,9 @@ function collectAudioPrefetchItems() {
  */
 function collectAudioPrefetchJobs() {
   var qVoice = getAudioVoice('question');
-  var qSpeed = getAudioSpeed('question');
+  var qSpeed = typeof getAudioStorageSpeed === 'function' ? getAudioStorageSpeed() : AUDIO_SPEED_FIXED;
   var aVoice = getAudioVoice('answer');
-  var aSpeed = getAudioSpeed('answer');
+  var aSpeed = qSpeed;
   var jobs = [];
   var currentId = null;
   var current = getCurrentLearningItem();
@@ -4004,9 +4215,15 @@ function fetchDriveAudioCoverage() {
   params.append('action', 'getDriveAudioCoverage');
   params.append('categoryNos', JSON.stringify(nos || []));
   params.append('voiceGenderQuestion', getAudioVoice('question'));
-  params.append('speedQuestion', getAudioSpeed('question'));
+  params.append(
+    'speedQuestion',
+    typeof getAudioStorageSpeed === 'function' ? getAudioStorageSpeed() : AUDIO_SPEED_FIXED
+  );
   params.append('voiceGenderAnswer', getAudioVoice('answer'));
-  params.append('speedAnswer', getAudioSpeed('answer'));
+  params.append(
+    'speedAnswer',
+    typeof getAudioStorageSpeed === 'function' ? getAudioStorageSpeed() : AUDIO_SPEED_FIXED
+  );
   appendAuthParams(params);
   params.append('referer', window.location.origin);
   postGasJson(params)
@@ -4347,11 +4564,54 @@ function startCategoryAnnouncePlayback_(audioData, gen, finish) {
   if (categoryAnnounce.editPlaying && typeof syncAddStudyItemEditorUi === 'function') {
     syncAddStudyItemEditorUi();
   }
+  var scale = typeof getAudioSlowTimeScale === 'function'
+    ? getAudioSlowTimeScale('question')
+    : 1;
+  if (Math.abs(Number(scale) - 1) >= 0.001) {
+    try {
+      var slowBlob = ensureMp3BlobOnAudioData(audioData);
+      if (!slowBlob) {
+        throw new Error('empty audio');
+      }
+      var htmlHandle = playHtmlAudioBlob_(slowBlob, scale, {
+        onEnded: function() {
+          if (categoryAnnounce.audio !== htmlHandle) {
+            return;
+          }
+          categoryAnnounce.audio = null;
+          finish('ended');
+        },
+        onError: function() {
+          if (gen !== categoryAnnounce.generation) {
+            return;
+          }
+          if (categoryAnnounce.audio !== htmlHandle && categoryAnnounce.audio !== token) {
+            return;
+          }
+          categoryAnnounce.audio = null;
+          finish('fail');
+        }
+      });
+      if (gen !== categoryAnnounce.generation || categoryAnnounce.audio !== token) {
+        stopPcmPlayback_(htmlHandle);
+        return;
+      }
+      categoryAnnounce.audio = htmlHandle;
+    } catch (eHtml) {
+      if (gen !== categoryAnnounce.generation || categoryAnnounce.audio !== token) {
+        return;
+      }
+      categoryAnnounce.audio = null;
+      finish('fail');
+    }
+    return;
+  }
   decodeAudioDataToBuffer_(audioData).then(function(buffer) {
     if (gen !== categoryAnnounce.generation || categoryAnnounce.audio !== token) {
       return;
     }
     var handle = playPcmBuffer_(buffer, {
+      playbackRate: 1,
       onEnded: function() {
         if (categoryAnnounce.audio !== handle) {
           return;

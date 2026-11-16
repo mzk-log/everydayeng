@@ -125,20 +125,6 @@ function toggleQuestionSettingsSubmenu() {
   toggleSideMenuAccordion_(dom.questionSettingsSubmenu, dom.questionSettingsButton);
 }
 
-// 音声ボタンのアクティブ状態を更新
-function updateAudioVoiceButtons(voiceType, activeGender) {
-  var allVoiceButtons = document.querySelectorAll('.audio-voice-button');
-  allVoiceButtons.forEach(function(button) {
-    if (button.dataset.voiceType === voiceType) {
-      if (button.dataset.voiceGender === activeGender) {
-        button.classList.add('audio-voice-button-active');
-      } else {
-        button.classList.remove('audio-voice-button-active');
-      }
-    }
-  });
-}
-
 // 速さボタンのアクティブ状態を更新
 function updateAudioSpeedButtons(speedType, activeValue) {
   var allSpeedButtons = document.querySelectorAll('.audio-speed-button');
@@ -153,72 +139,199 @@ function updateAudioSpeedButtons(speedType, activeValue) {
   });
 }
 
-// 音声設定を保存（localStorage）
-function setAudioVoice(voiceType, gender) {
-  try {
-    var key = 'audioVoice_' + voiceType; // 'audioVoice_question' または 'audioVoice_answer'
-    localStorage.setItem(key, gender);
-    // 設定変更時にキャッシュをクリア
-    clearAudioCache();
-    scheduleUserSettingsSync();
-  } catch (e) {
-    console.warn('音声設定の保存に失敗しました。');
-  }
-}
-
-// 音声設定を取得（localStorage、デフォルト値：男性）
+/**
+ * 声は男性固定（UI選択なし）。Settings 互換のため localStorage も male に揃える。
+ * @param {'question'|'answer'} [voiceType]
+ * @returns {'male'}
+ */
 function getAudioVoice(voiceType) {
   try {
-    var key = 'audioVoice_' + voiceType;
-    var saved = localStorage.getItem(key);
-    return saved || AUDIO_VOICE_DEFAULT;
-  } catch (e) {
-    return AUDIO_VOICE_DEFAULT;
-  }
-}
-
-// 速さ設定を取得（中固定）
-function getAudioSpeed(speedType) {
-  return AUDIO_SPEED_FIXED;
-}
-
-function persistFixedAudioSpeed_() {
-  try {
-    localStorage.setItem('audioSpeed_question', AUDIO_SPEED_FIXED);
-    localStorage.setItem('audioSpeed_answer', AUDIO_SPEED_FIXED);
+    var key = 'audioVoice_' + (voiceType || 'question');
+    if (localStorage.getItem(key) !== AUDIO_VOICE_DEFAULT) {
+      localStorage.setItem(key, AUDIO_VOICE_DEFAULT);
+    }
   } catch (e) {
     // ignore
   }
+  return AUDIO_VOICE_DEFAULT;
 }
 
-function syncAudioSpeedButtonsLocked_() {
+/**
+ * 旧 female 等を male へ揃え、変わっていれば Settings 同期する
+ * @returns {boolean} 書き戻しがあったか
+ */
+function migrateAudioVoicePrefs_() {
+  var changed = false;
+  try {
+    ['question', 'answer'].forEach(function(side) {
+      var key = 'audioVoice_' + side;
+      if (localStorage.getItem(key) !== AUDIO_VOICE_DEFAULT) {
+        localStorage.setItem(key, AUDIO_VOICE_DEFAULT);
+        changed = true;
+      }
+    });
+  } catch (e) {
+    // ignore
+  }
+  return changed;
+}
+
+/**
+ * UI／localStorage 用の再生倍率を正規化（0.7|0.8|0.9|1.0）
+ * 旧値：slow→0.8、medium／fast→1.0
+ * @param {*} value
+ * @returns {'0.7'|'0.8'|'0.9'|'1.0'}
+ */
+function normalizeAudioSpeedUi_(value) {
+  var s = String(value == null ? '' : value).toLowerCase().trim();
+  if (s === 'slow') {
+    return '0.8';
+  }
+  if (s === 'medium' || s === 'fast' || s === '1' || s === '1.00') {
+    return AUDIO_TIME_SCALE_DEFAULT;
+  }
+  var options = typeof AUDIO_TIME_SCALE_OPTIONS !== 'undefined'
+    ? AUDIO_TIME_SCALE_OPTIONS
+    : ['0.7', '0.8', '0.9', '1.0'];
+  for (var i = 0; i < options.length; i++) {
+    if (s === options[i]) {
+      return options[i];
+    }
+  }
+  var n = Number(s);
+  if (isFinite(n)) {
+    for (var j = 0; j < options.length; j++) {
+      if (Math.abs(n - Number(options[j])) < 0.001) {
+        return options[j];
+      }
+    }
+  }
+  return typeof AUDIO_TIME_SCALE_DEFAULT !== 'undefined'
+    ? AUDIO_TIME_SCALE_DEFAULT
+    : '1.0';
+}
+
+/**
+ * 保管・取得・揃い判定用の速さ（常に medium）
+ * @returns {string}
+ */
+function getAudioStorageSpeed() {
+  return AUDIO_SPEED_FIXED;
+}
+
+/**
+ * UI の再生倍率（'0.7'|'0.8'|'0.9'|'1.0'）
+ * @param {'question'|'answer'} [speedType]
+ * @returns {'0.7'|'0.8'|'0.9'|'1.0'}
+ */
+function getAudioSpeed(speedType) {
+  try {
+    var key = 'audioSpeed_' + (speedType || 'question');
+    return normalizeAudioSpeedUi_(localStorage.getItem(key));
+  } catch (e) {
+    return typeof AUDIO_TIME_SCALE_DEFAULT !== 'undefined'
+      ? AUDIO_TIME_SCALE_DEFAULT
+      : '1.0';
+  }
+}
+
+/**
+ * PCM タイムストレッチ用の時間倍率（1＝変更なし）
+ * @param {'question'|'answer'} [speedType]
+ * @returns {number}
+ */
+function getAudioSlowTimeScale(speedType) {
+  var n = Number(getAudioSpeed(speedType));
+  return isFinite(n) && n > 0 ? n : 1;
+}
+
+/**
+ * @deprecated 単純 playbackRate は使わない。常に 1（ストレッチ後バッファを rate=1 で再生）
+ * @param {'question'|'answer'} [speedType]
+ * @returns {number}
+ */
+function getAudioPlaybackRate(speedType) {
+  return 1;
+}
+
+/**
+ * 再生倍率を保存（保管キーは medium のまま。再 TTS しない）
+ * @param {'question'|'answer'} speedType
+ * @param {string|number} value
+ */
+function setAudioSpeed(speedType, value) {
+  try {
+    var normalized = normalizeAudioSpeedUi_(value);
+    localStorage.setItem('audioSpeed_' + speedType, normalized);
+    updateAudioSpeedButtons(speedType, normalized);
+    if (typeof stopCurrentAudioPlayback === 'function') {
+      stopCurrentAudioPlayback();
+    }
+    scheduleUserSettingsSync();
+  } catch (e) {
+    console.warn('速さ設定の保存に失敗しました。');
+  }
+}
+
+/**
+ * 旧 medium|slow|fast 等を倍率文字列へ直す
+ * @returns {boolean} 書き戻しがあったか
+ */
+function migrateAudioSpeedPrefs_() {
+  var changed = false;
+  var types = ['question', 'answer'];
+  for (var i = 0; i < types.length; i++) {
+    try {
+      var key = 'audioSpeed_' + types[i];
+      var raw = localStorage.getItem(key);
+      if (raw == null || raw === '') {
+        localStorage.setItem(key, AUDIO_TIME_SCALE_DEFAULT);
+        changed = true;
+        continue;
+      }
+      var normalized = normalizeAudioSpeedUi_(raw);
+      if (String(raw) !== normalized) {
+        localStorage.setItem(key, normalized);
+        changed = true;
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+  return changed;
+}
+
+/**
+ * 速さボタン：0.7／0.8／0.9／1.0 を選択可
+ */
+function syncAudioSpeedButtonsUi_() {
   var types = ['question', 'answer'];
   for (var t = 0; t < types.length; t++) {
-    updateAudioSpeedButtons(types[t], AUDIO_SPEED_FIXED);
+    updateAudioSpeedButtons(types[t], getAudioSpeed(types[t]));
   }
   var buttons = document.querySelectorAll('.audio-speed-button');
   for (var i = 0; i < buttons.length; i++) {
-    var button = buttons[i];
-    var isMedium = button.dataset.speedValue === AUDIO_SPEED_FIXED;
-    button.disabled = !isMedium;
-    if (isMedium) {
-      button.removeAttribute('aria-disabled');
-    } else {
-      button.setAttribute('aria-disabled', 'true');
-    }
+    buttons[i].disabled = false;
+    buttons[i].removeAttribute('aria-disabled');
   }
+}
+
+/** @deprecated 互換。UI 同期は syncAudioSpeedButtonsUi_ を使う */
+function persistFixedAudioSpeed_() {
+  migrateAudioSpeedPrefs_();
+}
+
+/** @deprecated 互換 */
+function syncAudioSpeedButtonsLocked_() {
+  syncAudioSpeedButtonsUi_();
 }
 
 // 音声設定を読み込み（localStorageから）
 function loadAudioSettings() {
-  // 出題音声
-  var questionVoice = getAudioVoice('question');
-  updateAudioVoiceButtons('question', questionVoice);
-  
-  persistFixedAudioSpeed_();
-  syncAudioSpeedButtonsLocked_();
-  
-  // 解答音声
-  var answerVoice = getAudioVoice('answer');
-  updateAudioVoiceButtons('answer', answerVoice);
+  var voiceChanged = migrateAudioVoicePrefs_();
+  var speedChanged = migrateAudioSpeedPrefs_();
+  if ((voiceChanged || speedChanged) && typeof scheduleUserSettingsSync === 'function') {
+    scheduleUserSettingsSync();
+  }
+  syncAudioSpeedButtonsUi_();
 }

@@ -226,8 +226,19 @@ var AUDIO_IDB_NAME = 'everyday-english-audio';
 var AUDIO_IDB_STORE = 'clips';
 var AUDIO_IDB_VERSION = 1;
 var MAX_AUDIO_IDB_BYTES = 300 * 1024 * 1024; // IndexedDB 目安上限 300MB
+/** 声は男性固定（UI選択なし） */
 var AUDIO_VOICE_DEFAULT = 'male';
+/** 保管・TTS／Drive／IdB キー用の速さ（常に中） */
 var AUDIO_SPEED_FIXED = 'medium';
+/** UI／localStorage の再生倍率（文字列）。1.0＝そのまま、未満は PCM ストレッチ */
+var AUDIO_TIME_SCALE_OPTIONS = ['0.7', '0.8', '0.9', '1.0'];
+var AUDIO_TIME_SCALE_DEFAULT = '1.0';
+/**
+ * @deprecated 旧「遅い」固定倍率。現行は getAudioSlowTimeScale（UI倍率）を使う
+ */
+var AUDIO_SLOW_TIME_SCALE = 0.8;
+/** @deprecated 互換 */
+var AUDIO_PLAYBACK_RATE_SLOW = AUDIO_SLOW_TIME_SCALE;
 var ENABLE_AUDIO_PREFETCH = true; // アプリ起動中の Drive 先読み
 /** 音声の Drive／TTS 取得を許可するか（セッションのみ。既定 OFF。再起動で OFF） */
 var audioDownloadEnabled = false;

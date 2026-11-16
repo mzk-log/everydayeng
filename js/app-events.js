@@ -628,33 +628,25 @@ function setupEventListeners() {
     toggleQuestionSettingsSubmenu();
   });
   
-  // 音声ボタン（出題音声・解答音声）
-  var audioVoiceButtons = document.querySelectorAll('.audio-voice-button');
-  audioVoiceButtons.forEach(function(button) {
+  // 速さ：0.7／0.8／0.9／1.0（1.0以外＝PCM ストレッチ。保管は常に medium）
+  var audioSpeedButtons = document.querySelectorAll('.audio-speed-button');
+  audioSpeedButtons.forEach(function(button) {
     button.addEventListener('click', function() {
-      var voiceType = this.dataset.voiceType; // 'question' または 'answer'
-      var voiceGender = this.dataset.voiceGender; // 'male' または 'female'
-      updateAudioVoiceButtons(voiceType, voiceGender);
-      setAudioVoice(voiceType, voiceGender);
-      // OFF時は声変更で揃い集合が変わるため HOME の実効Listを更新
-      if (typeof isAudioDownloadEnabled === 'function' && !isAudioDownloadEnabled() &&
-          typeof isHomeScreenActive === 'function' && isHomeScreenActive()) {
-        function afterVoiceIdb() {
-          if (typeof refreshVisibleCategoriesRuntimeUi === 'function') {
-            refreshVisibleCategoriesRuntimeUi();
-          }
-        }
-        if (typeof refreshAudioIdbStats === 'function') {
-          refreshAudioIdbStats(afterVoiceIdb);
-        } else {
-          afterVoiceIdb();
-        }
+      if (this.disabled) {
+        return;
       }
+      var speedType = this.dataset.speedType;
+      var speedValue = this.dataset.speedValue;
+      var normalized = typeof normalizeAudioSpeedUi_ === 'function'
+        ? normalizeAudioSpeedUi_(speedValue)
+        : String(speedValue || '');
+      if (normalized !== String(speedValue || '')) {
+        return;
+      }
+      setAudioSpeed(speedType, normalized);
     });
   });
-  
-  // 速さは中固定。速い／遅いは disabled。クリックでは変えない
-  
+
   // 出題設定ボタン（入替え・リスニング）
   var practiceSettingButtons = document.querySelectorAll('.practice-setting-button');
   practiceSettingButtons.forEach(function(button) {

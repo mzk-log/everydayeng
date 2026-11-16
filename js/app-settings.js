@@ -167,9 +167,28 @@ function applyUserSettingsFromServerBody_(settings, imageContent, mimeType) {
 
   if (settings.audio) {
     try {
-      if (settings.audio.voice_question) localStorage.setItem('audioVoice_question', settings.audio.voice_question);
-      if (settings.audio.voice_answer) localStorage.setItem('audioVoice_answer', settings.audio.voice_answer);
-      persistFixedAudioSpeed_();
+      // 声は男性固定（サーバに female が残っていても上書き）
+      localStorage.setItem('audioVoice_question', AUDIO_VOICE_DEFAULT);
+      localStorage.setItem('audioVoice_answer', AUDIO_VOICE_DEFAULT);
+      if (settings.audio.speed_question) {
+        localStorage.setItem(
+          'audioSpeed_question',
+          typeof normalizeAudioSpeedUi_ === 'function'
+            ? normalizeAudioSpeedUi_(settings.audio.speed_question)
+            : AUDIO_TIME_SCALE_DEFAULT
+        );
+      }
+      if (settings.audio.speed_answer) {
+        localStorage.setItem(
+          'audioSpeed_answer',
+          typeof normalizeAudioSpeedUi_ === 'function'
+            ? normalizeAudioSpeedUi_(settings.audio.speed_answer)
+            : AUDIO_TIME_SCALE_DEFAULT
+        );
+      }
+      if (typeof migrateAudioSpeedPrefs_ === 'function') {
+        migrateAudioSpeedPrefs_();
+      }
     } catch (e5) {
       // ignore
     }
