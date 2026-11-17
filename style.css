@@ -508,6 +508,14 @@
   color: #c62828;
 }
 
+.audio-stock-hint {
+  margin: 8px 0 0;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #666;
+}
+
 /* 通信ログ：ラベル＋ON/OFFピル（文字中央） */
 .menu-toggle-row {
   width: 100%;

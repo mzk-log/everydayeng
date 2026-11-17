@@ -561,6 +561,7 @@ var dom = {
   audioStockStatus: document.getElementById('audioStockStatus'),
   audioStockTitleValue: document.getElementById('audioStockTitleValue'),
   audioStockQaValue: document.getElementById('audioStockQaValue'),
+  audioStockHint: document.getElementById('audioStockHint'),
   audioStockSfxValue: document.getElementById('audioStockSfxValue'),
   navAnswerPlayLabel: document.querySelector('#navAnswerPlaySlot .nav-answer-play-label'),
   addStudyItemAudioStatus: document.getElementById('addStudyItemAudioStatus')

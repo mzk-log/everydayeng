@@ -1156,6 +1156,12 @@ function saveDriveAudioAsync(item, sheetField, voiceGender, speed, audioContent)
     params.append('voiceGender', voiceGender || AUDIO_VOICE_DEFAULT);
     params.append('speed', speed || AUDIO_SPEED_FIXED);
     params.append('audioContent', audioContent);
+    var textForHash = sheetField === 'answer'
+      ? (item.answer != null ? String(item.answer) : '')
+      : (item.question != null ? String(item.question) : '');
+    if (textForHash) {
+      params.append('text', textForHash);
+    }
     appendAuthParams(params);
     params.append('referer', window.location.origin);
     return postGasJson(params).catch(function() {
@@ -1163,6 +1169,38 @@ function saveDriveAudioAsync(item, sheetField, voiceGender, speed, audioContent)
     });
   } catch (e) {
     return Promise.resolve(null);
+  }
+}
+
+/**
+ * 音声DL OFF のまま再生／再作成しようとしたときの案内
+ */
+function notifyAudioDownloadRequired_() {
+  if (typeof showError === 'function') {
+    showError('音声ダウンロードがOFFです。ヘッダーの音声DLをONにしてください。');
+  }
+}
+
+/**
+ * 先読みの認証停止を解除（音声DL ON 時など）
+ */
+function clearAudioPrefetchAuthStop_() {
+  audioPrefetch.stopped = false;
+  audioPrefetch.failStreak = 0;
+  if (typeof syncAudioStockStatusUi === 'function') {
+    syncAudioStockStatusUi();
+  }
+}
+
+/**
+ * 先読みを認証失敗で止める（案内表示あり。音声DL ON または再読込で解除）
+ */
+function markAudioPrefetchAuthStopped_() {
+  audioPrefetch.stopped = true;
+  audioFetch.prefetchQueue = [];
+  clearAudioPrefetchRecheck_();
+  if (typeof syncAudioStockStatusUi === 'function') {
+    syncAudioStockStatusUi();
   }
 }
 
@@ -1311,6 +1349,7 @@ function playFieldAudio(fieldType, forceRefresh, options) {
         fieldPlay.field = null;
         updateFieldPlayButtons();
         if (fieldType === 'question') onQuestionAudioSettled('fail');
+        notifyAudioDownloadRequired_();
         settleAudioNetwork();
         return;
       }
@@ -1322,6 +1361,7 @@ function playFieldAudio(fieldType, forceRefresh, options) {
   if (!isAudioDownloadEnabled()) {
     hidePlayButtonLoading(fieldType);
     fieldPlay.field = null;
+    notifyAudioDownloadRequired_();
     updateFieldPlayButtons();
     if (fieldType === 'question') onQuestionAudioSettled('fail');
     settleAudioNetwork();
@@ -1445,6 +1485,7 @@ function playAddStudyItemFieldAudio(item, fieldType, forceRefresh) {
         } else {
           updateFieldPlayButtons();
         }
+        notifyAudioDownloadRequired_();
         settleAudioNetwork();
         return;
       }
@@ -1464,6 +1505,7 @@ function playAddStudyItemFieldAudio(item, fieldType, forceRefresh) {
     } else {
       updateFieldPlayButtons();
     }
+    notifyAudioDownloadRequired_();
     settleAudioNetwork();
     return;
   }
@@ -2186,6 +2228,31 @@ function syncAudioStockStatusUi() {
       summary.itemReady >= summary.itemTarget && summary.itemTarget > 0 ? 'ok' : 'lack'
     );
   }
+  var hintEl = dom.audioStockHint;
+  if (hintEl) {
+    var hint = '';
+    var dlOn = typeof isAudioDownloadEnabled === 'function' && isAudioDownloadEnabled();
+    var idbIncomplete = !summary.idbChecking &&
+      summary.itemTarget > 0 &&
+      summary.itemReady < summary.itemTarget;
+    if (!dlOn) {
+      hint = '端末のみ表示。ネット取得・先読みは音声DLをON';
+    } else if (audioPrefetch.stopped) {
+      hint = '先読み停止中。音声DLを一度OFF→ON、または再読込';
+    } else if (idbIncomplete) {
+      var driveReady = audioStock.driveReady != null ? Number(audioStock.driveReady) : null;
+      var driveTarget = audioStock.driveTarget != null ? Number(audioStock.driveTarget) : null;
+      if (driveTarget != null && driveTarget > 0 && driveReady != null && driveReady < driveTarget) {
+        hint = 'Drive準備中（夜間TTS後に進みます）。先読みはDriveがある分だけコピー';
+      } else if (driveTarget != null && driveTarget > 0 && driveReady >= driveTarget) {
+        hint = '端末へコピー中…';
+      } else {
+        hint = '不足分はDriveにあればコピー。無ければ夜間生成待ち';
+      }
+    }
+    hintEl.textContent = hint;
+    hintEl.style.display = hint ? '' : 'none';
+  }
   // 効果音の内部集計は継続するが、メニューには出さない
   if (typeof updateVisibleCategoriesIdbLabels === 'function') {
     updateVisibleCategoriesIdbLabels();
@@ -2417,28 +2484,27 @@ function saveAudioToCache(text, audioContent, voiceGender, speed) {
   return audioData;
 }
 
+/** 空行（段落）マーカー。GAS Gas_Tts.gs の TTS_PARA_MARK_ と同一（キャッシュキー整合） */
+var TTS_PARA_MARK = '\uE000';
+
 /**
- * TTS用にテキストを正規化
- * - 前後の空白を削除
- * - 特殊な空白文字を通常のスペースに変換
- * - 連続する空白を1つに正規化
+ * TTS用にテキストを正規化（GAS normalizeTextForTTS と同じ規則）
+ * - 空行は段落マーカーとして残す（音声では 0.6s break）
+ * - 単一改行・特殊空白はスペースへ。連続スペースは1つに
  */
 function normalizeTextForTTS(text) {
   if (!text || typeof text !== 'string') {
     return '';
   }
-  
-  // 1. 前後の空白を削除
-  var normalized = text.trim();
-  
-  // 2. 特殊な空白文字を通常のスペース（U+0020）に変換
-  // 全角スペース（U+3000）、タブ（U+0009）、改行（U+000A, U+000D）、
-  // ノンブレーキングスペース（U+00A0）などを通常のスペースに変換
+  var normalized = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  normalized = normalized.replace(/\n[ \t\u3000]*\n+/g, TTS_PARA_MARK);
   normalized = normalized.replace(/[\u3000\u0009\u000A\u000D\u00A0\u2000-\u200B\u2028\u2029]/g, ' ');
-  
-  // 3. 連続する空白を1つに正規化（2文字以上の空白を1文字に）
-  normalized = normalized.replace(/\s+/g, ' ');
-  
+  normalized = normalized.replace(/ +/g, ' ');
+  normalized = normalized.replace(new RegExp(TTS_PARA_MARK + '+', 'g'), TTS_PARA_MARK);
+  normalized = normalized.replace(new RegExp(' +' + TTS_PARA_MARK, 'g'), TTS_PARA_MARK);
+  normalized = normalized.replace(new RegExp(TTS_PARA_MARK + ' +', 'g'), TTS_PARA_MARK);
+  normalized = normalized.replace(new RegExp('^' + TTS_PARA_MARK + '+|' + TTS_PARA_MARK + '+$', 'g'), '');
+  normalized = normalized.replace(/^ +| +$/g, '');
   return normalized;
 }
 
@@ -2750,6 +2816,9 @@ function fetchAudioFromDriveOrTts(text, voiceGender, speed, fieldType, sheetFiel
     params.append('field', sheetField);
     params.append('voiceGender', voiceGender || AUDIO_VOICE_DEFAULT);
     params.append('speed', speed || AUDIO_SPEED_FIXED);
+    if (text) {
+      params.append('text', text);
+    }
     appendAuthParams(params);
     params.append('referer', window.location.origin);
 
@@ -3410,6 +3479,9 @@ function prefetchOneDriveAudio(job, signal, generation, done) {
       params.append('field', job.field);
       params.append('voiceGender', job.voice);
       params.append('speed', job.speed);
+      if (job.text) {
+        params.append('text', job.text);
+      }
       appendAuthParams(params);
       params.append('referer', window.location.origin);
 
@@ -3452,9 +3524,7 @@ function prefetchOneDriveAudio(job, signal, generation, done) {
           done();
         });
     }, function() {
-      audioPrefetch.stopped = true;
-      audioFetch.prefetchQueue = [];
-      clearAudioPrefetchRecheck_();
+      markAudioPrefetchAuthStopped_();
       done();
     });
   });
@@ -3594,9 +3664,7 @@ function prefetchOneCategoryGuide_(job, signal, generation, done) {
           done();
         });
     }, function() {
-      audioPrefetch.stopped = true;
-      audioFetch.prefetchQueue = [];
-      clearAudioPrefetchRecheck_();
+      markAudioPrefetchAuthStopped_();
       done();
     });
   });
@@ -3682,9 +3750,7 @@ function prefetchOneCategoryEnd_(job, signal, generation, done) {
           done();
         });
     }, function() {
-      audioPrefetch.stopped = true;
-      audioFetch.prefetchQueue = [];
-      clearAudioPrefetchRecheck_();
+      markAudioPrefetchAuthStopped_();
       done();
     });
   });
@@ -4130,6 +4196,9 @@ function ensureStudyItemFieldAudio_(job, signal, generation, done) {
       params.append('field', job.field);
       params.append('voiceGender', job.voice);
       params.append('speed', job.speed);
+      if (job.text) {
+        params.append('text', job.text);
+      }
       appendAuthParams(params);
       params.append('referer', window.location.origin || '');
 
@@ -4232,6 +4301,9 @@ function fetchDriveAudioCoverage() {
         audioStock.driveTarget = Number(data.target) || 0;
         audioStock.driveReady = Number(data.ready) || 0;
         refreshLoadDiagUi();
+        if (typeof syncAudioStockStatusUi === 'function') {
+          syncAudioStockStatusUi();
+        }
       }
       })
       .catch(function() {

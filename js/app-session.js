@@ -133,6 +133,9 @@ function toggleAudioDownloadEnabled() {
       refreshLearningIdbStatusUi();
     }
     if (isAudioDownloadEnabled()) {
+      if (typeof clearAudioPrefetchAuthStop_ === 'function') {
+        clearAudioPrefetchAuthStop_();
+      }
       if (typeof scheduleAudioPrefetch === 'function') {
         scheduleAudioPrefetch();
       }
