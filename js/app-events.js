@@ -628,22 +628,15 @@ function setupEventListeners() {
     toggleQuestionSettingsSubmenu();
   });
   
-  // 速さ：0.5／0.7／0.8／1.0（1.0以外＝HTMLAudio+preservesPitch。保管は常に medium）
-  var audioSpeedButtons = document.querySelectorAll('.audio-speed-button');
-  audioSpeedButtons.forEach(function(button) {
-    button.addEventListener('click', function() {
+  // 速さ：0.4〜1.2（ドロップダウン。実再生＝UI×2。保管 TTS は 0.5 固定）
+  var audioSpeedSelects = document.querySelectorAll('.audio-speed-select');
+  audioSpeedSelects.forEach(function(select) {
+    select.addEventListener('change', function() {
       if (this.disabled) {
         return;
       }
-      var speedType = this.dataset.speedType;
-      var speedValue = this.dataset.speedValue;
-      var normalized = typeof normalizeAudioSpeedUi_ === 'function'
-        ? normalizeAudioSpeedUi_(speedValue)
-        : String(speedValue || '');
-      if (normalized !== String(speedValue || '')) {
-        return;
-      }
-      setAudioSpeed(speedType, normalized);
+      var speedType = this.getAttribute('data-speed-type') || 'question';
+      setAudioSpeed(speedType, this.value);
     });
   });
 

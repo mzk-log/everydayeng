@@ -125,20 +125,6 @@ function toggleQuestionSettingsSubmenu() {
   toggleSideMenuAccordion_(dom.questionSettingsSubmenu, dom.questionSettingsButton);
 }
 
-// 速さボタンのアクティブ状態を更新
-function updateAudioSpeedButtons(speedType, activeValue) {
-  var allSpeedButtons = document.querySelectorAll('.audio-speed-button');
-  allSpeedButtons.forEach(function(button) {
-    if (button.dataset.speedType === speedType) {
-      if (button.dataset.speedValue === activeValue) {
-        button.classList.add('audio-speed-button-active');
-      } else {
-        button.classList.remove('audio-speed-button-active');
-      }
-    }
-  });
-}
-
 /**
  * 声は男性固定（UI選択なし）。Settings 互換のため localStorage も male に揃える。
  * @param {'question'|'answer'} [voiceType]
@@ -177,22 +163,19 @@ function migrateAudioVoicePrefs_() {
 }
 
 /**
- * UI／localStorage 用の再生倍率を正規化（0.5|0.7|0.8|1.0）
- * 旧値：slow→0.8、0.9→0.8、medium／fast→1.0
+ * UI／localStorage 用の再生倍率を正規化（0.4〜1.2・0.1刻み）
+ * 選択肢に無い旧値はすべて 1.0（意味が変わったため）
  * @param {*} value
- * @returns {'0.5'|'0.7'|'0.8'|'1.0'}
+ * @returns {string}
  */
 function normalizeAudioSpeedUi_(value) {
   var s = String(value == null ? '' : value).toLowerCase().trim();
-  if (s === 'slow' || s === '0.9' || s === '0.90') {
-    return '0.8';
-  }
-  if (s === 'medium' || s === 'fast' || s === '1' || s === '1.00') {
-    return AUDIO_TIME_SCALE_DEFAULT;
+  if (s === '1' || s === '1.00') {
+    s = '1.0';
   }
   var options = typeof AUDIO_TIME_SCALE_OPTIONS !== 'undefined'
     ? AUDIO_TIME_SCALE_OPTIONS
-    : ['0.5', '0.7', '0.8', '1.0'];
+    : ['1.0'];
   for (var i = 0; i < options.length; i++) {
     if (s === options[i]) {
       return options[i];
@@ -220,9 +203,9 @@ function getAudioStorageSpeed() {
 }
 
 /**
- * UI の再生倍率（'0.5'|'0.7'|'0.8'|'1.0'）
+ * UI の再生倍率（0.4〜1.2）
  * @param {'question'|'answer'} [speedType]
- * @returns {'0.5'|'0.7'|'0.8'|'1.0'}
+ * @returns {string}
  */
 function getAudioSpeed(speedType) {
   try {
@@ -236,26 +219,47 @@ function getAudioSpeed(speedType) {
 }
 
 /**
- * PCM タイムストレッチ用の時間倍率（1＝変更なし）
+ * HTMLAudio の playbackRate（UI×2。案内／終わりは getAudioGuidePlaybackRate_）
+ * @param {'question'|'answer'} [speedType]
+ * @returns {number}
+ */
+function getAudioHtmlPlaybackRate_(speedType) {
+  var factor = typeof AUDIO_PLAYBACK_RATE_FACTOR === 'number' ? AUDIO_PLAYBACK_RATE_FACTOR : 2;
+  var n = Number(getAudioSpeed(speedType));
+  if (!isFinite(n) || n <= 0) {
+    n = 1;
+  }
+  return n * factor;
+}
+
+/**
+ * カテゴリ案内・「終わり」用（常に普通＝実再生 2.0）
+ * @returns {number}
+ */
+function getAudioGuidePlaybackRate_() {
+  return typeof AUDIO_PLAYBACK_RATE_FACTOR === 'number' ? AUDIO_PLAYBACK_RATE_FACTOR : 2;
+}
+
+/**
+ * @deprecated 互換。HTMLAudio 実倍率は getAudioHtmlPlaybackRate_
  * @param {'question'|'answer'} [speedType]
  * @returns {number}
  */
 function getAudioSlowTimeScale(speedType) {
-  var n = Number(getAudioSpeed(speedType));
-  return isFinite(n) && n > 0 ? n : 1;
+  return getAudioHtmlPlaybackRate_(speedType);
 }
 
 /**
- * @deprecated 単純 playbackRate は使わない。常に 1（ストレッチ後バッファを rate=1 で再生）
+ * @deprecated 互換
  * @param {'question'|'answer'} [speedType]
  * @returns {number}
  */
 function getAudioPlaybackRate(speedType) {
-  return 1;
+  return getAudioHtmlPlaybackRate_(speedType);
 }
 
 /**
- * 再生倍率を保存（保管キーは medium のまま。再 TTS しない）
+ * 再生倍率を保存（保管 mp3 は作り直さない）
  * @param {'question'|'answer'} speedType
  * @param {string|number} value
  */
@@ -274,11 +278,59 @@ function setAudioSpeed(speedType, value) {
 }
 
 /**
- * 旧 medium|slow|fast 等を倍率文字列へ直す
+ * 速さ UI をドロップダウン／ボタンへ反映
+ * @param {'question'|'answer'} speedType
+ * @param {string} value
+ */
+function updateAudioSpeedButtons(speedType, value) {
+  var normalized = normalizeAudioSpeedUi_(value);
+  var select = document.getElementById(
+    speedType === 'answer' ? 'audioSpeedSelectAnswer' : 'audioSpeedSelectQuestion'
+  );
+  if (select) {
+    select.value = normalized;
+  }
+  var buttons = document.querySelectorAll('.audio-speed-button[data-speed-type="' + speedType + '"]');
+  for (var i = 0; i < buttons.length; i++) {
+    var active = buttons[i].getAttribute('data-speed-value') === normalized;
+    buttons[i].classList.toggle('audio-speed-button-active', active);
+  }
+}
+
+/**
+ * 旧倍率・保管世代の移行（世代変更時は 1.0 リセット＋IdB クリア）
  * @returns {boolean} 書き戻しがあったか
  */
 function migrateAudioSpeedPrefs_() {
   var changed = false;
+  var epochKey = typeof AUDIO_STORAGE_EPOCH_KEY !== 'undefined'
+    ? AUDIO_STORAGE_EPOCH_KEY
+    : 'audioStorageEpoch';
+  var epochVal = typeof AUDIO_STORAGE_EPOCH !== 'undefined' ? AUDIO_STORAGE_EPOCH : 'sr05-v1';
+  var prevEpoch = '';
+  try {
+    prevEpoch = localStorage.getItem(epochKey) || '';
+  } catch (eEp) {
+    prevEpoch = '';
+  }
+  if (prevEpoch !== epochVal) {
+    try {
+      localStorage.setItem('audioSpeed_question', AUDIO_TIME_SCALE_DEFAULT);
+      localStorage.setItem('audioSpeed_answer', AUDIO_TIME_SCALE_DEFAULT);
+      localStorage.setItem(epochKey, epochVal);
+      changed = true;
+      // 直後の Settings 取得で旧 0.5/0.7 等が戻らないようにする
+      window.audioSpeedEpochJustMigrated_ = true;
+    } catch (eSet) {
+      // ignore
+    }
+    if (typeof clearAudioCache === 'function') {
+      clearAudioCache();
+    }
+    if (typeof clearAllAudioIdbClips_ === 'function') {
+      clearAllAudioIdbClips_();
+    }
+  }
   var types = ['question', 'answer'];
   for (var i = 0; i < types.length; i++) {
     try {
@@ -302,17 +354,32 @@ function migrateAudioSpeedPrefs_() {
 }
 
 /**
- * 速さボタン：0.5／0.7／0.8／1.0 を選択可
+ * 速さドロップダウンを選択肢で埋め、現在値を反映
  */
 function syncAudioSpeedButtonsUi_() {
-  var types = ['question', 'answer'];
-  for (var t = 0; t < types.length; t++) {
-    updateAudioSpeedButtons(types[t], getAudioSpeed(types[t]));
-  }
-  var buttons = document.querySelectorAll('.audio-speed-button');
-  for (var i = 0; i < buttons.length; i++) {
-    buttons[i].disabled = false;
-    buttons[i].removeAttribute('aria-disabled');
+  var options = typeof AUDIO_TIME_SCALE_OPTIONS !== 'undefined'
+    ? AUDIO_TIME_SCALE_OPTIONS
+    : ['1.0'];
+  var ids = [
+    { id: 'audioSpeedSelectQuestion', type: 'question' },
+    { id: 'audioSpeedSelectAnswer', type: 'answer' }
+  ];
+  for (var i = 0; i < ids.length; i++) {
+    var el = document.getElementById(ids[i].id);
+    if (!el) {
+      continue;
+    }
+    if (el.options.length !== options.length) {
+      el.innerHTML = '';
+      for (var o = 0; o < options.length; o++) {
+        var opt = document.createElement('option');
+        opt.value = options[o];
+        opt.textContent = options[o];
+        el.appendChild(opt);
+      }
+    }
+    el.disabled = false;
+    updateAudioSpeedButtons(ids[i].type, getAudioSpeed(ids[i].type));
   }
 }
 

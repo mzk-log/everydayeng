@@ -170,21 +170,29 @@ function applyUserSettingsFromServerBody_(settings, imageContent, mimeType) {
       // 声は男性固定（サーバに female が残っていても上書き）
       localStorage.setItem('audioVoice_question', AUDIO_VOICE_DEFAULT);
       localStorage.setItem('audioVoice_answer', AUDIO_VOICE_DEFAULT);
-      if (settings.audio.speed_question) {
-        localStorage.setItem(
-          'audioSpeed_question',
-          typeof normalizeAudioSpeedUi_ === 'function'
-            ? normalizeAudioSpeedUi_(settings.audio.speed_question)
-            : AUDIO_TIME_SCALE_DEFAULT
-        );
-      }
-      if (settings.audio.speed_answer) {
-        localStorage.setItem(
-          'audioSpeed_answer',
-          typeof normalizeAudioSpeedUi_ === 'function'
-            ? normalizeAudioSpeedUi_(settings.audio.speed_answer)
-            : AUDIO_TIME_SCALE_DEFAULT
-        );
+      if (window.audioSpeedEpochJustMigrated_) {
+        // 世代移行直後は端末の 1.0 を正とし、旧 Settings の倍率で上書きしない
+        window.audioSpeedEpochJustMigrated_ = false;
+        if (typeof scheduleUserSettingsSync === 'function') {
+          scheduleUserSettingsSync();
+        }
+      } else {
+        if (settings.audio.speed_question) {
+          localStorage.setItem(
+            'audioSpeed_question',
+            typeof normalizeAudioSpeedUi_ === 'function'
+              ? normalizeAudioSpeedUi_(settings.audio.speed_question)
+              : AUDIO_TIME_SCALE_DEFAULT
+          );
+        }
+        if (settings.audio.speed_answer) {
+          localStorage.setItem(
+            'audioSpeed_answer',
+            typeof normalizeAudioSpeedUi_ === 'function'
+              ? normalizeAudioSpeedUi_(settings.audio.speed_answer)
+              : AUDIO_TIME_SCALE_DEFAULT
+          );
+        }
       }
       if (typeof migrateAudioSpeedPrefs_ === 'function') {
         migrateAudioSpeedPrefs_();

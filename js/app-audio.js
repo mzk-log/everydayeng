@@ -1627,6 +1627,31 @@ function clearAudioSourceDebug() {
   el.style.display = 'none';
 }
 
+/**
+ * 音声保管世代変更時：IdB の clips を全削除
+ */
+function clearAllAudioIdbClips_() {
+  openAudioIdb().then(function(db) {
+    if (!db) {
+      return;
+    }
+    try {
+      var tx = db.transaction(AUDIO_IDB_STORE, 'readwrite');
+      tx.objectStore(AUDIO_IDB_STORE).clear();
+      if (typeof audioStock !== 'undefined' && audioStock) {
+        audioStock.idbIds = {};
+        audioStock.idbReady = 0;
+        audioStock.idbInventoryReady = false;
+      }
+      if (typeof refreshAudioStockStatusUi === 'function') {
+        refreshAudioStockStatusUi();
+      }
+    } catch (eClear) {
+      console.warn('IdB audio clear failed', eClear);
+    }
+  });
+}
+
 function openAudioIdb() {
   if (audioDb.conn) {
     return Promise.resolve(audioDb.conn);
@@ -2489,7 +2514,7 @@ var TTS_PARA_MARK = '\uE000';
 
 /**
  * TTS用にテキストを正規化（GAS normalizeTextForTTS と同じ規則）
- * - 空行は段落マーカーとして残す（音声では 0.6s break）
+ * - 空行は段落マーカーとして残す（GAS 側 SSML では 1.2s break＝普通再生で約 0.6s）
  * - 単一改行・特殊空白はスペースへ。連続スペースは1つに
  */
 function normalizeTextForTTS(text) {
@@ -2648,80 +2673,46 @@ function playAudioFromCache(audioData, fieldType, source) {
       settleThisPlay_('fail');
     }, AUDIO_PLAY_START_TIMEOUT_MS);
 
-    var scale = typeof getAudioSlowTimeScale === 'function'
-      ? getAudioSlowTimeScale(fieldType)
-      : 1;
-    // 1.0未満：HTMLAudio + preservesPitch（スマホ検証）。1.0は PCM のまま
-    if (Math.abs(Number(scale) - 1) >= 0.001) {
-      try {
-        var slowBlob = ensureMp3BlobOnAudioData(audioData);
-        if (!slowBlob) {
-          throw new Error('empty audio');
-        }
-        var htmlHandle = playHtmlAudioBlob_(slowBlob, scale, {
-          onEnded: function() {
-            if (fieldPlay.audio !== htmlHandle) {
-              return;
-            }
-            settleThisPlay_('ended');
-          },
-          onError: function(err) {
-            if (fieldPlay.audio !== htmlHandle &&
-                !(fieldPlay.audio && fieldPlay.audio.owner === token)) {
-              return;
-            }
-            showError('音声の再生に失敗しました: ' + (err && err.toString ? err.toString() : String(err)));
-            settleThisPlay_('fail');
-          },
-          onMeta: function(h) {
-            if (fieldPlay.audio === h) {
-              armAudioBusyWatchdog_(h);
-            }
-          }
-        });
-        if (audioWatch.playStartTimer) {
-          clearTimeout(audioWatch.playStartTimer);
-          audioWatch.playStartTimer = null;
-        }
-        htmlHandle.owner = token;
-        fieldPlay.audio = htmlHandle;
-        armAudioBusyWatchdog_(htmlHandle);
-      } catch (htmlErr) {
-        showError('音声の再生に失敗しました: ' + htmlErr.toString());
-        settleThisPlay_('fail');
+    // 保管 mp3（TTS 0.5）を HTMLAudio + playbackRate（UI×2）で再生
+    var playRate = typeof getAudioHtmlPlaybackRate_ === 'function'
+      ? getAudioHtmlPlaybackRate_(fieldType)
+      : (typeof getAudioSlowTimeScale === 'function' ? getAudioSlowTimeScale(fieldType) : 2);
+    try {
+      var playBlob = ensureMp3BlobOnAudioData(audioData);
+      if (!playBlob) {
+        throw new Error('empty audio');
       }
-    } else {
-      decodeAudioDataToBuffer_(audioData).then(function(buffer) {
-        if (audioWatch.playStartTimer) {
-          clearTimeout(audioWatch.playStartTimer);
-          audioWatch.playStartTimer = null;
-        }
-        if (fieldPlay.audio !== token) {
-          return;
-        }
-        var handle = playPcmBuffer_(buffer, {
-          playbackRate: 1,
-          onEnded: function() {
-            if (fieldPlay.audio !== handle) {
-              return;
-            }
-            settleThisPlay_('ended');
+      var htmlHandle = playHtmlAudioBlob_(playBlob, playRate, {
+        onEnded: function() {
+          if (fieldPlay.audio !== htmlHandle) {
+            return;
           }
-        });
-        handle.owner = token;
-        fieldPlay.audio = handle;
-        armAudioBusyWatchdog_(handle);
-      }).catch(function(error) {
-        if (fieldPlay.audio !== token && !(fieldPlay.audio && fieldPlay.audio.owner === token)) {
-          return;
+          settleThisPlay_('ended');
+        },
+        onError: function(err) {
+          if (fieldPlay.audio !== htmlHandle &&
+              !(fieldPlay.audio && fieldPlay.audio.owner === token)) {
+            return;
+          }
+          showError('音声の再生に失敗しました: ' + (err && err.toString ? err.toString() : String(err)));
+          settleThisPlay_('fail');
+        },
+        onMeta: function(h) {
+          if (fieldPlay.audio === h) {
+            armAudioBusyWatchdog_(h);
+          }
         }
-        if (isAbortError(error)) {
-          settleThisPlay_('abort');
-          return;
-        }
-        showError('音声の再生に失敗しました: ' + error.toString());
-        settleThisPlay_('fail');
       });
+      if (audioWatch.playStartTimer) {
+        clearTimeout(audioWatch.playStartTimer);
+        audioWatch.playStartTimer = null;
+      }
+      htmlHandle.owner = token;
+      fieldPlay.audio = htmlHandle;
+      armAudioBusyWatchdog_(htmlHandle);
+    } catch (htmlErr) {
+      showError('音声の再生に失敗しました: ' + htmlErr.toString());
+      settleThisPlay_('fail');
     }
   } catch (error) {
     showError('音声の再生に失敗しました: ' + error.toString());
@@ -4636,70 +4627,46 @@ function startCategoryAnnouncePlayback_(audioData, gen, finish) {
   if (categoryAnnounce.editPlaying && typeof syncAddStudyItemEditorUi === 'function') {
     syncAddStudyItemEditorUi();
   }
-  var scale = typeof getAudioSlowTimeScale === 'function'
-    ? getAudioSlowTimeScale('question')
-    : 1;
-  if (Math.abs(Number(scale) - 1) >= 0.001) {
-    try {
-      var slowBlob = ensureMp3BlobOnAudioData(audioData);
-      if (!slowBlob) {
-        throw new Error('empty audio');
-      }
-      var htmlHandle = playHtmlAudioBlob_(slowBlob, scale, {
-        onEnded: function() {
-          if (categoryAnnounce.audio !== htmlHandle) {
-            return;
-          }
-          categoryAnnounce.audio = null;
-          finish('ended');
-        },
-        onError: function() {
-          if (gen !== categoryAnnounce.generation) {
-            return;
-          }
-          if (categoryAnnounce.audio !== htmlHandle && categoryAnnounce.audio !== token) {
-            return;
-          }
-          categoryAnnounce.audio = null;
-          finish('fail');
-        }
-      });
-      if (gen !== categoryAnnounce.generation || categoryAnnounce.audio !== token) {
-        stopPcmPlayback_(htmlHandle);
-        return;
-      }
-      categoryAnnounce.audio = htmlHandle;
-    } catch (eHtml) {
-      if (gen !== categoryAnnounce.generation || categoryAnnounce.audio !== token) {
-        return;
-      }
-      categoryAnnounce.audio = null;
-      finish('fail');
+  // 案内・「終わり」は常に実再生 2.0（普通）
+  var guideRate = typeof getAudioGuidePlaybackRate_ === 'function'
+    ? getAudioGuidePlaybackRate_()
+    : (typeof AUDIO_PLAYBACK_RATE_FACTOR === 'number' ? AUDIO_PLAYBACK_RATE_FACTOR : 2);
+  try {
+    var slowBlob = ensureMp3BlobOnAudioData(audioData);
+    if (!slowBlob) {
+      throw new Error('empty audio');
     }
-    return;
-  }
-  decodeAudioDataToBuffer_(audioData).then(function(buffer) {
-    if (gen !== categoryAnnounce.generation || categoryAnnounce.audio !== token) {
-      return;
-    }
-    var handle = playPcmBuffer_(buffer, {
-      playbackRate: 1,
+    var htmlHandle = playHtmlAudioBlob_(slowBlob, guideRate, {
       onEnded: function() {
-        if (categoryAnnounce.audio !== handle) {
+        if (categoryAnnounce.audio !== htmlHandle) {
           return;
         }
         categoryAnnounce.audio = null;
         finish('ended');
+      },
+      onError: function() {
+        if (gen !== categoryAnnounce.generation) {
+          return;
+        }
+        if (categoryAnnounce.audio !== htmlHandle && categoryAnnounce.audio !== token) {
+          return;
+        }
+        categoryAnnounce.audio = null;
+        finish('fail');
       }
     });
-    categoryAnnounce.audio = handle;
-  }).catch(function() {
+    if (gen !== categoryAnnounce.generation || categoryAnnounce.audio !== token) {
+      stopPcmPlayback_(htmlHandle);
+      return;
+    }
+    categoryAnnounce.audio = htmlHandle;
+  } catch (eHtml) {
     if (gen !== categoryAnnounce.generation || categoryAnnounce.audio !== token) {
       return;
     }
     categoryAnnounce.audio = null;
     finish('fail');
-  });
+  }
 }
 
 function fetchCategoryGuideFromNet_(phrase, categoryNo, voice, speed, gen, options, finish) {

@@ -228,13 +228,24 @@ var AUDIO_IDB_VERSION = 1;
 var MAX_AUDIO_IDB_BYTES = 300 * 1024 * 1024; // IndexedDB 目安上限 300MB
 /** 声は男性固定（UI選択なし） */
 var AUDIO_VOICE_DEFAULT = 'male';
-/** 保管・TTS／Drive／IdB キー用の速さ（常に中） */
+/** 保管・TTS／Drive／IdB 互換ラベル（ファイル名には付けない。GAS speakingRate は 0.5 固定） */
 var AUDIO_SPEED_FIXED = 'medium';
-/** UI／localStorage の再生倍率（文字列）。1.0＝そのまま、未満は PCM ストレッチ */
-var AUDIO_TIME_SCALE_OPTIONS = ['0.5', '0.7', '0.8', '1.0'];
+/** UI 速さ（普通＝1.0）0.4〜1.2・0.1刻み */
+var AUDIO_TIME_SCALE_OPTIONS = (function() {
+  var list = [];
+  for (var n = 4; n <= 12; n++) {
+    list.push((n / 10).toFixed(1));
+  }
+  return list;
+})();
 var AUDIO_TIME_SCALE_DEFAULT = '1.0';
+/** UI×この値＝HTMLAudio playbackRate（UI 1.0 → 実再生 2.0） */
+var AUDIO_PLAYBACK_RATE_FACTOR = 2;
+/** 端末の音声保管世代（変わったら IdB クリア・速さリセット） */
+var AUDIO_STORAGE_EPOCH = 'sr05-v1';
+var AUDIO_STORAGE_EPOCH_KEY = 'audioStorageEpoch';
 /**
- * @deprecated 旧「遅い」固定倍率。現行は getAudioSlowTimeScale（UI倍率）を使う
+ * @deprecated 旧「遅い」固定倍率。現行は getAudioHtmlPlaybackRate_
  */
 var AUDIO_SLOW_TIME_SCALE = 0.8;
 /** @deprecated 互換 */

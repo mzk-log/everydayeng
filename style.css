@@ -728,10 +728,23 @@
   border-color: #45a049 !important;
 }
 
-/* 再生倍率（0.7〜1.0）4ボタン */
+/* 再生倍率（0.4〜1.2）ドロップダウン */
 .audio-speed-scale-controls {
   gap: 6px;
   width: 100%;
+  align-items: center;
+}
+
+.audio-speed-select {
+  min-width: 5.5rem;
+  width: 100%;
+  max-width: 8rem;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  color: #222;
 }
 
 .audio-speed-scale-controls .audio-speed-button {
