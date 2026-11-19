@@ -7,6 +7,10 @@ var userSettingsSyncQueued = false;
 var userSettingsBgUploadPending = false;
 var userSettingsInitialSyncDone = false;
 var userSettingsApplyingFromServer = false;
+/** localStorage 変更あり（未送信または再送待ち） */
+var userSettingsDirty = false;
+/** apply 完了後に scheduleUserSettingsSync する */
+var userSettingsResyncAfterApply_ = false;
 
 /**
  * 背景 Drive ファイルIDの localStorage キー
@@ -36,6 +40,73 @@ function setStoredSettingsBgDriveFileId(fileId) {
   } catch (e) {
     // ignore
   }
+}
+
+/**
+ * 端末で設定を変えた時刻（メール単位）。起動時にシート updated_at と比較する
+ * @returns {string}
+ */
+function getUserSettingsLocalRevisedAtKey_() {
+  var email = googleAuth.email || localStorage.getItem('userEmail') || '';
+  return 'userSettingsLocalRevisedAt:' + String(email);
+}
+
+function markLocalUserSettingsRevised_() {
+  userSettingsDirty = true;
+  try {
+    localStorage.setItem(getUserSettingsLocalRevisedAtKey_(), String(Date.now()));
+  } catch (e) {
+    // ignore
+  }
+}
+
+function clearLocalUserSettingsRevisedAt_() {
+  userSettingsDirty = false;
+  try {
+    localStorage.removeItem(getUserSettingsLocalRevisedAtKey_());
+  } catch (e) {
+    // ignore
+  }
+}
+
+function getLocalUserSettingsRevisedAtMs_() {
+  try {
+    var v = Number(localStorage.getItem(getUserSettingsLocalRevisedAtKey_()) || 0);
+    return isFinite(v) ? v : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+/**
+ * Settings の updated_at（yyyy-MM-dd HH:mm:ss 等）を ms に
+ * @param {string} updatedAt
+ * @returns {number}
+ */
+function parseSettingsUpdatedAtMs_(updatedAt) {
+  if (!updatedAt) {
+    return 0;
+  }
+  var s = String(updatedAt).trim();
+  var t = Date.parse(s.replace(' ', 'T'));
+  if (!isFinite(t)) {
+    t = Date.parse(s);
+  }
+  return isFinite(t) ? t : 0;
+}
+
+/**
+ * 端末の改訂がシートより新しければ音声速さは端末優先
+ * @param {string} [serverUpdatedAt]
+ * @returns {boolean}
+ */
+function shouldPreferLocalAudioSpeeds_(serverUpdatedAt) {
+  var localMs = getLocalUserSettingsRevisedAtMs_();
+  if (!localMs) {
+    return false;
+  }
+  var serverMs = parseSettingsUpdatedAtMs_(serverUpdatedAt);
+  return localMs > serverMs;
 }
 
 /**
@@ -107,16 +178,24 @@ function buildUserSettingsPayloadFromLocal() {
  * @param {Object} settings
  * @param {string} [imageContent]
  * @param {string} [mimeType]
+ * @param {string} [serverUpdatedAt] Settings 行の updated_at
  */
-function applyUserSettingsFromServer(settings, imageContent, mimeType) {
+function applyUserSettingsFromServer(settings, imageContent, mimeType, serverUpdatedAt) {
   if (!settings || typeof settings !== 'object') {
     return;
   }
   userSettingsApplyingFromServer = true;
+  userSettingsResyncAfterApply_ = false;
   try {
-    applyUserSettingsFromServerBody_(settings, imageContent, mimeType);
+    applyUserSettingsFromServerBody_(settings, imageContent, mimeType, serverUpdatedAt);
   } finally {
     userSettingsApplyingFromServer = false;
+    if (userSettingsResyncAfterApply_) {
+      userSettingsResyncAfterApply_ = false;
+      if (typeof scheduleUserSettingsSync === 'function') {
+        scheduleUserSettingsSync();
+      }
+    }
   }
 }
 
@@ -124,8 +203,9 @@ function applyUserSettingsFromServer(settings, imageContent, mimeType) {
  * @param {Object} settings
  * @param {string} [imageContent]
  * @param {string} [mimeType]
+ * @param {string} [serverUpdatedAt]
  */
-function applyUserSettingsFromServerBody_(settings, imageContent, mimeType) {
+function applyUserSettingsFromServerBody_(settings, imageContent, mimeType, serverUpdatedAt) {
   var bg = settings.background || {};
   var brightness = (bg.brightness === 'dark') ? 'dark' : 'bright';
   try {
@@ -170,12 +250,14 @@ function applyUserSettingsFromServerBody_(settings, imageContent, mimeType) {
       // 声は男性固定（サーバに female が残っていても上書き）
       localStorage.setItem('audioVoice_question', AUDIO_VOICE_DEFAULT);
       localStorage.setItem('audioVoice_answer', AUDIO_VOICE_DEFAULT);
+      var preferLocalAudio = shouldPreferLocalAudioSpeeds_(serverUpdatedAt);
       if (window.audioSpeedEpochJustMigrated_) {
         // 世代移行直後は端末の 1.0 を正とし、旧 Settings の倍率で上書きしない
         window.audioSpeedEpochJustMigrated_ = false;
-        if (typeof scheduleUserSettingsSync === 'function') {
-          scheduleUserSettingsSync();
-        }
+        userSettingsResyncAfterApply_ = true;
+      } else if (preferLocalAudio) {
+        // 閉じる直前の未達などを吸収：速さは端末を残し、直後にシートへ送り直す
+        userSettingsResyncAfterApply_ = true;
       } else {
         if (settings.audio.speed_question) {
           localStorage.setItem(
@@ -193,6 +275,7 @@ function applyUserSettingsFromServerBody_(settings, imageContent, mimeType) {
               : AUDIO_TIME_SCALE_DEFAULT
           );
         }
+        clearLocalUserSettingsRevisedAt_();
       }
       if (typeof migrateAudioSpeedPrefs_ === 'function') {
         migrateAudioSpeedPrefs_();
@@ -250,8 +333,10 @@ function applyUserSettingsFromServerBody_(settings, imageContent, mimeType) {
 /**
  * サーバへ設定を保存
  * @param {Function} [onDone]
+ * @param {{ keepalive?: boolean, quiet?: boolean }} [options]
  */
-function pushUserSettingsToServer(onDone) {
+function pushUserSettingsToServer(onDone, options) {
+  options = options || {};
   if (!googleAuth.email) {
     if (typeof onDone === 'function') onDone();
     return;
@@ -287,12 +372,13 @@ function pushUserSettingsToServer(onDone) {
     }
   }
 
-  postGasJson(params)
+  postGasJson(params, { keepalive: !!options.keepalive })
   .then(function(data) {
     if (!data || !data.success) {
       throw new Error((data && data.error) || '設定の同期に失敗しました');
     }
     userSettingsBgUploadPending = false;
+    clearLocalUserSettingsRevisedAt_();
     if (data.settings && data.settings.background) {
       setStoredSettingsBgDriveFileId(data.settings.background.driveFileId || '');
     }
@@ -301,7 +387,9 @@ function pushUserSettingsToServer(onDone) {
   .catch(function(error) {
     console.warn('設定同期（保存）エラー:', error);
     var errText = error && error.message ? error.message : String(error);
-    showError('設定の同期に失敗しました: ' + errText);
+    if (!options.quiet) {
+      showError('設定の同期に失敗しました: ' + errText);
+    }
     if (isGoogleAuthFailureMessage(errText)) {
       return;
     }
@@ -313,7 +401,11 @@ function pushUserSettingsToServer(onDone) {
  * 設定変更後の同期をデバウンス予約
  */
 function scheduleUserSettingsSync() {
-  if (!googleAuth.email || !userSettingsInitialSyncDone || userSettingsApplyingFromServer) {
+  if (userSettingsApplyingFromServer) {
+    return;
+  }
+  markLocalUserSettingsRevised_();
+  if (!googleAuth.email || !userSettingsInitialSyncDone) {
     return;
   }
   if (userSettingsSyncTimer) {
@@ -335,6 +427,52 @@ function scheduleUserSettingsSync() {
     });
   }, 600);
 }
+
+/**
+ * タブ非表示・閉じる直前：未送信があればすぐ送る
+ */
+function flushUserSettingsSyncNow_() {
+  if (userSettingsApplyingFromServer) {
+    return;
+  }
+  if (!googleAuth.email || !userSettingsInitialSyncDone) {
+    return;
+  }
+  if (!userSettingsDirty && !userSettingsSyncTimer) {
+    return;
+  }
+  if (userSettingsSyncTimer) {
+    clearTimeout(userSettingsSyncTimer);
+    userSettingsSyncTimer = null;
+  }
+  if (userSettingsSyncInFlight) {
+    userSettingsSyncQueued = true;
+    return;
+  }
+  userSettingsSyncInFlight = true;
+  pushUserSettingsToServer(function() {
+    userSettingsSyncInFlight = false;
+    if (userSettingsSyncQueued) {
+      userSettingsSyncQueued = false;
+      scheduleUserSettingsSync();
+    }
+  }, { keepalive: true, quiet: true });
+}
+
+(function installUserSettingsFlushListeners_() {
+  if (typeof window === 'undefined' || window._userSettingsFlushInstalled) {
+    return;
+  }
+  window._userSettingsFlushInstalled = true;
+  window.addEventListener('pagehide', function() {
+    flushUserSettingsSyncNow_();
+  });
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'hidden') {
+      flushUserSettingsSyncNow_();
+    }
+  });
+})();
 
 /**
  * 起動時：サーバ設定を取得し適用。無ければ端末設定をアップロード
@@ -372,12 +510,14 @@ function syncUserSettingsWithServer(onDone) {
         bytes: approxJsonBytes(data)
       });
       if (data.found && data.settings) {
+        // apply 内の再同期予約が動くよう、先に完了扱いにする
+        userSettingsInitialSyncDone = true;
         applyUserSettingsFromServer(
           data.settings,
           data.backgroundImageContent || '',
-          data.backgroundMimeType || ''
+          data.backgroundMimeType || '',
+          data.updated_at || ''
         );
-        userSettingsInitialSyncDone = true;
         finishLoadDiag('boot', 'OK', { ok: true, bytes: approxJsonBytes(data), keepTickerMs: 0 });
         if (typeof onDone === 'function') onDone(null, data);
         return;

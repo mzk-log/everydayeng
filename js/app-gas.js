@@ -645,6 +645,9 @@ function postGasJson(params, options) {
     if (options.signal) {
       fetchOptions.signal = options.signal;
     }
+    if (options.keepalive) {
+      fetchOptions.keepalive = true;
+    }
     return fetch(buildGasPostUrl(), fetchOptions).then(function(response) {
       if (!response.ok) {
         throw new Error((options.httpErrorPrefix || 'ネットワークエラー: ') + response.status);
