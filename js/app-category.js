@@ -1137,6 +1137,37 @@ function findSelectableCategoryIndex(fromIndex, direction) {
 }
 
 /**
+ * 次カテゴリ（前方のみ末尾→先頭へ周回。戻しは周回しない）
+ * @param {number} fromIndex
+ * @param {number} direction -1 | 1
+ * @returns {number}
+ */
+function findSelectableCategoryIndexForwardWrap(fromIndex, direction) {
+  var found = findSelectableCategoryIndex(fromIndex, direction);
+  if (found >= 0 || direction <= 0) {
+    return found;
+  }
+  return findSelectableCategoryIndex(-1, 1);
+}
+
+/**
+ * 選択可能なカテゴリ数
+ * @returns {number}
+ */
+function countSelectableCategories() {
+  if (!categoryCatalog.list || categoryCatalog.list.length === 0) {
+    return 0;
+  }
+  var n = 0;
+  for (var i = 0; i < categoryCatalog.list.length; i++) {
+    if (isCategorySelectable(categoryCatalog.list[i])) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+/**
  * カテゴリselectへ option を設定する（初期画面／学習完了時で共用）
  * @param {HTMLSelectElement} select
  * @param {string|number|null} selectedValue

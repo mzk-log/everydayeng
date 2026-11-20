@@ -233,7 +233,8 @@ function loadLastDateModeData(options) {
 /**
  * 学習日優先のページ操作
  * シャッフル：> で再抽選（< は無効）
- * ノーマル：要再ソート時は再ソート→先頭ページ。以降はページ送り（末尾で>無効、先頭で<無効）
+ * ノーマル：要再ソート時は再ソート→先頭ページ。以降はページ送り。
+ * 末尾の > は再ソート→先頭（周回）。先頭の < は無効のまま
  * @param {number} direction -1 | 1
  * @returns {boolean}
  */
@@ -272,8 +273,20 @@ function navigateLastDateModePage(direction) {
       return true;
     }
     var pageCount = getLastDateModePageCount();
-    if (pageCount <= 0 || lastDateMode.pageIndex >= pageCount - 1) {
+    if (pageCount <= 0) {
       return false;
+    }
+    // 末尾の次：再ソート→先頭ページ（単純なページ周回ではない）
+    if (lastDateMode.pageIndex >= pageCount - 1) {
+      if (lastDateMode.allItems.length > 0) {
+        regenerateLastDateModeList();
+      } else {
+        loadLastDateModeData({ regenerate: true, forceFetch: false });
+      }
+      if (studyEnd.done) {
+        maintainCompletionScrollAtBottom();
+      }
+      return true;
     }
     lastDateMode.pageIndex += 1;
     applyLastDateModePageToList();
@@ -503,7 +516,26 @@ function loadDurationModeData(options) {
 }
 
 /**
- * 学習日優先：ページ移動（再ソートしない）
+ * 解答時間優先：再ソートして先頭ページへ（完了セッション外でも可）
+ * @returns {boolean}
+ */
+function resortDurationModeToFirstPage_() {
+  if (durationMode.sortedItems.length > 0) {
+    sortItemsForDurationMode(durationMode.sortedItems);
+    durationMode.pageIndex = 0;
+    applyDurationModePageToList();
+  } else {
+    loadDurationModeData({ resetPage: true, resort: true, forceFetch: true });
+  }
+  if (studyEnd.done) {
+    maintainCompletionScrollAtBottom();
+  }
+  return true;
+}
+
+/**
+ * 解答時間優先：ページ移動（通常は再ソートしない）
+ * 末尾の > は再ソート→先頭（周回）。先頭の < は無効のまま
  * @param {number} direction -1 | 1
  * @returns {boolean} 移動できたか
  */
@@ -517,7 +549,13 @@ function navigateDurationModePage(direction) {
   var pageCount = getDurationModePageCount();
   if (pageCount <= 0) return false;
   var nextPage = durationMode.pageIndex + direction;
-  if (nextPage < 0 || nextPage >= pageCount) return false;
+  if (nextPage < 0) return false;
+  if (nextPage >= pageCount) {
+    if (direction > 0) {
+      return resortDurationModeToFirstPage_();
+    }
+    return false;
+  }
   durationMode.pageIndex = nextPage;
   applyDurationModePageToList();
   if (studyEnd.done) {

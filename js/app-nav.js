@@ -434,12 +434,10 @@ function updateNavAnswerButton() {
       navAnswerText.classList.remove('blinking');
       var blocked;
       if (isDurationQuestionMethod()) {
-        if (studyEnd.durationSession) {
-          blocked = isCategoryTransitionInProgress;
-        } else {
-          var pageCount = getDurationModePageCount();
-          blocked = pageCount <= 0 || durationMode.pageIndex >= pageCount - 1 || isCategoryTransitionInProgress;
-        }
+        // 完了直後セッションは Next＝再ソート。それ以外で中央が Next になることは稀だが、
+        // 末尾でも再ソート周回できるのでページ末では止めない
+        var durationPages = getDurationModePageCount();
+        blocked = (durationPages <= 0 && !studyEnd.durationSession) || isCategoryTransitionInProgress;
       } else if (isLastDateQuestionMethod()) {
         blocked = isCategoryTransitionInProgress;
       } else if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
@@ -447,8 +445,10 @@ function updateNavAnswerButton() {
           canBrowseNextCycleFromCompletion();
         blocked = !cycleHasNext || isCategoryTransitionInProgress;
       } else {
+        // カテゴリ毎：末尾の次は先頭へ周回（選択可能が1件以上なら Next 可）
         var idx = getCurrentCategoryIndex();
-        blocked = (idx < 0 || findSelectableCategoryIndex(idx, 1) < 0) || isCategoryTransitionInProgress;
+        var nextIdx = (idx < 0) ? -1 : findSelectableCategoryIndexForwardWrap(idx, 1);
+        blocked = (nextIdx < 0) || isCategoryTransitionInProgress;
       }
       navAnswerButton.disabled = blocked || isNavActionLockedByAudio();
       if (isCategoryTransitionInProgress) {
@@ -457,9 +457,11 @@ function updateNavAnswerButton() {
         navAnswerButton.title = '音声の再生が終わるまでお待ちください';
       } else if (blocked) {
         if (isDurationQuestionMethod()) {
-          navAnswerButton.title = '次のページがありません';
+          navAnswerButton.title = '表示できる問題がありません';
         } else if (isLastDateQuestionMethod()) {
           navAnswerButton.removeAttribute('title');
+        } else if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
+          navAnswerButton.title = '次のカテゴリがありません';
         } else {
           navAnswerButton.title = '次のカテゴリがありません';
         }
@@ -619,6 +621,11 @@ function shouldShowCompletionStartButton() {
     return false;
   }
   if (String(categoryCatalog.no) === String(studyEnd.categoryNo)) {
+    // 表示カテゴリが1件だけの周回：初回 Next 後は同じカテゴリで Start
+    if (studyEnd.browseStarted && typeof countSelectableCategories === 'function' &&
+        countSelectableCategories() <= 1) {
+      return true;
+    }
     return questionList.selected.length > 0;
   }
   return true;
@@ -679,12 +686,25 @@ function navigateCompletionCategory(direction) {
         break;
       }
     }
-    var targetIndex = findSelectableCategoryIndex(currentIndex, direction);
+    var targetIndex = (direction > 0)
+      ? findSelectableCategoryIndexForwardWrap(currentIndex, direction)
+      : findSelectableCategoryIndex(currentIndex, direction);
     if (targetIndex < 0) {
       cancelStartWaitCharge();
       return;
     }
     var targetNo = categoryCatalog.list[targetIndex].no;
+    // 1カテゴリ周回：同じ番号でも browse 着地扱いにして Start へ
+    if (direction > 0 && targetIndex === currentIndex) {
+      hideCompletionCongratsMessage();
+      revealCompletionBrowseChrome(true);
+      studyEnd.browseStarted = true;
+      if (typeof maintainCompletionScrollAtTop === 'function') {
+        maintainCompletionScrollAtTop();
+      }
+      finishCompletionCategoryBrowse();
+      return;
+    }
     select.value = targetNo;
     syncCustomCategorySelect(select);
     loadCategoryDataForCompletionBrowse(targetNo);

@@ -144,7 +144,8 @@ function updateListNavPair(config) {
     }
     setListNavContainerVisible(config.containerId, true);
     prevButton.disabled = durationMode.pageIndex <= 0;
-    nextButton.disabled = durationMode.pageIndex >= pageCount - 1;
+    // 末尾の >> は再ソート→先頭（周回）。<< は先頭で無効のまま
+    nextButton.disabled = false;
     return;
   }
 
@@ -167,7 +168,8 @@ function updateListNavPair(config) {
       }
       setListNavContainerVisible(config.containerId, true);
       prevButton.disabled = lastDateMode.pageIndex <= 0;
-      nextButton.disabled = lastDateMode.pageIndex >= lastDatePageCount - 1;
+      // 末尾の >> は再ソート→先頭（周回）
+      nextButton.disabled = false;
       return;
     }
     // シャッフル：> で再抽選（< は無効）
@@ -209,7 +211,8 @@ function updateListNavPair(config) {
     nextButton.disabled = true;
   } else {
     prevButton.disabled = (findSelectableCategoryIndex(currentIndex, -1) < 0);
-    nextButton.disabled = (findSelectableCategoryIndex(currentIndex, 1) < 0);
+    // >> は末尾→先頭へ周回（選択可能が1件以上なら有効）
+    nextButton.disabled = (findSelectableCategoryIndexForwardWrap(currentIndex, 1) < 0);
   }
 }
 
@@ -309,8 +312,8 @@ function navigateToNextCategory() {
     }
   }
   
-  // 次の選択可能カテゴリへ
-  var nextIndex = findSelectableCategoryIndex(currentIndex, 1);
+  // 次の選択可能カテゴリへ（末尾の次は先頭）
+  var nextIndex = findSelectableCategoryIndexForwardWrap(currentIndex, 1);
   if (nextIndex >= 0) {
     select.value = categoryCatalog.list[nextIndex].no;
     var event = new Event('change', { bubbles: true });
