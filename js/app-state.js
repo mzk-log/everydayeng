@@ -270,6 +270,7 @@ var FIELD_AUDIO_SILENCE_PEAK_RATIO = 0.12; // ピーク(95%点)比でこれ未�
 var FIELD_AUDIO_SILENCE_MIN_MS = 250; // 採用する最短無音（メディアms）
 var FIELD_AUDIO_SILENCE_LOOKBACK_PAD_SEC = 0.12; // 現在位置直近の無音は無視（メディア秒）
 var FIELD_AUDIO_SILENCE_MIN_SPEECH_WALL_SEC = 1.0; // 無音終了後、これ（壁時計秒）未満しか進んでいない無音は戻り先にしない
+var FIELD_AUDIO_SILENCE_REWIND_STEPS = 2; // 2タップで何個前の無音へ戻るか（1＝直近、2＝2つ前）
 var LEARNING_GESTURE_MOVE_PX = 12; // 本文タップをスクロールと区別
 var LEARNING_BODY_DOUBLE_TAP_MS = 300; // 本文の1／2／3タップを分ける間隔
 var GAS_UPDATE_MAX_ATTEMPTS = 5; // シート更新の最大試行回数（初回含む）

@@ -412,8 +412,8 @@ function computeSilenceRegionsFromAudioBuffer_(buffer) {
 }
 
 /**
- * 現在位置より前の直近無音の開始時刻。無ければ 0。
- * いま無音の真っ中／無音終了直後（壁時計約1秒未満しか進んでいない）は候補外にし、ひとつ前へ。
+ * 現在位置より前の無音開始時刻（既定は2つ前）。候補不足時は取れる最前／無ければ 0。
+ * いま無音の真っ中／無音終了直後（壁時計約1秒未満しか進んでいない）は候補外。
  * @param {{start: number, end: number}[]} regions
  * @param {number} currentTime
  * @param {number} [playbackRate]
@@ -445,7 +445,14 @@ function findPrevSilenceStart_(regions, currentTime, playbackRate) {
   }
   // 無音終了からこのメディア秒以上進んで初めて、その無音を戻り先にしてよい
   var minAfter = wallAfter * rate;
-  var best = null;
+  var steps = typeof FIELD_AUDIO_SILENCE_REWIND_STEPS === 'number'
+    ? FIELD_AUDIO_SILENCE_REWIND_STEPS
+    : 2;
+  if (!(isFinite(steps) && steps >= 1)) {
+    steps = 2;
+  }
+  steps = Math.floor(steps);
+  var candidates = [];
   var i;
   for (i = 0; i < regions.length; i++) {
     var r = regions[i];
@@ -469,9 +476,17 @@ function findPrevSilenceStart_(regions, currentTime, playbackRate) {
     if (t < re + minAfter) {
       continue;
     }
-    best = rs;
+    candidates.push(rs);
   }
-  return best == null ? 0 : best;
+  if (!candidates.length) {
+    return 0;
+  }
+  // 時間順の末尾が直近。steps=2 なら末尾から2番目＝2つ前
+  var idx = candidates.length - steps;
+  if (idx < 0) {
+    idx = 0;
+  }
+  return candidates[idx];
 }
 
 /**
