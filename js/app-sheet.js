@@ -116,7 +116,8 @@ function runGasSheetUpdateJob(job, attemptIndex) {
     gasSheetUpdate.failCount += 1;
     finishLoadDiag('run', loadDiagStatusFromError(error), { ok: false, kind: 'update' });
     refreshLoadDiagUi();
-    showError('更新エラー: ' + error.toString());
+    // 仕様: 更新失敗は表示のみ。学習フローは止めない（未許可等の硬拒否は showError 内でロック）
+    showError('更新エラー: ' + error.toString(), { skipAuthLock: true });
     if (typeof job.onFinalError === 'function') {
       job.onFinalError(error);
     }

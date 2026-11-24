@@ -420,6 +420,18 @@ function isGoogleAuthTokenNearExpiry() {
 }
 
 /**
+ * 認証ポップアップを開いてよいユーザー操作直後か
+ * @returns {boolean}
+ */
+function hasTransientUserActivationForAuth_() {
+  try {
+    return !!(navigator.userActivation && navigator.userActivation.isActive);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
  * ネット取得前にトークンを静かに更新する。失敗しても残存トークンがあれば続行
  * @param {function(): void} onDone
  * @param {function(): void} [onFail]
@@ -433,6 +445,16 @@ function ensureFreshGoogleAuthToken(onDone, onFail) {
   }
   if (hasValidGoogleAuthToken() && !isGoogleAuthTokenNearExpiry()) {
     done();
+    return;
+  }
+  // スマホは TokenClient が display=popup を使う。非タップ中に開くと
+  // Firefox 等が確認ダイアログを出し、学習中の強制ログアウトにつながる。
+  if (isLikelyMobileClient() && !hasTransientUserActivationForAuth_()) {
+    if (hasValidGoogleAuthToken()) {
+      done();
+    } else {
+      fail();
+    }
     return;
   }
   whenGoogleIdentityReady(function() {

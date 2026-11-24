@@ -2,11 +2,20 @@
 // エラーメッセージの配列（複数エラーを管理）
 var errorMessages = [];
 
-function showError(message) {
+/**
+ * @param {*} message
+ * @param {{ skipAuthLock?: boolean }} [options]
+ * skipAuthLock: 学習記録の更新失敗など、仕様上フローを止めないとき。
+ * 未許可／メール不一致は skip してもロックする（セキュリティ）。
+ */
+function showError(message, options) {
+  options = options || {};
   var msg = message != null ? String(message) : '';
   // GAS の Google認証失敗／未許可時はデータ破棄＋操作不可＋再ログイン
   if (isGoogleAuthFailureMessage(msg)) {
-    enforceGoogleAuthFailureLock(msg);
+    if (!options.skipAuthLock || isHardGoogleAuthDenialMessage(msg)) {
+      enforceGoogleAuthFailureLock(msg);
+    }
   }
 
   // 既存のエラーメッセージコンテナを取得または作成
@@ -43,6 +52,17 @@ function isGoogleAuthFailureMessage(message) {
     msg.indexOf('sign in again') >= 0 ||
     msg.indexOf('Email does not match Google') >= 0 ||
     msg.indexOf('Email not authorized') >= 0;
+}
+
+/**
+ * 未許可／メール不一致など、ロックを省略してはいけない認証拒否か
+ * @param {string} message
+ * @returns {boolean}
+ */
+function isHardGoogleAuthDenialMessage(message) {
+  var msg = String(message || '');
+  return msg.indexOf('Email not authorized') >= 0 ||
+    msg.indexOf('Email does not match Google') >= 0;
 }
 
 /**

@@ -589,6 +589,10 @@ function applyGasAuthPayload(data) {
 
 /**
  * セッション無効時に Google トークンで再送してよいか
+ * 「Session expired」「Invalid or expired Google token」など、サーバーがトークンを
+ * 受け取ったうえで拒否したときだけ true。
+ * 「idToken or accessToken is required」は POST ボディ欠落でも同文になるため対象外
+ * （有効な sessionToken を誤破棄しない）。
  * @param {*} message
  * @returns {boolean}
  */
@@ -604,10 +608,8 @@ function isRecoverableSessionAuthFailure_(message) {
     return false;
   }
   return msg.indexOf('Session expired') >= 0 ||
-    msg.indexOf('idToken or accessToken is required') >= 0 ||
     msg.indexOf('Invalid or expired Google token') >= 0 ||
-    msg.indexOf('sign in with Google') >= 0 ||
-    msg.indexOf('sign in again') >= 0;
+    msg.indexOf('Please sign in again') >= 0;
 }
 
 /**
