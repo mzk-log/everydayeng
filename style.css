@@ -3170,7 +3170,7 @@ body:has(#screen2.active) .answer-text-edit {
   font-size: 13px;
   line-height: 1.35;
   color: #222;
-  white-space: pre-wrap;
+  white-space: pre-line;
   word-break: break-word;
 }
 

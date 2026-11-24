@@ -141,7 +141,8 @@ function escapeAddStudyItemHtml(text) {
 }
 
 function previewAddStudyItemText(text) {
-  var t = studyFieldDisplayText(text).replace(/\s+/g, ' ').trim();
+  // 仕様: 改行を保持して表示（空白つぶしはしない）
+  var t = studyFieldDisplayText(text).replace(/\r\n?/g, '\n').trim();
   return t || '（空）';
 }
 
