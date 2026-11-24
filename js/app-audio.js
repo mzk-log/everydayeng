@@ -412,8 +412,65 @@ function computeSilenceRegionsFromAudioBuffer_(buffer) {
 }
 
 /**
- * 現在位置より前の無音開始時刻（既定は2つ前）。候補不足時は取れる最前／無ければ 0。
- * いま無音の真っ中／無音終了直後（壁時計約1秒未満しか進んでいない）は候補外。
+ * 近い無音を1区切りに結合（巻き戻し用）。間隔が壁時計閾値×倍率未満なら同一とみなす。
+ * @param {{start: number, end: number}[]} regions
+ * @param {number} playbackRate
+ * @returns {{start: number, end: number}[]}
+ */
+function mergeSilenceRegionsForRewind_(regions, playbackRate) {
+  if (!regions || !regions.length) {
+    return [];
+  }
+  var rate = Number(playbackRate);
+  if (!isFinite(rate) || rate <= 0) {
+    rate = 1;
+  }
+  var wallGap = typeof FIELD_AUDIO_SILENCE_MERGE_WALL_SEC === 'number'
+    ? FIELD_AUDIO_SILENCE_MERGE_WALL_SEC
+    : 0.3;
+  if (!(isFinite(wallGap) && wallGap >= 0)) {
+    wallGap = 0.3;
+  }
+  var maxGap = wallGap * rate;
+  var merged = [];
+  var cur = null;
+  var i;
+  for (i = 0; i < regions.length; i++) {
+    var r = regions[i];
+    if (!r) {
+      continue;
+    }
+    var rs = Number(r.start);
+    var re = Number(r.end);
+    if (!isFinite(rs) || !isFinite(re) || re < rs) {
+      continue;
+    }
+    if (!cur) {
+      cur = { start: rs, end: re };
+      continue;
+    }
+    // 直前無音の終わり〜次の始まりが近ければ同一区切り
+    if (rs - cur.end <= maxGap) {
+      if (re > cur.end) {
+        cur.end = re;
+      }
+      if (rs < cur.start) {
+        cur.start = rs;
+      }
+    } else {
+      merged.push(cur);
+      cur = { start: rs, end: re };
+    }
+  }
+  if (cur) {
+    merged.push(cur);
+  }
+  return merged;
+}
+
+/**
+ * 現在位置より前の無音開始時刻（既定は2つ前）。候補が steps 未満なら先頭 0。
+ * 近い無音は結合してから数える。いま無音の真っ中／無音終了直後は候補外。
  * @param {{start: number, end: number}[]} regions
  * @param {number} currentTime
  * @param {number} [playbackRate]
@@ -452,10 +509,11 @@ function findPrevSilenceStart_(regions, currentTime, playbackRate) {
     steps = 2;
   }
   steps = Math.floor(steps);
+  var merged = mergeSilenceRegionsForRewind_(regions, rate);
   var candidates = [];
   var i;
-  for (i = 0; i < regions.length; i++) {
-    var r = regions[i];
+  for (i = 0; i < merged.length; i++) {
+    var r = merged[i];
     if (!r) {
       continue;
     }
@@ -478,15 +536,12 @@ function findPrevSilenceStart_(regions, currentTime, playbackRate) {
     }
     candidates.push(rs);
   }
-  if (!candidates.length) {
+  // 候補が steps 未満（例：2つ前だが無音が1つだけ）→ 先頭へ
+  if (candidates.length < steps) {
     return 0;
   }
   // 時間順の末尾が直近。steps=2 なら末尾から2番目＝2つ前
-  var idx = candidates.length - steps;
-  if (idx < 0) {
-    idx = 0;
-  }
-  return candidates[idx];
+  return candidates[candidates.length - steps];
 }
 
 /**
