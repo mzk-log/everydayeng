@@ -62,6 +62,13 @@ function bindLearningBodyGestures() {
   }
 
   function replayFieldFromBodyDoubleTap_() {
+    // 再生／一時停止中なら直近無音（未解析時は壁時計）へ巻き戻し再生。取得待ちは何もしない
+    if (typeof isFieldAudioBusy === 'function' && isFieldAudioBusy()) {
+      if (typeof tryRewindPlayingFieldAudio_ === 'function') {
+        tryRewindPlayingFieldAudio_();
+      }
+      return;
+    }
     var fieldType = questionCursor.answerShown ? 'answer' : 'question';
     var btn = fieldType === 'answer' ? dom.answerPlayButton : dom.questionPlayButton;
     if (!btn || btn.disabled) {
@@ -146,6 +153,14 @@ function bindLearningBodyGestures() {
     }
     if (count >= 1) {
       if (stopCategoryAnnounce({ continueStart: true })) {
+        return;
+      }
+      // 出題／解答セッション中（再生・一時停止）は一時停止トグル。取得待ちは中央ロックのまま無視
+      if (typeof fieldPlay !== 'undefined' && fieldPlay && fieldPlay.field &&
+          typeof isFieldHtmlAudioPlaying_ === 'function' &&
+          isFieldHtmlAudioPlaying_(fieldPlay.field) &&
+          typeof tryTogglePausePlayingFieldAudio_ === 'function') {
+        tryTogglePausePlayingFieldAudio_();
         return;
       }
       handleNavAnswerButtonClick();

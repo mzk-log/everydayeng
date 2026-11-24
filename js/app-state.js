@@ -124,6 +124,7 @@ var uiSfx = {
 var fieldPlay = {
   audio: null, // 現在再生中の PCM ハンドル
   field: null, // 再生／取得中の欄 'question' | 'answer' | null
+  userPaused: false, // 本文1タップ等の意図的一時停止（busy は維持・watchdog は止める）
   ansGate: false, // リスニング時：出題音声終了まで Ans 無効・計測待機
   resetTimer: false // 出題読み自動再生終了後に計測をゼロリセットするか
 };
@@ -261,6 +262,14 @@ var AUTH_REFRESH_MARGIN_MS = 5 * 60 * 1000; // トークン残存がこれ未満
 var ENABLE_AUDIO_SOURCE_DEBUG = true;
 var ENABLE_LOAD_DIAG = true; // 通信のメモリ記録。画面表示は管理者かつ表示ONのときだけ
 var FIELD_PLAY_LONG_PRESS_MS = 700; // 再生ボタン長押しで音声再作成
+var FIELD_AUDIO_REWIND_WALL_SEC = 5.5; // 無音未解析時フォールバック（壁時計秒）
+var FIELD_AUDIO_REWIND_MEDIA_MIN_SEC = 2; // フォールバック：メディア秒の下限
+var FIELD_AUDIO_REWIND_MEDIA_MAX_SEC = 12; // フォールバック：メディア秒の上限
+var FIELD_AUDIO_SILENCE_FRAME_MS = 20; // 無音判定の枠長
+var FIELD_AUDIO_SILENCE_PEAK_RATIO = 0.12; // ピーク(95%点)比でこれ未満をほぼ無音
+var FIELD_AUDIO_SILENCE_MIN_MS = 250; // 採用する最短無音（メディアms）
+var FIELD_AUDIO_SILENCE_LOOKBACK_PAD_SEC = 0.12; // 現在位置直近の無音は無視（メディア秒）
+var FIELD_AUDIO_SILENCE_MIN_SPEECH_WALL_SEC = 1.0; // 無音終了後、これ（壁時計秒）未満しか進んでいない無音は戻り先にしない
 var LEARNING_GESTURE_MOVE_PX = 12; // 本文タップをスクロールと区別
 var LEARNING_BODY_DOUBLE_TAP_MS = 300; // 本文の1／2／3タップを分ける間隔
 var GAS_UPDATE_MAX_ATTEMPTS = 5; // シート更新の最大試行回数（初回含む）

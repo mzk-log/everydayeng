@@ -68,6 +68,11 @@ function bindFieldPlayButton(button, fieldType) {
     pressTimer = setTimeout(function() {
       pressTimer = null;
       if (!pressActive || button.disabled) return;
+      // 取得／再生中は長押し再作成しない（短押し巻き戻し専用）
+      if (isFieldAudioBusy()) {
+        longPressFired = true;
+        return;
+      }
       longPressFired = true;
       button.classList.add('is-long-pressing');
       if (navigator.vibrate) {
@@ -113,6 +118,10 @@ function bindFieldPlayButton(button, fieldType) {
     if (fieldType === 'answer' && typeof isCompletionAnnounceReplayActive === 'function' &&
         isCompletionAnnounceReplayActive()) {
       replayCompletionAnnounce_(false);
+      return;
+    }
+    if (isFieldHtmlAudioPlaying_(fieldType)) {
+      tryRewindPlayingFieldAudio_();
       return;
     }
     playFieldAudio(fieldType, false);
@@ -225,7 +234,10 @@ function updateFieldPlayButtons() {
   
   var qText = getEffectiveQuestion(item);
   var audioBusy = fieldPlay.field !== null;
-  var canPlayQuestion = !!qText && !isImageUrl(qText) && !audioBusy;
+  var playingQuestion = isFieldHtmlAudioPlaying_('question');
+  var playingAnswer = isFieldHtmlAudioPlaying_('answer');
+  // 取得待ちは不可。自欄が実際に再生中だけ短押し巻き戻しのため有効
+  var canPlayQuestion = !!qText && !isImageUrl(qText) && (!audioBusy || playingQuestion);
   if (qBtn && !isLoading(qBtn)) {
     qBtn.disabled = !canPlayQuestion;
   }
@@ -234,7 +246,8 @@ function updateFieldPlayButtons() {
   }
   
   var aText = getEffectiveAnswer(item);
-  var canPlayAnswer = !!questionCursor.answerShown && !!aText && !isImageUrl(aText) && !audioBusy;
+  var canPlayAnswer = !!questionCursor.answerShown && !!aText && !isImageUrl(aText) &&
+    (!audioBusy || playingAnswer);
   if (aBtn && !isLoading(aBtn)) {
     aBtn.disabled = !canPlayAnswer;
   }
@@ -252,6 +265,357 @@ function updateFieldPlayButtons() {
  */
 function isFieldAudioBusy() {
   return fieldPlay.field !== null;
+}
+
+/**
+ * 指定欄の HTMLAudio セッション中か（再生中・一時停止中。取得待ち・pending は含まない）
+ * @param {string} fieldType - 'question' | 'answer'
+ * @returns {boolean}
+ */
+function isFieldHtmlAudioPlaying_(fieldType) {
+  if (!fieldType || fieldPlay.field !== fieldType) {
+    return false;
+  }
+  var a = fieldPlay.audio;
+  return !!(a && a.kind === 'html' && a.element && !a.stopped);
+}
+
+/**
+ * ハンドルの再生倍率を取得
+ * @param {{playbackRate?: number, element?: HTMLAudioElement}|null} handle
+ * @returns {number}
+ */
+function getFieldAudioPlaybackRate_(handle) {
+  var rate = Number(handle && handle.playbackRate);
+  if ((!isFinite(rate) || rate <= 0) && handle && handle.element) {
+    rate = Number(handle.element.playbackRate);
+  }
+  if (!isFinite(rate) || rate <= 0) {
+    return 1;
+  }
+  return rate;
+}
+
+/**
+ * 無音未解析時のフォールバック戻し量（メディア秒）
+ * 目標＝壁時計秒×playbackRate を、メディア下限〜上限でクランプ
+ * @param {{duration?: number, element?: HTMLAudioElement, playbackRate?: number}|null} handle
+ * @returns {number}
+ */
+function getFieldAudioRewindMediaSec_(handle) {
+  var wall = typeof FIELD_AUDIO_REWIND_WALL_SEC === 'number' ? FIELD_AUDIO_REWIND_WALL_SEC : 5.5;
+  if (!(isFinite(wall) && wall > 0)) {
+    wall = 5.5;
+  }
+  var minSec = typeof FIELD_AUDIO_REWIND_MEDIA_MIN_SEC === 'number'
+    ? FIELD_AUDIO_REWIND_MEDIA_MIN_SEC
+    : 2;
+  var maxSec = typeof FIELD_AUDIO_REWIND_MEDIA_MAX_SEC === 'number'
+    ? FIELD_AUDIO_REWIND_MEDIA_MAX_SEC
+    : 12;
+  if (!(isFinite(minSec) && minSec > 0)) {
+    minSec = 2;
+  }
+  if (!(isFinite(maxSec) && maxSec > 0)) {
+    maxSec = 12;
+  }
+  if (maxSec < minSec) {
+    maxSec = minSec;
+  }
+  var media = wall * getFieldAudioPlaybackRate_(handle);
+  if (media < minSec) {
+    media = minSec;
+  }
+  if (media > maxSec) {
+    media = maxSec;
+  }
+  var d = Number(handle && handle.duration);
+  if (!(isFinite(d) && d > 0) && handle && handle.element) {
+    d = Number(handle.element.duration);
+  }
+  if (isFinite(d) && d > 0 && handle &&
+      !(typeof handle.duration === 'number' && isFinite(handle.duration) && handle.duration > 0)) {
+    handle.duration = d;
+  }
+  return media;
+}
+
+/**
+ * AudioBuffer から句区切り用の無音区間を抽出
+ * @param {AudioBuffer} buffer
+ * @returns {{start: number, end: number}[]}
+ */
+function computeSilenceRegionsFromAudioBuffer_(buffer) {
+  if (!buffer || typeof buffer.getChannelData !== 'function') {
+    return [];
+  }
+  var sr = buffer.sampleRate || 44100;
+  var data = buffer.getChannelData(0);
+  var frameMs = typeof FIELD_AUDIO_SILENCE_FRAME_MS === 'number' ? FIELD_AUDIO_SILENCE_FRAME_MS : 20;
+  if (!(isFinite(frameMs) && frameMs > 0)) {
+    frameMs = 20;
+  }
+  var frame = Math.max(1, Math.floor(sr * frameMs / 1000));
+  var nFrames = Math.floor(data.length / frame);
+  if (nFrames <= 0) {
+    return [];
+  }
+  var rms = new Float32Array(nFrames);
+  var i;
+  var j;
+  for (i = 0; i < nFrames; i++) {
+    var sum = 0;
+    var base = i * frame;
+    for (j = 0; j < frame; j++) {
+      var v = data[base + j];
+      sum += v * v;
+    }
+    rms[i] = Math.sqrt(sum / frame + 1e-12);
+  }
+  var sorted = Array.prototype.slice.call(rms);
+  sorted.sort(function(a, b) { return a - b; });
+  var peakIdx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
+  var peak = sorted[peakIdx];
+  if (!(peak > 0)) {
+    return [];
+  }
+  var ratio = typeof FIELD_AUDIO_SILENCE_PEAK_RATIO === 'number' ? FIELD_AUDIO_SILENCE_PEAK_RATIO : 0.12;
+  if (!(isFinite(ratio) && ratio > 0)) {
+    ratio = 0.12;
+  }
+  var thr = peak * ratio;
+  var minMs = typeof FIELD_AUDIO_SILENCE_MIN_MS === 'number' ? FIELD_AUDIO_SILENCE_MIN_MS : 250;
+  if (!(isFinite(minMs) && minMs > 0)) {
+    minMs = 250;
+  }
+  var frameSec = frame / sr;
+  var regions = [];
+  i = 0;
+  while (i < nFrames) {
+    if (rms[i] >= thr) {
+      i += 1;
+      continue;
+    }
+    var startIdx = i;
+    while (i < nFrames && rms[i] < thr) {
+      i += 1;
+    }
+    var durMs = (i - startIdx) * frameSec * 1000;
+    if (durMs >= minMs) {
+      regions.push({
+        start: startIdx * frameSec,
+        end: i * frameSec
+      });
+    }
+  }
+  return regions;
+}
+
+/**
+ * 現在位置より前の直近無音の開始時刻。無ければ 0。
+ * いま無音の真っ中／無音終了直後（壁時計約1秒未満しか進んでいない）は候補外にし、ひとつ前へ。
+ * @param {{start: number, end: number}[]} regions
+ * @param {number} currentTime
+ * @param {number} [playbackRate]
+ * @returns {number}
+ */
+function findPrevSilenceStart_(regions, currentTime, playbackRate) {
+  if (!regions || !regions.length) {
+    return 0;
+  }
+  var t = Number(currentTime);
+  if (!isFinite(t) || t < 0) {
+    t = 0;
+  }
+  var pad = typeof FIELD_AUDIO_SILENCE_LOOKBACK_PAD_SEC === 'number'
+    ? FIELD_AUDIO_SILENCE_LOOKBACK_PAD_SEC
+    : 0.12;
+  if (!(isFinite(pad) && pad >= 0)) {
+    pad = 0.12;
+  }
+  var wallAfter = typeof FIELD_AUDIO_SILENCE_MIN_SPEECH_WALL_SEC === 'number'
+    ? FIELD_AUDIO_SILENCE_MIN_SPEECH_WALL_SEC
+    : 1.0;
+  if (!(isFinite(wallAfter) && wallAfter > 0)) {
+    wallAfter = 1.0;
+  }
+  var rate = Number(playbackRate);
+  if (!isFinite(rate) || rate <= 0) {
+    rate = 1;
+  }
+  // 無音終了からこのメディア秒以上進んで初めて、その無音を戻り先にしてよい
+  var minAfter = wallAfter * rate;
+  var best = null;
+  var i;
+  for (i = 0; i < regions.length; i++) {
+    var r = regions[i];
+    if (!r) {
+      continue;
+    }
+    var rs = Number(r.start);
+    var re = Number(r.end);
+    if (!isFinite(rs) || !isFinite(re)) {
+      continue;
+    }
+    // いまこの無音の中（または直後）→ スキップしてより前を探す
+    if (t >= rs && t <= re + 0.05) {
+      continue;
+    }
+    // 現在位置より十分前に始まった無音だけ
+    if (rs >= t - pad) {
+      continue;
+    }
+    // 無音のあと少ししか再生していない（戻した直後の再2タップ等）→ この無音は候補外
+    if (t < re + minAfter) {
+      continue;
+    }
+    best = rs;
+  }
+  return best == null ? 0 : best;
+}
+
+/**
+ * audioData の無音区間を用意し、再生ハンドルへ載せる
+ * @param {{sourceAudioData?: Object, silenceRegions?: Array}|null} handle
+ * @returns {Promise<{start: number, end: number}[]>}
+ */
+function ensureSilenceRegionsOnHandle_(handle) {
+  if (!handle) {
+    return Promise.resolve([]);
+  }
+  if (handle.silenceRegions && handle.silenceRegions.length) {
+    return Promise.resolve(handle.silenceRegions);
+  }
+  var ad = handle.sourceAudioData;
+  if (!ad) {
+    return Promise.resolve([]);
+  }
+  if (ad.silenceAnalyzeFailed) {
+    return Promise.resolve([]);
+  }
+  if (ad.silenceRegions) {
+    handle.silenceRegions = ad.silenceRegions;
+    return Promise.resolve(ad.silenceRegions);
+  }
+  if (ad.silencePromise) {
+    return ad.silencePromise.then(function(regions) {
+      if (fieldPlay.audio === handle) {
+        handle.silenceRegions = regions;
+      }
+      return regions;
+    });
+  }
+  ad.silencePromise = decodeAudioDataToBuffer_(ad).then(function(buffer) {
+    var regions = computeSilenceRegionsFromAudioBuffer_(buffer);
+    ad.silenceRegions = regions;
+    ad.silencePromise = null;
+    if (fieldPlay.audio && fieldPlay.audio.sourceAudioData === ad) {
+      fieldPlay.audio.silenceRegions = regions;
+    }
+    return regions;
+  }, function() {
+    ad.silencePromise = null;
+    ad.silenceAnalyzeFailed = true;
+    return [];
+  });
+  return ad.silencePromise;
+}
+
+/**
+ * 再生位置を移動して再生を続ける
+ * @param {HTMLAudioElement} el
+ * @param {Object} handle
+ * @param {number} nextTime
+ * @returns {boolean}
+ */
+function seekPlayingFieldAudioTo_(el, handle, nextTime) {
+  var next = Number(nextTime);
+  if (!isFinite(next) || next < 0) {
+    next = 0;
+  }
+  try {
+    el.currentTime = next;
+  } catch (err) {
+    try {
+      el.currentTime = 0;
+      next = 0;
+    } catch (err2) {
+      return false;
+    }
+  }
+  fieldPlay.userPaused = false;
+  if (el.paused) {
+    var playRet = el.play();
+    if (playRet && typeof playRet.catch === 'function') {
+      playRet.catch(function() { /* ignore */ });
+    }
+  }
+  armAudioBusyWatchdog_(handle);
+  return true;
+}
+
+/**
+ * 再生／一時停止中の出題／解答を一時停止または再開する。成功したら true。
+ * @returns {boolean}
+ */
+function tryTogglePausePlayingFieldAudio_() {
+  if (!fieldPlay.field || !isFieldHtmlAudioPlaying_(fieldPlay.field)) {
+    return false;
+  }
+  var a = fieldPlay.audio;
+  var el = a.element;
+  if (fieldPlay.userPaused || el.paused) {
+    fieldPlay.userPaused = false;
+    var playRet = el.play();
+    if (playRet && typeof playRet.catch === 'function') {
+      playRet.catch(function() { /* ignore */ });
+    }
+    armAudioBusyWatchdog_(a);
+    return true;
+  }
+  fieldPlay.userPaused = true;
+  // 一時停止中は busy 期限を止め、意図的 pause をスタック扱いにしない
+  clearAudioBusyWatchdogs_();
+  try {
+    el.pause();
+  } catch (err) {
+    fieldPlay.userPaused = false;
+    armAudioBusyWatchdog_(a);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 再生／一時停止中の出題／解答を直近の無音始まりへ戻して再生する。成功したら true。
+ * 無音未解析時は壁時計フォールバック。一時停止中なら戻して再生開始。
+ * @returns {boolean}
+ */
+function tryRewindPlayingFieldAudio_() {
+  if (!fieldPlay.field || !isFieldHtmlAudioPlaying_(fieldPlay.field)) {
+    return false;
+  }
+  var a = fieldPlay.audio;
+  var el = a.element;
+  var t = Number(el.currentTime);
+  if (!isFinite(t) || t < 0) {
+    t = 0;
+  }
+  var regions = a.silenceRegions;
+  if (regions && regions.length) {
+    return seekPlayingFieldAudioTo_(
+      el,
+      a,
+      findPrevSilenceStart_(regions, t, getFieldAudioPlaybackRate_(a))
+    );
+  }
+  // 未解析なら裏で解析を進め、今回は壁時計フォールバック
+  if (a.sourceAudioData && !a.sourceAudioData.silenceAnalyzeFailed) {
+    ensureSilenceRegionsOnHandle_(a);
+  }
+  var mediaDelta = getFieldAudioRewindMediaSec_(a);
+  var next = (t <= mediaDelta) ? 0 : (t - mediaDelta);
+  return seekPlayingFieldAudioTo_(el, a, next);
 }
 
 /**
@@ -285,17 +649,23 @@ function clearAudioBusyWatchdogs_() {
 function getAudioBusyDeadlineMs_(audio) {
   var d = 0;
   var rate = 1;
+  var remaining = 0;
   if (audio && audio.kind === 'html') {
     d = Number(audio.duration);
     if (!(typeof d === 'number' && isFinite(d) && d > 0) && audio.element) {
       d = Number(audio.element.duration);
     }
-    rate = Number(audio.playbackRate);
-    if (!(isFinite(rate) && rate > 0)) {
-      rate = 1;
+    rate = getFieldAudioPlaybackRate_(audio);
+    remaining = d;
+    if (typeof d === 'number' && isFinite(d) && d > 0 && audio.element) {
+      var ct = Number(audio.element.currentTime);
+      if (isFinite(ct) && ct > 0) {
+        remaining = Math.max(0, d - ct);
+      }
     }
   } else {
     d = audio && audio.buffer ? audio.buffer.duration : 0;
+    remaining = d;
     if (audio && audio.source && audio.source.playbackRate) {
       var rawRate = Number(audio.source.playbackRate.value);
       if (isFinite(rawRate) && rawRate > 0) {
@@ -303,8 +673,9 @@ function getAudioBusyDeadlineMs_(audio) {
       }
     }
   }
-  if (typeof d === 'number' && isFinite(d) && d > 0) {
-    return Math.ceil((d / rate) * 1000) + AUDIO_PLAY_END_GRACE_MS;
+  if (typeof remaining === 'number' && isFinite(remaining) && remaining >= 0 &&
+      typeof d === 'number' && isFinite(d) && d > 0) {
+    return Math.ceil((remaining / rate) * 1000) + AUDIO_PLAY_END_GRACE_MS;
   }
   return AUDIO_PLAY_UNKNOWN_DURATION_MS;
 }
@@ -329,9 +700,11 @@ function forceReleaseFieldAudioBusy_(reason) {
   var field = fieldPlay.field;
   clearAudioBusyWatchdogs_();
   if (field == null && !fieldPlay.audio) {
+    fieldPlay.userPaused = false;
     return;
   }
   fieldPlay.field = null;
+  fieldPlay.userPaused = false;
   releaseCurrentAudioElement();
   if (field) {
     hidePlayButtonLoading(field);
@@ -995,6 +1368,7 @@ function handleAudioFetchAbortOrTimeout(fieldType) {
   // ここでは addStudy busy を触らない（停止は stopCurrentAudioPlayback／再生終了側）
   if (fieldPlay.field === fieldType) {
     fieldPlay.field = null;
+    fieldPlay.userPaused = false;
   }
   updateFieldPlayButtons();
   if (typeof refreshAddStudyListPlayButtons === 'function') {
@@ -1036,6 +1410,7 @@ function stopCurrentAudioPlayback(options) {
   releaseCurrentAudioElement();
   if (!options.preserveBusy) {
     fieldPlay.field = null;
+    fieldPlay.userPaused = false;
     if (!options.keepAddStudyAudioBusy && typeof clearAddStudyAudioBusy_ === 'function') {
       clearAddStudyAudioBusy_();
     }
@@ -1293,6 +1668,7 @@ function playFieldAudio(fieldType, forceRefresh, options) {
   // 停止〜取得開始のあいだも busy を維持（Ans直後の Q/Next 押下防止）
   stopCurrentAudioPlayback({ skipButtonUpdate: true, keepAudioQueue: false });
   fieldPlay.field = fieldType;
+  fieldPlay.userPaused = false;
   updateFieldPlayButtons();
   
   var voiceGender = fieldType === 'question' ? getAudioVoice('question') : getAudioVoice('answer');
@@ -2647,9 +3023,11 @@ function playAudioFromCache(audioData, fieldType, source) {
       clearAudioBusyWatchdogs_();
       if (isThisPlay_()) {
         fieldPlay.field = null;
+        fieldPlay.userPaused = false;
         releaseCurrentAudioElement();
       } else if (fieldPlay.field === fieldType) {
         fieldPlay.field = null;
+        fieldPlay.userPaused = false;
       }
       if (typeof clearAddStudyAudioBusy_ === 'function') {
         clearAddStudyAudioBusy_();
@@ -2708,8 +3086,17 @@ function playAudioFromCache(audioData, fieldType, source) {
         audioWatch.playStartTimer = null;
       }
       htmlHandle.owner = token;
+      htmlHandle.sourceAudioData = audioData;
+      if (audioData.silenceRegions) {
+        htmlHandle.silenceRegions = audioData.silenceRegions;
+      } else if (!audioData.silenceAnalyzeFailed) {
+        // 再生中に無音境界を先読み（初回2タップ前に間に合えば句区切りへ）
+        ensureSilenceRegionsOnHandle_(htmlHandle);
+      }
       fieldPlay.audio = htmlHandle;
       armAudioBusyWatchdog_(htmlHandle);
+      // 取得待ち→再生中：自欄ボタンを巻き戻し用に有効化
+      updateFieldPlayButtons();
     } catch (htmlErr) {
       showError('音声の再生に失敗しました: ' + htmlErr.toString());
       settleThisPlay_('fail');
