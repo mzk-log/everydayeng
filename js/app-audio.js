@@ -596,7 +596,64 @@ function ensureSilenceRegionsOnHandle_(handle) {
 }
 
 /**
- * 再生位置を移動して再生を続ける
+ * @returns {number}
+ */
+function getHtmlAudioMuteGateMs_() {
+  var ms = typeof FIELD_AUDIO_MUTE_GATE_MS === 'number' ? FIELD_AUDIO_MUTE_GATE_MS : 50;
+  if (!(isFinite(ms) && ms >= 0)) {
+    return 50;
+  }
+  return ms;
+}
+
+/**
+ * ゲート用に元音量を覚える
+ * @param {HTMLAudioElement|null} el
+ * @param {Object|null} handle
+ * @returns {number}
+ */
+function rememberHtmlAudioGateVolume_(el, handle) {
+  if (handle && typeof handle.gateVolume === 'number' && handle.gateVolume > 0) {
+    return handle.gateVolume;
+  }
+  var v = Number(el && el.volume);
+  if (!isFinite(v) || v <= 0) {
+    v = 1;
+  }
+  if (handle) {
+    handle.gateVolume = v;
+  }
+  return v;
+}
+
+/**
+ * 短い無音ゲートのあと音量を戻す（Android のシーク／再開ノイズ対策）
+ * @param {HTMLAudioElement|null} el
+ * @param {Object|null} handle
+ */
+function unmuteHtmlAudioAfterGate_(el, handle) {
+  var vol = rememberHtmlAudioGateVolume_(el, handle);
+  var ms = getHtmlAudioMuteGateMs_();
+  setTimeout(function() {
+    if (!el || !handle || handle.stopped) {
+      return;
+    }
+    if (fieldPlay.audio !== handle) {
+      return;
+    }
+    if (fieldPlay.userPaused) {
+      return;
+    }
+    try {
+      el.volume = vol;
+    } catch (err) {
+      // ignore
+    }
+  }, ms);
+}
+
+/**
+ * 再生位置を移動して再生を続ける（前後を短く mute）
  * @param {HTMLAudioElement} el
  * @param {Object} handle
  * @param {number} nextTime
@@ -607,6 +664,12 @@ function seekPlayingFieldAudioTo_(el, handle, nextTime) {
   if (!isFinite(next) || next < 0) {
     next = 0;
   }
+  rememberHtmlAudioGateVolume_(el, handle);
+  try {
+    el.volume = 0;
+  } catch (errVol) {
+    // ignore
+  }
   try {
     el.currentTime = next;
   } catch (err) {
@@ -614,6 +677,11 @@ function seekPlayingFieldAudioTo_(el, handle, nextTime) {
       el.currentTime = 0;
       next = 0;
     } catch (err2) {
+      try {
+        el.volume = rememberHtmlAudioGateVolume_(el, handle);
+      } catch (err3) {
+        // ignore
+      }
       return false;
     }
   }
@@ -624,12 +692,44 @@ function seekPlayingFieldAudioTo_(el, handle, nextTime) {
       playRet.catch(function() { /* ignore */ });
     }
   }
+  unmuteHtmlAudioAfterGate_(el, handle);
   armAudioBusyWatchdog_(handle);
   return true;
 }
 
 /**
+ * 再生中でなければ無音解析を進める（再生中はデコードしない）
+ * @param {Object|null} handle
+ */
+function scheduleSilenceAnalyzeWhenIdle_(handle) {
+  if (!handle || !handle.sourceAudioData) {
+    return;
+  }
+  var ad = handle.sourceAudioData;
+  if (ad.silenceRegions) {
+    handle.silenceRegions = ad.silenceRegions;
+    return;
+  }
+  if (ad.silenceAnalyzeFailed) {
+    return;
+  }
+  var el = handle.element;
+  var activelyPlaying = !!(el && !el.paused && !fieldPlay.userPaused && !handle.stopped);
+  if (activelyPlaying) {
+    ad.silenceAnalyzeDeferred = true;
+    return;
+  }
+  ensureSilenceRegionsOnHandle_(handle).then(function(regions) {
+    if (fieldPlay.endedReplay && regions && regions.length) {
+      fieldPlay.endedReplay.silenceRegions =
+        typeof regions.slice === 'function' ? regions.slice() : regions;
+    }
+  });
+}
+
+/**
  * 再生／一時停止中の出題／解答を一時停止または再開する。成功したら true。
+ * 切替前後を短く mute する。
  * @returns {boolean}
  */
 function tryTogglePausePlayingFieldAudio_() {
@@ -639,13 +739,26 @@ function tryTogglePausePlayingFieldAudio_() {
   var a = fieldPlay.audio;
   var el = a.element;
   if (fieldPlay.userPaused || el.paused) {
+    rememberHtmlAudioGateVolume_(el, a);
+    try {
+      el.volume = 0;
+    } catch (errVol) {
+      // ignore
+    }
     fieldPlay.userPaused = false;
     var playRet = el.play();
     if (playRet && typeof playRet.catch === 'function') {
       playRet.catch(function() { /* ignore */ });
     }
+    unmuteHtmlAudioAfterGate_(el, a);
     armAudioBusyWatchdog_(a);
     return true;
+  }
+  rememberHtmlAudioGateVolume_(el, a);
+  try {
+    el.volume = 0;
+  } catch (errVol2) {
+    // ignore
   }
   fieldPlay.userPaused = true;
   // 一時停止中は busy 期限を止め、意図的 pause をスタック扱いにしない
@@ -654,9 +767,16 @@ function tryTogglePausePlayingFieldAudio_() {
     el.pause();
   } catch (err) {
     fieldPlay.userPaused = false;
+    try {
+      el.volume = rememberHtmlAudioGateVolume_(el, a);
+    } catch (err2) {
+      // ignore
+    }
     armAudioBusyWatchdog_(a);
     return false;
   }
+  // 一時停止中に無音解析（再生音が無いあいだ）
+  scheduleSilenceAnalyzeWhenIdle_(a);
   return true;
 }
 
@@ -676,6 +796,10 @@ function tryRewindPlayingFieldAudio_() {
     t = 0;
   }
   var regions = a.silenceRegions;
+  if ((!regions || !regions.length) && a.sourceAudioData && a.sourceAudioData.silenceRegions) {
+    regions = a.sourceAudioData.silenceRegions;
+    a.silenceRegions = regions;
+  }
   if (regions && regions.length) {
     return seekPlayingFieldAudioTo_(
       el,
@@ -683,9 +807,9 @@ function tryRewindPlayingFieldAudio_() {
       findPrevSilenceStart_(regions, t, getFieldAudioPlaybackRate_(a))
     );
   }
-  // 未解析なら裏で解析を進め、今回は壁時計フォールバック
-  if (a.sourceAudioData && !a.sourceAudioData.silenceAnalyzeFailed) {
-    ensureSilenceRegionsOnHandle_(a);
+  // 再生中はデコードしない。壁時計フォールバックのみ（解析は一時停止／終了後）
+  if (a.sourceAudioData) {
+    a.sourceAudioData.silenceAnalyzeDeferred = true;
   }
   var mediaDelta = getFieldAudioRewindMediaSec_(a);
   var next = (t <= mediaDelta) ? 0 : (t - mediaDelta);
@@ -725,12 +849,26 @@ function setFieldEndedReplayFromHandle_(fieldType, handle) {
   if (!(isFinite(dur) && dur > 0)) {
     dur = 0;
   }
+  var ad = handle.sourceAudioData || null;
   fieldPlay.endedReplay = {
     field: fieldType,
     silenceRegions: (regions && typeof regions.slice === 'function') ? regions.slice() : (regions || null),
     playbackRate: getFieldAudioPlaybackRate_(handle),
-    duration: dur
+    duration: dur,
+    sourceAudioData: ad
   };
+  // 再生は終わっているので、ここで無音解析してよい
+  if ((!regions || !regions.length) && ad && !ad.silenceAnalyzeFailed) {
+    ensureSilenceRegionsOnHandle_({ sourceAudioData: ad }).then(function(regs) {
+      if (!fieldPlay.endedReplay || fieldPlay.endedReplay.field !== fieldType) {
+        return;
+      }
+      if (regs && regs.length) {
+        fieldPlay.endedReplay.silenceRegions =
+          typeof regs.slice === 'function' ? regs.slice() : regs;
+      }
+    });
+  }
 }
 
 /**
@@ -3286,11 +3424,10 @@ function playAudioFromCache(audioData, fieldType, source) {
       }
       htmlHandle.owner = token;
       htmlHandle.sourceAudioData = audioData;
+      htmlHandle.gateVolume = 1;
+      // 再生中は PCM デコードしない。既に解析済みなら載せるだけ
       if (audioData.silenceRegions) {
         htmlHandle.silenceRegions = audioData.silenceRegions;
-      } else if (!audioData.silenceAnalyzeFailed) {
-        // 再生中に無音境界を先読み（初回2タップ前に間に合えば句区切りへ）
-        ensureSilenceRegionsOnHandle_(htmlHandle);
       }
       fieldPlay.audio = htmlHandle;
       armAudioBusyWatchdog_(htmlHandle);
