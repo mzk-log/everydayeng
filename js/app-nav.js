@@ -69,7 +69,7 @@ function handlePlusButtonClick() {
   
   // 学習完了時：同じカテゴリを全問で再学習（位置はそのまま）
   if (studyEnd.done) {
-    // Next 着地後（中央 Start）は再学習しない（案内待ちの3タップと同様）
+    // Next 着地後（中央 Start）は再学習しない（本文3タップ廃止後もボタン側は同様）
     if (shouldShowCompletionStartButton()) {
       return;
     }

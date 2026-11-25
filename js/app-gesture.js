@@ -62,11 +62,17 @@ function bindLearningBodyGestures() {
   }
 
   function replayFieldFromBodyDoubleTap_() {
-    // 再生／一時停止中なら直近無音（未解析時は壁時計）へ巻き戻し再生。取得待ちは何もしない
+    // 再生／一時停止中なら無音区切りへ巻き戻し。取得待ちは何もしない
     if (typeof isFieldAudioBusy === 'function' && isFieldAudioBusy()) {
       if (typeof tryRewindPlayingFieldAudio_ === 'function') {
         tryRewindPlayingFieldAudio_();
       }
+      return;
+    }
+    // 自然終了直後：最後の文の頭から
+    if (typeof isFieldAudioEndedReplayActive === 'function' && isFieldAudioEndedReplayActive() &&
+        typeof tryReplayLastSentenceAfterEnded_ === 'function') {
+      tryReplayLastSentenceAfterEnded_();
       return;
     }
     var fieldType = questionCursor.answerShown ? 'answer' : 'question';
@@ -120,20 +126,25 @@ function bindLearningBodyGestures() {
       return;
     }
     if (count === 3) {
-      // Next 着地後（中央 Start）は案内待ちと同様に何もしない
-      if (typeof studyEnd !== 'undefined' && studyEnd && studyEnd.done &&
-          typeof shouldShowCompletionStartButton === 'function' &&
-          shouldShowCompletionStartButton()) {
+      // 本文3タップの Retry／完了再学習は廃止（下ナビプラスのみ）
+      if (typeof studyEnd !== 'undefined' && studyEnd && studyEnd.done) {
         return;
       }
       if (stopCategoryAnnounce({ continueStart: true })) {
         return;
       }
-      var plus = dom.plusButton;
-      if (!plus || plus.disabled) {
+      // 再生中／一時停止中は無視
+      if (typeof fieldPlay !== 'undefined' && fieldPlay && fieldPlay.field &&
+          typeof isFieldHtmlAudioPlaying_ === 'function' &&
+          isFieldHtmlAudioPlaying_(fieldPlay.field)) {
         return;
       }
-      playRetrySfxThen(handlePlusButtonClick);
+      // 自然終了直後：その欄を先頭から聞き直し
+      if (typeof isFieldAudioEndedReplayActive === 'function' && isFieldAudioEndedReplayActive() &&
+          typeof tryReplayFieldFromStartAfterEnded_ === 'function') {
+        tryReplayFieldFromStartAfterEnded_();
+        return;
+      }
       return;
     }
     if (count === 2 && !studyEnd.done) {

@@ -474,9 +474,10 @@ function mergeSilenceRegionsForRewind_(regions, playbackRate) {
  * @param {{start: number, end: number}[]} regions
  * @param {number} currentTime
  * @param {number} [playbackRate]
+ * @param {number} [stepsOverride] - 指定時は FIELD_AUDIO_SILENCE_REWIND_STEPS より優先
  * @returns {number}
  */
-function findPrevSilenceStart_(regions, currentTime, playbackRate) {
+function findPrevSilenceStart_(regions, currentTime, playbackRate, stepsOverride) {
   if (!regions || !regions.length) {
     return 0;
   }
@@ -502,9 +503,12 @@ function findPrevSilenceStart_(regions, currentTime, playbackRate) {
   }
   // 無音終了からこのメディア秒以上進んで初めて、その無音を戻り先にしてよい
   var minAfter = wallAfter * rate;
-  var steps = typeof FIELD_AUDIO_SILENCE_REWIND_STEPS === 'number'
-    ? FIELD_AUDIO_SILENCE_REWIND_STEPS
-    : 2;
+  var steps = Number(stepsOverride);
+  if (!(isFinite(steps) && steps >= 1)) {
+    steps = typeof FIELD_AUDIO_SILENCE_REWIND_STEPS === 'number'
+      ? FIELD_AUDIO_SILENCE_REWIND_STEPS
+      : 2;
+  }
   if (!(isFinite(steps) && steps >= 1)) {
     steps = 2;
   }
@@ -689,6 +693,107 @@ function tryRewindPlayingFieldAudio_() {
 }
 
 /**
+ * 出題／解答音声の自然終了直後か
+ * @returns {boolean}
+ */
+function isFieldAudioEndedReplayActive() {
+  return !!(fieldPlay.endedReplay && fieldPlay.endedReplay.field);
+}
+
+function clearFieldEndedReplay_() {
+  fieldPlay.endedReplay = null;
+}
+
+/**
+ * 自然終了時に聞き直し用の終了状態を残す
+ * @param {string} fieldType
+ * @param {Object|null} handle
+ */
+function setFieldEndedReplayFromHandle_(fieldType, handle) {
+  if (!fieldType || !handle || handle.kind !== 'html') {
+    clearFieldEndedReplay_();
+    return;
+  }
+  var regions = handle.silenceRegions;
+  if ((!regions || !regions.length) && handle.sourceAudioData && handle.sourceAudioData.silenceRegions) {
+    regions = handle.sourceAudioData.silenceRegions;
+  }
+  var dur = Number(handle.duration);
+  if (!(isFinite(dur) && dur > 0) && handle.element) {
+    dur = Number(handle.element.duration);
+  }
+  if (!(isFinite(dur) && dur > 0)) {
+    dur = 0;
+  }
+  fieldPlay.endedReplay = {
+    field: fieldType,
+    silenceRegions: (regions && typeof regions.slice === 'function') ? regions.slice() : (regions || null),
+    playbackRate: getFieldAudioPlaybackRate_(handle),
+    duration: dur
+  };
+}
+
+/**
+ * 終了直後の2タップ：最後の文の頭へ戻して再生
+ * @returns {boolean}
+ */
+function tryReplayLastSentenceAfterEnded_() {
+  var er = fieldPlay.endedReplay;
+  if (!er || !er.field) {
+    return false;
+  }
+  var field = er.field;
+  var dur = Number(er.duration);
+  var rate = Number(er.playbackRate);
+  if (!isFinite(rate) || rate <= 0) {
+    rate = 1;
+  }
+  var startAt = 0;
+  if (er.silenceRegions && er.silenceRegions.length && isFinite(dur) && dur > 0) {
+    // 末尾からは「1つ前」＝最後の文の始まり
+    startAt = findPrevSilenceStart_(er.silenceRegions, dur, rate, 1);
+  } else if (isFinite(dur) && dur > 0) {
+    var mediaDelta = getFieldAudioRewindMediaSec_({
+      playbackRate: rate,
+      duration: dur
+    });
+    startAt = (dur <= mediaDelta) ? 0 : (dur - mediaDelta);
+  }
+  playFieldAudio(field, false, { seekToMediaSec: startAt });
+  return true;
+}
+
+/**
+ * 終了直後の3タップ：その欄を先頭から再生
+ * @returns {boolean}
+ */
+function tryReplayFieldFromStartAfterEnded_() {
+  var er = fieldPlay.endedReplay;
+  if (!er || !er.field) {
+    return false;
+  }
+  playFieldAudio(er.field, false);
+  return true;
+}
+
+/**
+ * 再生開始直後の保留シークを適用
+ * @param {Object|null} handle
+ */
+function applyPendingFieldSeek_(handle) {
+  var seekTo = fieldPlay.pendingSeekMediaSec;
+  fieldPlay.pendingSeekMediaSec = null;
+  if (seekTo == null || !handle || !handle.element) {
+    return;
+  }
+  var n = Number(seekTo);
+  if (!isFinite(n) || n < 0) {
+    return;
+  }
+  seekPlayingFieldAudioTo_(handle.element, handle, n);
+}
+
+/**
  * 効果音または本問音声のあいだ、START／Ans／Next／End を止めるか
  * @returns {boolean}
  */
@@ -771,10 +876,14 @@ function forceReleaseFieldAudioBusy_(reason) {
   clearAudioBusyWatchdogs_();
   if (field == null && !fieldPlay.audio) {
     fieldPlay.userPaused = false;
+    clearFieldEndedReplay_();
+    fieldPlay.pendingSeekMediaSec = null;
     return;
   }
   fieldPlay.field = null;
   fieldPlay.userPaused = false;
+  clearFieldEndedReplay_();
+  fieldPlay.pendingSeekMediaSec = null;
   releaseCurrentAudioElement();
   if (field) {
     hidePlayButtonLoading(field);
@@ -1481,6 +1590,12 @@ function stopCurrentAudioPlayback(options) {
   if (!options.preserveBusy) {
     fieldPlay.field = null;
     fieldPlay.userPaused = false;
+    if (!options.keepEndedReplay) {
+      clearFieldEndedReplay_();
+    }
+    if (!options.keepPendingSeek) {
+      fieldPlay.pendingSeekMediaSec = null;
+    }
     if (!options.keepAddStudyAudioBusy && typeof clearAddStudyAudioBusy_ === 'function') {
       clearAddStudyAudioBusy_();
     }
@@ -1694,6 +1809,7 @@ function playFieldAudio(fieldType, forceRefresh, options) {
   }
   options = options || {};
   var onSettled = typeof options.onSettled === 'function' ? options.onSettled : null;
+  var seekToMediaSec = options.seekToMediaSec;
   var settled = false;
   function settleAudioNetwork() {
     if (settled) {
@@ -1736,7 +1852,15 @@ function playFieldAudio(fieldType, forceRefresh, options) {
   }
   
   // 停止〜取得開始のあいだも busy を維持（Ans直後の Q/Next 押下防止）
-  stopCurrentAudioPlayback({ skipButtonUpdate: true, keepAudioQueue: false });
+  // 終了直後の聞き直しから来る seek は stop で消さない
+  stopCurrentAudioPlayback({
+    skipButtonUpdate: true,
+    keepAudioQueue: false,
+    keepPendingSeek: true
+  });
+  clearFieldEndedReplay_();
+  var seekNum = Number(seekToMediaSec);
+  fieldPlay.pendingSeekMediaSec = (isFinite(seekNum) && seekNum >= 0) ? seekNum : null;
   fieldPlay.field = fieldType;
   fieldPlay.userPaused = false;
   updateFieldPlayButtons();
@@ -3091,6 +3215,11 @@ function playAudioFromCache(audioData, fieldType, source) {
       }
       settled = true;
       clearAudioBusyWatchdogs_();
+      if (reason === 'ended' && isThisPlay_()) {
+        setFieldEndedReplayFromHandle_(fieldType, fieldPlay.audio);
+      } else {
+        clearFieldEndedReplay_();
+      }
       if (isThisPlay_()) {
         fieldPlay.field = null;
         fieldPlay.userPaused = false;
@@ -3165,6 +3294,7 @@ function playAudioFromCache(audioData, fieldType, source) {
       }
       fieldPlay.audio = htmlHandle;
       armAudioBusyWatchdog_(htmlHandle);
+      applyPendingFieldSeek_(htmlHandle);
       // 取得待ち→再生中：自欄ボタンを巻き戻し用に有効化
       updateFieldPlayButtons();
     } catch (htmlErr) {
@@ -3175,6 +3305,8 @@ function playAudioFromCache(audioData, fieldType, source) {
     showError('音声の再生に失敗しました: ' + error.toString());
     clearAudioBusyWatchdogs_();
     fieldPlay.field = null;
+    fieldPlay.pendingSeekMediaSec = null;
+    clearFieldEndedReplay_();
     releaseCurrentAudioElement();
     if (typeof clearAddStudyAudioBusy_ === 'function') {
       clearAddStudyAudioBusy_();

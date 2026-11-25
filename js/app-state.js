@@ -126,7 +126,10 @@ var fieldPlay = {
   field: null, // 再生／取得中の欄 'question' | 'answer' | null
   userPaused: false, // 本文1タップ等の意図的一時停止（busy は維持・watchdog は止める）
   ansGate: false, // リスニング時：出題音声終了まで Ans 無効・計測待機
-  resetTimer: false // 出題読み自動再生終了後に計測をゼロリセットするか
+  resetTimer: false, // 出題読み自動再生終了後に計測をゼロリセットするか
+  // 自然終了直後：busy は解除しつつ、2＝最後の文／3＝先頭から 用に欄情報を残す
+  endedReplay: null, // { field, silenceRegions, playbackRate, duration } | null
+  pendingSeekMediaSec: null // 次の再生開始直後にシークするメディア秒
 };
 var sessionRetryPressCountById = {}; // START〜終了：問題IDごとのリトライ押下回数（シート累計とは別）
 var addStudy = {
