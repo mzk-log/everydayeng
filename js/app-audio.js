@@ -5877,7 +5877,8 @@ function wasStartGuideFullyHeard_(cat, text) {
 
 /**
  * 効果音のあと、最初の出題の前に開始案内を読む（カテゴリ毎は操作待ち）。
- * 聞き終えた直後は再再生せず無音待ち。再生中の進行はロック（効果音と同様）。
+ * 直前に最後まで聞き終えているときは再再生も無音待ちもせず、即1問目へ。
+ * 再生中の進行はロック（効果音と同様）。
  * @param {Object|null} cat
  * @param {function(): void} showFirst
  */
@@ -5892,11 +5893,13 @@ function playCategoryGuideThen_(cat, showFirst) {
     show();
     return;
   }
-  enterCategoryGuideWait_(cat, show);
-  // 開始案内を続けて2回読まない（着地直後の Start など）
+  // 続けて2回読まない。聞き済みなら操作待ちも飛ばして1問目へ
   if (wasStartGuideFullyHeard_(cat, text)) {
+    categoryAnnounce.heard = null;
+    show();
     return;
   }
+  enterCategoryGuideWait_(cat, show);
   playCategoryPhrase_(text, cat.no, {
     saveDrive: true,
     markHeard: true
