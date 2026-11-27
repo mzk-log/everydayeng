@@ -939,6 +939,9 @@ function isNavActionLockedByAudio() {
   if (typeof isCompletionSfxPlaying_ === 'function' && isCompletionSfxPlaying_()) {
     return true;
   }
+  if (typeof isCategoryAnnouncePlaying_ === 'function' && isCategoryAnnouncePlaying_()) {
+    return true;
+  }
   return uiSfx.clickPlaying || isFieldAudioBusy();
 }
 
@@ -5046,7 +5049,10 @@ var categoryAnnounce = {
   waitCategoryNo: null,
   // 完了画面の聞き直し（中央は奪わない）。'end' | 'title' | null
   completionReplayKind: null,
-  completionReplayCategoryNo: null
+  completionReplayCategoryNo: null,
+  // 再生中の種別（開始案内割り込み判定用）
+  playKind: null, // 'guide' | 'end' | null
+  playing: false // 取得待ち〜再生完了まで true（タップロック用）
 };
 
 /**
@@ -5135,10 +5141,13 @@ function buildCategoryEndText_(cat) {
   if (!visible || visible === 'END') {
     return '';
   }
+  var order = (typeof getCategoryOrderSortValue === 'function')
+    ? getCategoryOrderSortValue(cat)
+    : (cat.no != null ? cat.no : '');
   if (isEnglishCategoryAnnounceVisible_(visible)) {
-    return raw + '. End.';
+    return 'Category. ' + order + '. ' + raw + '. End.';
   }
-  return raw + '、終わり';
+  return 'カテゴリ。' + order + '。' + raw + '、終わり';
 }
 
 function releaseCategoryAnnounceAudio_() {
@@ -5158,6 +5167,8 @@ function releaseCategoryAnnounceAudio_() {
 function stopCategoryAnnounce(options) {
   options = options || {};
   categoryAnnounce.generation += 1;
+  categoryAnnounce.playKind = null;
+  categoryAnnounce.playing = false;
   releaseCategoryAnnounceAudio_();
   if (typeof audioPrefetch !== 'undefined' && audioPrefetch) {
     audioPrefetch.playBlocked = false;
@@ -5171,6 +5182,9 @@ function stopCategoryAnnounce(options) {
   if (!options.keepPending) {
     next = categoryAnnounce.pendingStart;
     categoryAnnounce.pendingStart = null;
+  }
+  if (typeof refreshAudioLockControls_ === 'function') {
+    refreshAudioLockControls_();
   }
   if (options.continueStart && typeof next === 'function') {
     next();
@@ -5491,9 +5505,11 @@ function playCategoryPhrase_(text, categoryNo, options) {
     done('skip');
     return;
   }
-  if (categoryAnnounce.finish || categoryAnnounce.audio) {
+  if (categoryAnnounce.finish || categoryAnnounce.audio || categoryAnnounce.playing) {
     stopCategoryAnnounce({ cancelPending: true });
   }
+  categoryAnnounce.playKind = isEndPhrase ? 'end' : 'guide';
+  categoryAnnounce.playing = !options.silent;
   stopCurrentAudioPlayback({
     keepCategoryAnnounce: true,
     skipButtonUpdate: true,
@@ -5501,6 +5517,9 @@ function playCategoryPhrase_(text, categoryNo, options) {
   });
   releaseCategoryAnnounceAudio_();
   var gen = ++categoryAnnounce.generation;
+  if (typeof refreshAudioLockControls_ === 'function') {
+    refreshAudioLockControls_();
+  }
   var voice = (typeof getAudioVoice === 'function') ? getAudioVoice('question') : AUDIO_VOICE_DEFAULT;
   var speed = AUDIO_SPEED_FIXED;
   var settled = false;
@@ -5548,6 +5567,13 @@ function playCategoryPhrase_(text, categoryNo, options) {
     }
     if (reason === 'ended' && options.markHeard) {
       categoryAnnounce.heard = { no: String(categoryNo), text: phrase };
+    }
+    if (categoryAnnounce.playKind === (isEndPhrase ? 'end' : 'guide')) {
+      categoryAnnounce.playKind = null;
+    }
+    categoryAnnounce.playing = false;
+    if (typeof refreshAudioLockControls_ === 'function') {
+      refreshAudioLockControls_();
     }
     var next = null;
     if (reason !== 'abort') {
@@ -5659,6 +5685,11 @@ function enterCategoryGuideWait_(cat, showFirst) {
  */
 function advanceFromCategoryGuideWait_() {
   if (!categoryAnnounce.awaitingAdvance) {
+    return;
+  }
+  // 開始案内の再生中は進めない（タップロックと一致）
+  if (categoryAnnounce.playing ||
+      (typeof isCategoryAnnouncePlaying_ === 'function' && isCategoryAnnouncePlaying_())) {
     return;
   }
   stopCategoryAnnounce({ cancelPending: true });
@@ -5846,7 +5877,7 @@ function wasStartGuideFullyHeard_(cat, text) {
 
 /**
  * 効果音のあと、最初の出題の前に開始案内を読む（カテゴリ毎は操作待ち）。
- * 直前に同じ開始案内を聞き終えていれば再再生しない。
+ * 聞き終えた直後は再再生せず無音待ち。再生中の進行はロック（効果音と同様）。
  * @param {Object|null} cat
  * @param {function(): void} showFirst
  */

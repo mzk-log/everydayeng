@@ -96,7 +96,7 @@ function bindLearningBodyGestures() {
     if (!isLearningScreenActive() || updateMode.active) {
       return;
     }
-    // 効果音／waiting：1〜3無効、4＝キャンセルHOME（開始案内待ちより優先）
+    // 効果音／waiting／開始・終了案内再生中：1〜3無効、4＝キャンセルHOME
     if (typeof isUiEffectTapLockActive_ === 'function' && isUiEffectTapLockActive_()) {
       if (count >= 4) {
         if (typeof cancelUiEffectOrPrepareThenHome_ === 'function') {
@@ -108,6 +108,17 @@ function bindLearningBodyGestures() {
       return;
     }
     if (typeof isCategoryGuideAwaitingAdvance === 'function' && isCategoryGuideAwaitingAdvance()) {
+      // 開始案内再生中は上のロックで弾く。ここは再生後の無音待ち用
+      if (typeof isCategoryAnnouncePlaying_ === 'function' && isCategoryAnnouncePlaying_()) {
+        if (count >= 4) {
+          if (typeof cancelUiEffectOrPrepareThenHome_ === 'function') {
+            cancelUiEffectOrPrepareThenHome_();
+          } else {
+            goToHome({ sfx: 'home' });
+          }
+        }
+        return;
+      }
       if (count >= 4) {
         if (typeof clearCategoryGuideWait_ === 'function') {
           clearCategoryGuideWait_();
@@ -228,7 +239,10 @@ function bindLearningBodyGestures() {
     startX = e.clientX;
     startY = e.clientY;
     clearTapTimer_();
-    stopCategoryAnnounce({ keepPending: true });
+    // 開始／終了案内の再生中は止めない（止めると playing が外れ、同じ1タップで設問へ進んでしまう）
+    if (typeof isCategoryAnnouncePlaying_ !== 'function' || !isCategoryAnnouncePlaying_()) {
+      stopCategoryAnnounce({ keepPending: true });
+    }
   });
 
   root.addEventListener('pointermove', function(e) {
@@ -255,8 +269,8 @@ function bindLearningBodyGestures() {
     }
     var el = getEventElement_(e && e.target);
     if (wasMoved || isLearningBodyGestureIgnoreTarget_(el)) {
-      if (wasMoved) {
-        stopCategoryAnnounce({ continueStart: true });
+      if (wasMoved && (typeof isCategoryAnnouncePlaying_ !== 'function' || !isCategoryAnnouncePlaying_())) {
+        stopCategoryAnnounce({ cancelPending: true });
       }
       armBodyTapTimer_();
       return;
@@ -276,7 +290,9 @@ function bindLearningBodyGestures() {
       return;
     }
     pressActive = false;
-    stopCategoryAnnounce({ continueStart: true });
+    if (typeof isCategoryAnnouncePlaying_ !== 'function' || !isCategoryAnnouncePlaying_()) {
+      stopCategoryAnnounce({ cancelPending: true });
+    }
     armBodyTapTimer_();
   });
 
@@ -387,6 +403,9 @@ function bindLearningBodyGestures() {
     if (homeTapCount >= 4) {
       clearHomeTapTimer_();
       homeTapCount = 0;
+      if (typeof stopCategoryAnnounce === 'function') {
+        stopCategoryAnnounce({ cancelPending: true });
+      }
       if (typeof cancelStartAudioPrepare_ === 'function') {
         cancelStartAudioPrepare_();
       }
@@ -418,7 +437,9 @@ function bindLearningBodyGestures() {
       return;
     }
     if (wasMoved) {
-      stopCategoryAnnounce({ continueStart: true });
+      if (typeof isCategoryAnnouncePlaying_ !== 'function' || !isCategoryAnnouncePlaying_()) {
+        stopCategoryAnnounce({ cancelPending: true });
+      }
       armBodyTapTimer_();
       return;
     }
@@ -456,7 +477,10 @@ function bindLearningBodyGestures() {
     startX = e.clientX;
     startY = e.clientY;
     clearTapTimer_();
-    stopCategoryAnnounce({ keepPending: true });
+    // 開始／終了案内の再生中は止めない（止めると同じ1タップで設問へ進む）
+    if (typeof isCategoryAnnouncePlaying_ !== 'function' || !isCategoryAnnouncePlaying_()) {
+      stopCategoryAnnounce({ keepPending: true });
+    }
     e.preventDefault();
     e.stopPropagation();
   }, true);
@@ -520,7 +544,9 @@ function bindLearningBodyGestures() {
       return;
     }
     pressActive = false;
-    stopCategoryAnnounce({ continueStart: true });
+    if (typeof isCategoryAnnouncePlaying_ !== 'function' || !isCategoryAnnouncePlaying_()) {
+      stopCategoryAnnounce({ cancelPending: true });
+    }
     armBodyTapTimer_();
   }, true);
 

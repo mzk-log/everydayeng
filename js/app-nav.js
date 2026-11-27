@@ -353,6 +353,10 @@ function syncLearningCompletedScreenClass() {
 function handleNavAnswerButtonClick() {
   var navAnswerButton = dom.navAnswerButton;
   if (navAnswerButton && navAnswerButton.disabled) return;
+  // 開始／終了案内の再生中は中央進行しない（効果音ロックと同様）
+  if (typeof isCategoryAnnouncePlaying_ === 'function' && isCategoryAnnouncePlaying_()) {
+    return;
+  }
   if (typeof isCategoryGuideAwaitingAdvance === 'function' && isCategoryGuideAwaitingAdvance()) {
     advanceFromCategoryGuideWait_();
     return;
@@ -413,8 +417,10 @@ function updateNavAnswerButton() {
   if (typeof isCategoryGuideAwaitingAdvance === 'function' && isCategoryGuideAwaitingAdvance()) {
     navAnswerText.textContent = 'Next';
     navAnswerText.classList.remove('blinking');
-    navAnswerButton.disabled = !!uiSfx.clickPlaying;
-    if (uiSfx.clickPlaying) {
+    var guideLocked = !!uiSfx.clickPlaying ||
+      (typeof isCategoryAnnouncePlaying_ === 'function' && isCategoryAnnouncePlaying_());
+    navAnswerButton.disabled = guideLocked;
+    if (guideLocked) {
       navAnswerButton.title = '音声の再生が終わるまでお待ちください';
     } else {
       navAnswerButton.removeAttribute('title');
@@ -1320,12 +1326,32 @@ function isCompletionSfxPlaying_() {
 }
 
 /**
- * 効果音または Start 準備（waiting）中で、進行タップを止めるか
- * （開始案内・終了案内・出題／解答は対象外）
+ * 開始案内または終了案内の再生中か（取得待ち含む）
+ * @returns {boolean}
+ */
+function isCategoryAnnouncePlaying_() {
+  if (typeof categoryAnnounce === 'undefined' || !categoryAnnounce) {
+    return false;
+  }
+  if (categoryAnnounce.playing) {
+    return true;
+  }
+  if (categoryAnnounce.playKind !== 'guide' && categoryAnnounce.playKind !== 'end') {
+    return false;
+  }
+  return !!(categoryAnnounce.audio || categoryAnnounce.finish);
+}
+
+/**
+ * 効果音／waiting／開始・終了案内の再生中で、進行タップを止めるか
+ * （出題／解答の再生・一時停止、案内の再生後待ちは対象外）
  * @returns {boolean}
  */
 function isUiEffectTapLockActive_() {
   if (uiSfx.clickPlaying || isCompletionSfxPlaying_()) {
+    return true;
+  }
+  if (isCategoryAnnouncePlaying_()) {
     return true;
   }
   return !!(startAudioPrepare && startAudioPrepare.busy);
