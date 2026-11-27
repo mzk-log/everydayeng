@@ -936,6 +936,9 @@ function applyPendingFieldSeek_(handle) {
  * @returns {boolean}
  */
 function isNavActionLockedByAudio() {
+  if (typeof isCompletionSfxPlaying_ === 'function' && isCompletionSfxPlaying_()) {
+    return true;
+  }
   return uiSfx.clickPlaying || isFieldAudioBusy();
 }
 
@@ -5824,7 +5827,26 @@ function replayCompletionAnnounce_(forceRefresh) {
 }
 
 /**
- * 効果音のあと、最初の出題の前に案内を読む（カテゴリ毎は操作待ち）。
+ * 同じ開始案内を直前に最後まで聞き終えているか
+ * @param {Object|null} cat
+ * @param {string} text
+ * @returns {boolean}
+ */
+function wasStartGuideFullyHeard_(cat, text) {
+  if (!cat || !categoryAnnounce.heard) {
+    return false;
+  }
+  var phrase = normalizeTextForTTS(text || '');
+  if (!phrase) {
+    return false;
+  }
+  return String(categoryAnnounce.heard.no) === String(cat.no) &&
+    String(categoryAnnounce.heard.text) === phrase;
+}
+
+/**
+ * 効果音のあと、最初の出題の前に開始案内を読む（カテゴリ毎は操作待ち）。
+ * 直前に同じ開始案内を聞き終えていれば再再生しない。
  * @param {Object|null} cat
  * @param {function(): void} showFirst
  */
@@ -5839,8 +5861,11 @@ function playCategoryGuideThen_(cat, showFirst) {
     show();
     return;
   }
-  // 着地案内で聞き済みでも、学習開始時は再再生する（無音の Title/Next 待ちを避ける）
   enterCategoryGuideWait_(cat, show);
+  // 開始案内を続けて2回読まない（着地直後の Start など）
+  if (wasStartGuideFullyHeard_(cat, text)) {
+    return;
+  }
   playCategoryPhrase_(text, cat.no, {
     saveDrive: true,
     markHeard: true

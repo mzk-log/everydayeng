@@ -164,7 +164,13 @@ function buildUserSettingsPayloadFromLocal() {
       listeningMode: isListeningModeEnabled() ? 'on' : 'off',
       cycleSlot: (typeof getCycleSlotStateForSettings === 'function')
         ? getCycleSlotStateForSettings()
-        : { nextKind: 'new', lastCategoryNo: null, dateYmd: '' }
+        : { nextKind: 'new', lastCategoryNo: null, dateYmd: '' },
+      homeCategoryNo: (typeof getHomeCategoryNoForSettings === 'function')
+        ? getHomeCategoryNoForSettings()
+        : null,
+      resumeAfterId: (typeof getResumeAfterIdForSettings === 'function')
+        ? getResumeAfterIdForSettings()
+        : null
     },
     readToggle: {
       question: getReadToggle('question') ? 'on' : 'off',
@@ -307,6 +313,22 @@ function applyUserSettingsFromServerBody_(settings, imageContent, mimeType, serv
       }
       if (settings.practice.cycleSlot && typeof applyCycleSlotStateFromSettings === 'function') {
         applyCycleSlotStateFromSettings(settings.practice.cycleSlot);
+      }
+      if (Object.prototype.hasOwnProperty.call(settings.practice, 'homeCategoryNo') &&
+          typeof saveLastHomeCategoryNo === 'function') {
+        var homeNo = settings.practice.homeCategoryNo;
+        if (homeNo != null && String(homeNo) !== '') {
+          saveLastHomeCategoryNo(homeNo, { sync: false, clearResumeOnChange: false });
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(settings.practice, 'resumeAfterId') &&
+          typeof saveResumeAfterId === 'function') {
+        var rid = settings.practice.resumeAfterId;
+        if (rid == null || rid === '') {
+          saveResumeAfterId(null, { sync: false });
+        } else {
+          saveResumeAfterId(rid, { sync: false });
+        }
       }
     } catch (e6) {
       // ignore

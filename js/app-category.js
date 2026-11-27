@@ -404,7 +404,7 @@ function isEndCategory(cat) {
  * @returns {string}
  */
 /**
- * HOMEで最後に選んだカテゴリ（メール単位。端末のみ）
+ * HOMEで最後に選んだカテゴリ（メール単位。Settings 同期あり）
  * @returns {string}
  */
 function getLastHomeCategoryStorageKey_() {
@@ -420,24 +420,130 @@ function getLastHomeCategoryStorageKey_() {
 }
 
 /**
+ * カテゴリ毎の続き位置（この ID の次から START）
+ * @returns {string}
+ */
+function getResumeAfterIdStorageKey_() {
+  var email = googleAuth.email || '';
+  try {
+    if (!email) {
+      email = localStorage.getItem('userEmail') || '';
+    }
+  } catch (e) {
+    email = '';
+  }
+  return 'practiceResumeAfterId:' + String(email);
+}
+
+/**
+ * カテゴリ毎（ノーマル／シャッフル）で続き同期を使うか
+ * @returns {boolean}
+ */
+function isCategoryResumeSyncMethod_() {
+  if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
+    return false;
+  }
+  if (typeof isDurationQuestionMethod === 'function' && isDurationQuestionMethod()) {
+    return false;
+  }
+  if (typeof isLastDateQuestionMethod === 'function' && isLastDateQuestionMethod()) {
+    return false;
+  }
+  var method = typeof getQuestionMethod === 'function' ? getQuestionMethod() : 'category';
+  return method === 'category' || method === 'categoryShuffle';
+}
+
+/**
+ * 保存中の resumeAfterId
+ * @returns {string}
+ */
+function getSavedResumeAfterId() {
+  try {
+    return localStorage.getItem(getResumeAfterIdStorageKey_()) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
+ * resumeAfterId を保存（空でクリア）。sync する場合は scheduleUserSettingsSync
+ * @param {string|number|null} id
+ * @param {{sync?: boolean}} [options]
+ */
+function saveResumeAfterId(id, options) {
+  options = options || {};
+  try {
+    if (id == null || id === '') {
+      localStorage.removeItem(getResumeAfterIdStorageKey_());
+    } else {
+      localStorage.setItem(getResumeAfterIdStorageKey_(), String(id));
+    }
+  } catch (e) {
+    // ignore
+  }
+  if (options.sync !== false && typeof scheduleUserSettingsSync === 'function') {
+    scheduleUserSettingsSync();
+  }
+}
+
+/**
  * カテゴリ毎の HOME 選択を覚える
  * @param {string|number} no
+ * @param {{sync?: boolean, clearResumeOnChange?: boolean}} [options]
  */
-function saveLastHomeCategoryNo(no) {
+function saveLastHomeCategoryNo(no, options) {
+  options = options || {};
   if (no == null || no === '') {
     return;
   }
   if (isDurationQuestionMethod() || isLastDateQuestionMethod()) {
     return;
   }
+  if (typeof isCategoryCycleQuestionMethod === 'function' && isCategoryCycleQuestionMethod()) {
+    return;
+  }
   if (!isCategoryNoVisible(no)) {
     return;
+  }
+  var prev = '';
+  try {
+    prev = localStorage.getItem(getLastHomeCategoryStorageKey_()) || '';
+  } catch (e0) {
+    prev = '';
   }
   try {
     localStorage.setItem(getLastHomeCategoryStorageKey_(), String(no));
   } catch (e) {
     // ignore
   }
+  if (options.clearResumeOnChange !== false && prev && String(prev) !== String(no)) {
+    saveResumeAfterId(null, { sync: false });
+  }
+  if (options.sync !== false && typeof scheduleUserSettingsSync === 'function') {
+    scheduleUserSettingsSync();
+  }
+}
+
+/**
+ * Settings 用の homeCategoryNo
+ * @returns {string|null}
+ */
+function getHomeCategoryNoForSettings() {
+  try {
+    var saved = localStorage.getItem(getLastHomeCategoryStorageKey_()) || '';
+    return saved ? String(saved) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Settings 用の resumeAfterId
+ * @returns {string|null}
+ */
+function getResumeAfterIdForSettings() {
+  var id = getSavedResumeAfterId();
+  return id ? String(id) : null;
 }
 
 /**
@@ -462,6 +568,57 @@ function resolveStartupCategoryNo() {
     return '';
   }
   return String(visible[0].no);
+}
+
+/**
+ * resumeAfterId の次以降だけ残す（無ければ全件）
+ * @param {Object[]} items
+ * @returns {Object[]}
+ */
+function applyResumeAfterIdToStartItems_(items) {
+  if (!items || !items.length || !isCategoryResumeSyncMethod_()) {
+    return items || [];
+  }
+  var afterId = getSavedResumeAfterId();
+  if (!afterId) {
+    return items.slice();
+  }
+  var idx = -1;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i] && String(items[i].id) === String(afterId)) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx < 0) {
+    return items.slice();
+  }
+  if (idx >= items.length - 1) {
+    // 末尾まで終わっている記録が残った場合は全問（完了保存漏れの保険）
+    return items.slice();
+  }
+  return items.slice(idx + 1);
+}
+
+/**
+ * カテゴリ完了時：次カテゴリ先頭を同期保存
+ * @param {string|number} completedNo
+ */
+function saveResumeAfterCategoryComplete_(completedNo) {
+  if (!isCategoryResumeSyncMethod_()) {
+    return;
+  }
+  var nextNo = (typeof nextVisibleCategoryNoAfter === 'function')
+    ? nextVisibleCategoryNoAfter(completedNo)
+    : null;
+  if (nextNo == null || nextNo === '') {
+    nextNo = completedNo;
+  }
+  saveResumeAfterId(null, { sync: false });
+  saveLastHomeCategoryNo(nextNo, { sync: false, clearResumeOnChange: false });
+  if (typeof scheduleUserSettingsSync === 'function') {
+    scheduleUserSettingsSync();
+  }
 }
 
 function getVisibleCategoriesStorageKey() {

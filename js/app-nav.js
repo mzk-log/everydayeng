@@ -69,7 +69,7 @@ function handlePlusButtonClick() {
   
   // 学習完了時：同じカテゴリを全問で再学習（位置はそのまま）
   if (studyEnd.done) {
-    // Next 着地後（中央 Start）は再学習しない（本文3タップ廃止後もボタン側は同様）
+    // Next 着地後（中央 Start）は再学習しない（本文3タップも同じ条件）
     if (shouldShowCompletionStartButton()) {
       return;
     }
@@ -159,6 +159,10 @@ function restartCurrentCategoryLearning() {
   }
   if (typeof clearCompletionAnnounceReplay_ === 'function') {
     clearCompletionAnnounceReplay_();
+  }
+  // Plus 再学習は同カテゴリ先頭から
+  if (typeof saveResumeAfterId === 'function') {
+    saveResumeAfterId(null, { sync: true });
   }
   if (isDurationQuestionMethod()) {
     if (!durationMode.sessionItems || durationMode.sessionItems.length === 0) {
@@ -1298,11 +1302,88 @@ function scrollLearningContentToCompletionView() {
 }
 
 /**
+ * pirorin（完了効果音）再生中か
+ * @returns {boolean}
+ */
+function isCompletionSfxPlaying_() {
+  var list = uiSfx.completion;
+  if (!list || !list.length) {
+    return false;
+  }
+  for (var i = 0; i < list.length; i++) {
+    var token = list[i];
+    if (token && !token.ended && !token.failed && (token.handle || token.endTimer)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 効果音または Start 準備（waiting）中で、進行タップを止めるか
+ * （開始案内・終了案内・出題／解答は対象外）
+ * @returns {boolean}
+ */
+function isUiEffectTapLockActive_() {
+  if (uiSfx.clickPlaying || isCompletionSfxPlaying_()) {
+    return true;
+  }
+  return !!(startAudioPrepare && startAudioPrepare.busy);
+}
+
+/**
+ * Start 前準備（waiting）をキャンセル。自動 Start しない
+ * @returns {boolean} キャンセルしたとき true
+ */
+function cancelStartAudioPrepare_() {
+  if (!startAudioPrepare || !startAudioPrepare.busy) {
+    return false;
+  }
+  startAudioPrepare.sessionGen = (startAudioPrepare.sessionGen || 0) + 1;
+  startAudioPrepare.busy = false;
+  if (typeof stopStartPrepareWaitingSfx === 'function') {
+    stopStartPrepareWaitingSfx({ immediate: true });
+  }
+  // 追加画面の準備と共有キューのため、Start 準備だけのときだけ空にする
+  if (typeof addStudy === 'undefined' || !addStudy.awaitingAudioPrepare) {
+    if (typeof studyAudioPrepare !== 'undefined' && studyAudioPrepare) {
+      studyAudioPrepare.queue = [];
+      studyAudioPrepare.waiters = [];
+      studyAudioPrepare.activeItemId = '';
+    }
+    if (typeof clearStudyAudioPrepareProgress_ === 'function') {
+      clearStudyAudioPrepareProgress_();
+    }
+  }
+  if (typeof syncStartAudioPrepareUi === 'function') {
+    syncStartAudioPrepareUi();
+  } else if (typeof refreshAdvanceNavControls === 'function') {
+    refreshAdvanceNavControls();
+  }
+  return true;
+}
+
+/**
+ * 効果音／waiting 中のキャンセル（学習画面＝HOME、呼び出し側で画面分岐）
+ */
+function cancelUiEffectOrPrepareThenHome_() {
+  cancelStartAudioPrepare_();
+  stopCompletionSfx();
+  if (typeof stopUiClickSfx === 'function') {
+    stopUiClickSfx();
+  }
+  goToHome({ sfx: 'home' });
+}
+
+/**
  * 学習完了効果音を止める
  */
 function stopCompletionSfx() {
   stopStaticSfxList(uiSfx.completion);
   uiSfx.completion = [];
+  if (typeof refreshAudioLockControls_ === 'function') {
+    refreshAudioLockControls_();
+  }
 }
 
 /**
@@ -1380,6 +1461,7 @@ function stopStaticSfxList(list) {
 function playStaticSfx(url, bucket, volume) {
   stopStaticSfxList(bucket);
   bucket.length = 0;
+  var isCompletionBucket = (bucket === uiSfx.completion);
   var token = {
     gen: 1,
     handle: null,
@@ -1404,11 +1486,20 @@ function playStaticSfx(url, bucket, volume) {
     }
   };
   bucket.push(token);
+  if (isCompletionBucket && typeof refreshAudioLockControls_ === 'function') {
+    refreshAudioLockControls_();
+  }
+  function markCompletionSettled_() {
+    if (isCompletionBucket && typeof refreshAudioLockControls_ === 'function') {
+      refreshAudioLockControls_();
+    }
+  }
   if (typeof kickPcmAudioContext_ === 'function') {
     kickPcmAudioContext_();
   }
   if (typeof decodeSfxUrl_ !== 'function' || typeof playPcmBuffer_ !== 'function') {
     token.failed = true;
+    markCompletionSettled_();
     return;
   }
   decodeSfxUrl_(buildStaticSfxUrl(url)).then(function(buffer) {
@@ -1426,6 +1517,7 @@ function playStaticSfx(url, bucket, volume) {
         stopPcmPlayback_(token.handle);
       }
       token.handle = null;
+      markCompletionSettled_();
       if (typeof token._onended === 'function') {
         token._onended();
       }
@@ -1442,16 +1534,21 @@ function playStaticSfx(url, bucket, volume) {
           token.endTimer = null;
         }
         token.handle = null;
+        markCompletionSettled_();
         if (typeof token._onended === 'function') {
           token._onended();
         }
       }
     });
+    if (isCompletionBucket && typeof refreshAudioLockControls_ === 'function') {
+      refreshAudioLockControls_();
+    }
   }).catch(function() {
     if (token.gen !== 1) {
       return;
     }
     token.failed = true;
+    markCompletionSettled_();
     if (typeof token._onerror === 'function') {
       token._onerror();
     }
@@ -2050,6 +2147,10 @@ function showCompletionMessage() {
   scheduleAudioPrefetch();
   studyEnd.categoryNo = categoryCatalog.no;
   studyEnd.browseStarted = false;
+  // カテゴリ毎：完了直後に次カテゴリ先頭を同期（A/B の着地を揃える）
+  if (typeof saveResumeAfterCategoryComplete_ === 'function') {
+    saveResumeAfterCategoryComplete_(categoryCatalog.no);
+  }
   if (typeof enterCompletionEndAnnounceReplay_ === 'function') {
     enterCompletionEndAnnounceReplay_();
   }
@@ -2192,11 +2293,10 @@ function clearHomeTextSelection() {
 function goToHome(options) {
   options = options || {};
   if (isCategoryTransitionInProgress) return;
-  var guideWait = typeof isCategoryGuideAwaitingAdvance === 'function' &&
-    isCategoryGuideAwaitingAdvance();
-  if (isFieldAudioBusy() && !guideWait) return;
+  // 出題／解答の再生・取得・一時停止中も緊急HOME可（音声は止めてから戻る）
   
   // 万一の抜け対策：再生中音声を停止してから遷移する
+  cancelStartAudioPrepare_();
   if (typeof clearCategoryGuideWait_ === 'function') {
     clearCategoryGuideWait_();
   }
@@ -2206,6 +2306,7 @@ function goToHome(options) {
   flushPendingAnsSheetPersist();
   stopCurrentAudioPlayback();
   cancelStartWaitCharge();
+  stopCompletionSfx();
   stopUiClickSfx();
   clearAudioSourceDebug();
   
@@ -2243,6 +2344,10 @@ function goToHome(options) {
       categoryCatalog.no = shownNo;
     }
     var sameCompleted = studyEnd.categoryNo != null && String(shownNo) === String(studyEnd.categoryNo);
+    // 完了カテゴリのまま HOME（4タップ等）：先頭からやり直せるよう続きをクリア
+    if (sameCompleted && typeof saveResumeAfterId === 'function') {
+      saveResumeAfterId(null, { sync: false });
+    }
     if (sameCompleted && questionList.original.length > 0) {
       categoryCatalog.items = questionList.original.slice();
     } else if (shownNo != null && shownNo !== '') {

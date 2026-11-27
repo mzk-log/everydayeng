@@ -96,6 +96,17 @@ function bindLearningBodyGestures() {
     if (!isLearningScreenActive() || updateMode.active) {
       return;
     }
+    // 効果音／waiting：1〜3無効、4＝キャンセルHOME（開始案内待ちより優先）
+    if (typeof isUiEffectTapLockActive_ === 'function' && isUiEffectTapLockActive_()) {
+      if (count >= 4) {
+        if (typeof cancelUiEffectOrPrepareThenHome_ === 'function') {
+          cancelUiEffectOrPrepareThenHome_();
+        } else {
+          goToHome({ sfx: 'home' });
+        }
+      }
+      return;
+    }
     if (typeof isCategoryGuideAwaitingAdvance === 'function' && isCategoryGuideAwaitingAdvance()) {
       if (count >= 4) {
         if (typeof clearCategoryGuideWait_ === 'function') {
@@ -126,8 +137,23 @@ function bindLearningBodyGestures() {
       return;
     }
     if (count === 3) {
-      // 本文3タップの Retry／完了再学習は廃止（下ナビプラスのみ）
+      // 完了待機のみ：Plus と同じリトライ（Next着地後は不可。終了案内再生中も不可）
       if (typeof studyEnd !== 'undefined' && studyEnd && studyEnd.done) {
+        if (typeof shouldShowCompletionStartButton === 'function' && shouldShowCompletionStartButton()) {
+          return;
+        }
+        if (typeof isCompletionSfxPlaying_ === 'function' && isCompletionSfxPlaying_()) {
+          return;
+        }
+        if (typeof categoryAnnounce !== 'undefined' && categoryAnnounce &&
+            (categoryAnnounce.audio || categoryAnnounce.finish)) {
+          return;
+        }
+        if (typeof playRetrySfxThen === 'function') {
+          playRetrySfxThen(handlePlusButtonClick);
+        } else if (typeof handlePlusButtonClick === 'function') {
+          handlePlusButtonClick();
+        }
         return;
       }
       if (stopCategoryAnnounce({ continueStart: true })) {
@@ -319,6 +345,10 @@ function bindLearningBodyGestures() {
     if (count < 2 || !isHomeScreenActive_()) {
       return;
     }
+    // waiting／効果音中は START しない
+    if (typeof isUiEffectTapLockActive_ === 'function' && isUiEffectTapLockActive_()) {
+      return;
+    }
     var btn = dom.startButton;
     if (!btn || btn.disabled) {
       return;
@@ -335,10 +365,46 @@ function bindLearningBodyGestures() {
       var count = homeTapCount;
       homeTapCount = 0;
       homeTapTimer = null;
+      // waiting／効果音中の1〜3は何もしない（4は pointerup 側で処理）
+      if (typeof isUiEffectTapLockActive_ === 'function' && isUiEffectTapLockActive_()) {
+        return;
+      }
       if (count === 1) {
         playTopCategoryGuideFromSingleClick_();
       }
     }, LEARNING_BODY_DOUBLE_TAP_MS);
+  }
+
+  /**
+   * TOP（J09）：waiting／効果音中は1〜3無効、4＝開始中止
+   * @returns {boolean} ロック中に処理したら true
+   */
+  function handleTopTapDuringEffectLock_(e) {
+    if (typeof isUiEffectTapLockActive_ !== 'function' || !isUiEffectTapLockActive_()) {
+      return false;
+    }
+    homeTapCount += 1;
+    if (homeTapCount >= 4) {
+      clearHomeTapTimer_();
+      homeTapCount = 0;
+      if (typeof cancelStartAudioPrepare_ === 'function') {
+        cancelStartAudioPrepare_();
+      }
+      if (typeof stopUiClickSfx === 'function') {
+        stopUiClickSfx();
+      }
+      if (e && typeof e.preventDefault === 'function') {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      return true;
+    }
+    armHomeTapTimer_();
+    if (e && typeof e.preventDefault === 'function') {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    return true;
   }
 
   function noteAndroidLearningTap_() {
@@ -424,6 +490,9 @@ function bindLearningBodyGestures() {
       e.stopPropagation();
       if (!isHomeScreenActive_() || wasHomeMoved) {
         armHomeTapTimer_();
+        return;
+      }
+      if (handleTopTapDuringEffectLock_(e)) {
         return;
       }
       homeTapCount += 1;
@@ -565,9 +634,10 @@ function updateHomeButton() {
   if (isCategoryTransitionInProgress) {
     blocked = true;
     title = 'カテゴリの切り替え中です';
-  } else if (isFieldAudioBusy()) {
-    blocked = true;
-    title = '音声の読み上げが終わるまでお待ちください';
+  } else if (typeof isUiEffectTapLockActive_ === 'function' && isUiEffectTapLockActive_()) {
+    title = 'キャンセルしてHOMEへ';
+  } else if (typeof isFieldAudioBusy === 'function' && isFieldAudioBusy()) {
+    title = '音声を止めてHOMEへ';
   }
   
   homeButton.disabled = blocked;

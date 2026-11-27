@@ -182,7 +182,8 @@ var studyAudioPrepare = {
 };
 var startAudioPrepare = {
   busy: false, // Start 押下後の不足音声準備中
-  buttonLabel: 'START' // 準備中に退避するボタン文言
+  buttonLabel: 'START', // 準備中に退避するボタン文言
+  sessionGen: 0 // キャンセルで進め、完了後の自動 Start を破棄
 };
 var categoryIdbProgressCache = {
   key: '',

@@ -21,6 +21,9 @@ function getItemsForStartLearning() {
       filtered = categoryCatalog.items.slice();
     }
   }
+  if (typeof applyResumeAfterIdToStartItems_ === 'function') {
+    filtered = applyResumeAfterIdToStartItems_(filtered);
+  }
   if (typeof filterItemsForAudioDownloadMode === 'function') {
     return filterItemsForAudioDownloadMode(filtered);
   }
@@ -186,11 +189,17 @@ function startLearningAfterAudioPrepare(options) {
       }
       return;
     }
+    startAudioPrepare.sessionGen = (startAudioPrepare.sessionGen || 0) + 1;
+    var prepareGen = startAudioPrepare.sessionGen;
     startAudioPrepare.busy = true;
     syncStartAudioPrepareUi();
     armStartPrepareWaitingSfx_();
     // Start 直前で再集計済みのため、prepare 側の二重 getAll は避ける
     prepareStudyItemsAudio(items, function() {
+      if (prepareGen !== startAudioPrepare.sessionGen) {
+        // キャンセル済み：自動 Start しない
+        return;
+      }
       if (typeof stopStartPrepareWaitingSfx === 'function') {
         stopStartPrepareWaitingSfx({ immediate: true });
       }
@@ -972,6 +981,19 @@ function showAnswer() {
   
   // 今日の学習統計（LastDate 更新前に判定）
   recordDailyStudyStatsOnAns(item);
+
+  // カテゴリ毎：続き位置を同期（この ID の次から START）
+  if (typeof isCategoryResumeSyncMethod_ === 'function' && isCategoryResumeSyncMethod_()) {
+    if (typeof saveResumeAfterId === 'function' && item.id != null && item.id !== '') {
+      saveResumeAfterId(item.id, { sync: false });
+    }
+    if (typeof saveLastHomeCategoryNo === 'function' && categoryCatalog.no != null) {
+      saveLastHomeCategoryNo(categoryCatalog.no, { sync: false, clearResumeOnChange: false });
+    }
+    if (typeof scheduleUserSettingsSync === 'function') {
+      scheduleUserSettingsSync();
+    }
+  }
 
   // 解答読みON時は音声を先に開始し、シート更新は音声のネット取得完了後（上限あり）に回す
   var willAutoPlayAnswer = readToggle.answer && !updateMode.active;
